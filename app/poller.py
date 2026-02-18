@@ -146,6 +146,17 @@ async def poll_edinet():
         )
 
 
+_XBRL_FIELDS = (
+    "holding_ratio",
+    "previous_holding_ratio",
+    "holder_name",
+    "target_company_name",
+    "target_sec_code",
+    "shares_held",
+    "purpose_of_holding",
+)
+
+
 async def _enrich_from_xbrl(filing: Filing):
     """Download and parse XBRL to enrich filing data."""
     try:
@@ -158,20 +169,10 @@ async def _enrich_from_xbrl(filing: Filing):
 
         data = edinet_client.parse_xbrl_for_holding_data(zip_content)
 
-        if data["holding_ratio"] is not None:
-            filing.holding_ratio = data["holding_ratio"]
-        if data["previous_holding_ratio"] is not None:
-            filing.previous_holding_ratio = data["previous_holding_ratio"]
-        if data["holder_name"]:
-            filing.holder_name = data["holder_name"]
-        if data["target_company_name"]:
-            filing.target_company_name = data["target_company_name"]
-        if data["target_sec_code"]:
-            filing.target_sec_code = data["target_sec_code"]
-        if data["shares_held"] is not None:
-            filing.shares_held = data["shares_held"]
-        if data["purpose_of_holding"]:
-            filing.purpose_of_holding = data["purpose_of_holding"]
+        for field in _XBRL_FIELDS:
+            value = data[field]
+            if value is not None:
+                setattr(filing, field, value)
 
         filing.xbrl_parsed = True
         logger.info(

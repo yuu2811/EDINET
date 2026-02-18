@@ -5,7 +5,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 
-from fastapi import FastAPI, Query, Request
+from fastapi import APIRouter, FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import desc, func, or_, select
@@ -15,6 +15,7 @@ from app.database import async_session, init_db
 from app.edinet import edinet_client
 from app.models import Filing, Watchlist
 from app.poller import broadcaster, run_poller
+from app.schemas import WatchlistCreate
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,19 +24,22 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup/shutdown lifecycle."""
     await init_db()
     logger.info("Database initialized")
 
-    # Start background poller
     poller_task = asyncio.create_task(run_poller())
     logger.info("Background poller started")
 
     yield
 
-    # Shutdown
     poller_task.cancel()
     try:
         await poller_task
@@ -56,18 +60,19 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 # ---------------------------------------------------------------------------
-# SSE endpoint
+# Router: SSE
 # ---------------------------------------------------------------------------
 
+sse_router = APIRouter(tags=["SSE"])
 
-@app.get("/api/stream")
+
+@sse_router.get("/api/stream")
 async def sse_stream(request: Request):
     """Server-Sent Events stream for real-time filing notifications."""
 
     async def event_generator():
         queue = broadcaster.subscribe()
         try:
-            # Send initial connection confirmation
             yield "event: connected\ndata: {\"status\": \"connected\"}\n\n"
 
             while True:
@@ -80,10 +85,7 @@ async def sse_stream(request: Request):
                 except asyncio.TimeoutError:
                     yield ": keepalive\n\n"
         finally:
-            try:
-                broadcaster.unsubscribe(queue)
-            except ValueError:
-                pass
+            broadcaster.unsubscribe(queue)
 
     return StreamingResponse(
         event_generator(),
@@ -97,11 +99,13 @@ async def sse_stream(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Filings API
+# Router: Filings
 # ---------------------------------------------------------------------------
 
+filings_router = APIRouter(prefix="/api/filings", tags=["Filings"])
 
-@app.get("/api/filings")
+
+@filings_router.get("")
 async def list_filings(
     date_from: str | None = Query(None, description="Start date (YYYY-MM-DD)"),
     date_to: str | None = Query(None, description="End date (YYYY-MM-DD)"),
@@ -113,23 +117,15 @@ async def list_filings(
     offset: int = Query(0, ge=0),
 ):
     """List large shareholding filings with filters."""
-    # Validate date formats
-    if date_from:
-        try:
-            datetime.strptime(date_from, "%Y-%m-%d")
-        except ValueError:
-            return JSONResponse(
-                {"error": "Invalid date_from format. Use YYYY-MM-DD"},
-                status_code=400,
-            )
-    if date_to:
-        try:
-            datetime.strptime(date_to, "%Y-%m-%d")
-        except ValueError:
-            return JSONResponse(
-                {"error": "Invalid date_to format. Use YYYY-MM-DD"},
-                status_code=400,
-            )
+    for label, value in [("date_from", date_from), ("date_to", date_to)]:
+        if value:
+            try:
+                datetime.strptime(value, "%Y-%m-%d")
+            except ValueError:
+                return JSONResponse(
+                    {"error": f"Invalid {label} format. Use YYYY-MM-DD"},
+                    status_code=400,
+                )
 
     async with async_session() as session:
         query = select(Filing).order_by(desc(Filing.submit_date_time), desc(Filing.id))
@@ -162,11 +158,9 @@ async def list_filings(
         if amendment_only:
             query = query.where(Filing.is_amendment.is_(True))
 
-        # Get total count
         count_query = select(func.count()).select_from(query.subquery())
         total = (await session.execute(count_query)).scalar()
 
-        # Apply pagination
         result = await session.execute(query.offset(offset).limit(limit))
         filings = result.scalars().all()
 
@@ -178,7 +172,7 @@ async def list_filings(
         }
 
 
-@app.get("/api/filings/{doc_id}")
+@filings_router.get("/{doc_id}")
 async def get_filing(doc_id: str):
     """Get a single filing by document ID."""
     async with async_session() as session:
@@ -192,11 +186,13 @@ async def get_filing(doc_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Stats API
+# Router: Stats
 # ---------------------------------------------------------------------------
 
+stats_router = APIRouter(tags=["Stats"])
 
-@app.get("/api/stats")
+
+@stats_router.get("/api/stats")
 async def get_stats():
     """Get statistics for the dashboard."""
     today = date.today()
@@ -245,8 +241,6 @@ async def get_stats():
             {"name": row[0], "count": row[1]} for row in top_filers_result
         ]
 
-        connected = broadcaster.client_count
-
         return {
             "date": today_str,
             "today_total": today_count,
@@ -254,17 +248,19 @@ async def get_stats():
             "today_amendments": amendments,
             "total_in_db": total,
             "top_filers": top_filers,
-            "connected_clients": connected,
+            "connected_clients": broadcaster.client_count,
             "poll_interval": settings.POLL_INTERVAL,
         }
 
 
 # ---------------------------------------------------------------------------
-# Watchlist API
+# Router: Watchlist
 # ---------------------------------------------------------------------------
 
+watchlist_router = APIRouter(prefix="/api/watchlist", tags=["Watchlist"])
 
-@app.get("/api/watchlist")
+
+@watchlist_router.get("")
 async def get_watchlist():
     """Get the user's watchlist."""
     async with async_session() as session:
@@ -275,24 +271,14 @@ async def get_watchlist():
         return {"watchlist": [w.to_dict() for w in items]}
 
 
-@app.post("/api/watchlist")
-async def add_to_watchlist(request: Request):
+@watchlist_router.post("")
+async def add_to_watchlist(body: WatchlistCreate):
     """Add a company to the watchlist."""
-    body = await request.json()
-    company_name = body.get("company_name", "").strip()
-    sec_code = body.get("sec_code", "").strip() or None
-    edinet_code = body.get("edinet_code", "").strip() or None
-
-    if not company_name:
-        return JSONResponse(
-            {"error": "company_name is required"}, status_code=400
-        )
-
     async with async_session() as session:
         item = Watchlist(
-            company_name=company_name,
-            sec_code=sec_code,
-            edinet_code=edinet_code,
+            company_name=body.company_name.strip(),
+            sec_code=body.sec_code.strip() if body.sec_code else None,
+            edinet_code=body.edinet_code.strip() if body.edinet_code else None,
         )
         session.add(item)
         await session.commit()
@@ -300,22 +286,9 @@ async def add_to_watchlist(request: Request):
         return item.to_dict()
 
 
-@app.delete("/api/watchlist/{item_id}")
-async def remove_from_watchlist(item_id: int):
-    """Remove a company from the watchlist."""
-    async with async_session() as session:
-        result = await session.execute(
-            select(Watchlist).where(Watchlist.id == item_id)
-        )
-        item = result.scalar_one_or_none()
-        if not item:
-            return JSONResponse({"error": "Not found"}, status_code=404)
-        await session.delete(item)
-        await session.commit()
-        return {"status": "deleted"}
-
-
-@app.get("/api/watchlist/filings")
+# Static path MUST be registered before parameterized path
+# to prevent "/api/watchlist/filings" matching "/{item_id}"
+@watchlist_router.get("/filings")
 async def get_watchlist_filings():
     """Get recent filings matching the watchlist."""
     async with async_session() as session:
@@ -354,18 +327,46 @@ async def get_watchlist_filings():
         return {"filings": [f.to_dict() for f in filings]}
 
 
-# ---------------------------------------------------------------------------
-# Manual poll trigger
-# ---------------------------------------------------------------------------
+@watchlist_router.delete("/{item_id}")
+async def remove_from_watchlist(item_id: int):
+    """Remove a company from the watchlist."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Watchlist).where(Watchlist.id == item_id)
+        )
+        item = result.scalar_one_or_none()
+        if not item:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        await session.delete(item)
+        await session.commit()
+        return {"status": "deleted"}
 
 
-@app.post("/api/poll")
+# ---------------------------------------------------------------------------
+# Router: Poll
+# ---------------------------------------------------------------------------
+
+poll_router = APIRouter(tags=["Poll"])
+
+
+@poll_router.post("/api/poll")
 async def trigger_poll():
     """Manually trigger an EDINET poll."""
     from app.poller import poll_edinet
 
     asyncio.create_task(poll_edinet())
     return {"status": "poll_triggered"}
+
+
+# ---------------------------------------------------------------------------
+# Register routers
+# ---------------------------------------------------------------------------
+
+app.include_router(sse_router)
+app.include_router(filings_router)
+app.include_router(stats_router)
+app.include_router(watchlist_router)
+app.include_router(poll_router)
 
 
 # ---------------------------------------------------------------------------

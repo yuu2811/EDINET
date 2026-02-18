@@ -99,7 +99,7 @@ class Filing(Base):
             "is_special_exemption": self.is_special_exemption,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "xbrl_parsed": self.xbrl_parsed,
-            "edinet_url": f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?S100{self.doc_id}"
+            "edinet_url": f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{self.doc_id}"
             if self.doc_id
             else None,
             "pdf_url": f"https://api.edinet-fsa.go.jp/api/v2/documents/{self.doc_id}?type=2"

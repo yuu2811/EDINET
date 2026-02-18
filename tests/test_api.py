@@ -87,7 +87,6 @@ async def seed_data(api_session_factory):
 async def client(api_session_factory, seed_data):
     """Create a test HTTP client with patched DB."""
     from unittest.mock import patch, AsyncMock
-    import asyncio
 
     with patch("app.main.async_session", api_session_factory), \
          patch("app.main.init_db", new_callable=AsyncMock), \
@@ -186,6 +185,15 @@ class TestFilingsAPI:
         data = resp.json()
         assert data["total"] == 3
 
+    @pytest.mark.asyncio
+    async def test_edinet_url_no_double_prefix(self, client):
+        """EDINET URL should not double the S100 prefix."""
+        resp = await client.get("/api/filings/S100API1")
+        data = resp.json()
+        url = data["edinet_url"]
+        assert "S100S100" not in url
+        assert url.endswith("S100API1")
+
 
 class TestStatsAPI:
     """Tests for /api/stats endpoint."""
@@ -233,6 +241,20 @@ class TestWatchlistAPI:
         assert len(resp2.json()["watchlist"]) == 2
 
     @pytest.mark.asyncio
+    async def test_add_to_watchlist_missing_name(self, client):
+        """Pydantic validation should reject missing company_name."""
+        resp = await client.post("/api/watchlist", json={"sec_code": "12340"})
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_add_to_watchlist_empty_name(self, client):
+        """Pydantic validation should reject empty company_name."""
+        resp = await client.post(
+            "/api/watchlist", json={"company_name": ""}
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
     async def test_delete_from_watchlist(self, client):
         # Get the existing item ID
         resp = await client.get("/api/watchlist")
@@ -250,6 +272,19 @@ class TestWatchlistAPI:
     async def test_delete_nonexistent(self, client):
         resp = await client.delete("/api/watchlist/99999")
         assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_watchlist_filings_reachable(self, client):
+        """GET /api/watchlist/filings must be reachable (not captured by /{item_id})."""
+        resp = await client.get("/api/watchlist/filings")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "filings" in data
+        # Should find filings matching watchlist item (トヨタ自動車, 72030)
+        assert len(data["filings"]) >= 1
+        assert any(
+            f["target_sec_code"] == "72030" for f in data["filings"]
+        )
 
 
 class TestSSEEndpoint:
