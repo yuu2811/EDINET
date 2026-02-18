@@ -1,0 +1,131 @@
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base
+
+
+class Filing(Base):
+    """A large shareholding filing from EDINET."""
+
+    __tablename__ = "filings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    doc_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    seq_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Filer info
+    edinet_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    filer_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    sec_code: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+    jcn: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    # Document classification
+    doc_type_code: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    ordinance_code: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    form_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    doc_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Target company
+    subject_edinet_code: Mapped[str | None] = mapped_column(
+        String(10), nullable=True, index=True
+    )
+    issuer_edinet_code: Mapped[str | None] = mapped_column(
+        String(10), nullable=True, index=True
+    )
+
+    # Extracted data from XBRL
+    holding_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    previous_holding_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    holder_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    target_company_name: Mapped[str | None] = mapped_column(
+        String(256), nullable=True
+    )
+    target_sec_code: Mapped[str | None] = mapped_column(
+        String(10), nullable=True, index=True
+    )
+    shares_held: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    purpose_of_holding: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    submit_date_time: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    period_start: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    period_end: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    # Flags
+    xbrl_flag: Mapped[bool] = mapped_column(Boolean, default=False)
+    pdf_flag: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_amendment: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_special_exemption: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Internal
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+    xbrl_parsed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    def to_dict(self) -> dict:
+        ratio_change = None
+        if self.holding_ratio is not None and self.previous_holding_ratio is not None:
+            ratio_change = round(
+                self.holding_ratio - self.previous_holding_ratio, 2
+            )
+
+        return {
+            "id": self.id,
+            "doc_id": self.doc_id,
+            "edinet_code": self.edinet_code,
+            "filer_name": self.filer_name,
+            "sec_code": self.sec_code,
+            "doc_type_code": self.doc_type_code,
+            "doc_description": self.doc_description,
+            "subject_edinet_code": self.subject_edinet_code,
+            "issuer_edinet_code": self.issuer_edinet_code,
+            "holding_ratio": self.holding_ratio,
+            "previous_holding_ratio": self.previous_holding_ratio,
+            "ratio_change": ratio_change,
+            "holder_name": self.holder_name,
+            "target_company_name": self.target_company_name,
+            "target_sec_code": self.target_sec_code,
+            "shares_held": self.shares_held,
+            "purpose_of_holding": self.purpose_of_holding,
+            "submit_date_time": self.submit_date_time,
+            "period_start": self.period_start,
+            "period_end": self.period_end,
+            "xbrl_flag": self.xbrl_flag,
+            "pdf_flag": self.pdf_flag,
+            "is_amendment": self.is_amendment,
+            "is_special_exemption": self.is_special_exemption,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "xbrl_parsed": self.xbrl_parsed,
+            "edinet_url": f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?S100{self.doc_id}"
+            if self.doc_id
+            else None,
+            "pdf_url": f"https://api.edinet-fsa.go.jp/api/v2/documents/{self.doc_id}?type=2"
+            if self.doc_id and self.pdf_flag
+            else None,
+        }
+
+
+class Watchlist(Base):
+    """A company on the user's watchlist."""
+
+    __tablename__ = "watchlist"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    edinet_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    sec_code: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+    company_name: Mapped[str] = mapped_column(String(256))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "edinet_code": self.edinet_code,
+            "sec_code": self.sec_code,
+            "company_name": self.company_name,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
