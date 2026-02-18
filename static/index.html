@@ -17,18 +17,18 @@
             <span id="current-time" class="clock"></span>
         </div>
         <div class="header-right">
-            <span id="connection-status" class="status disconnected">
-                <span class="status-dot"></span>
+            <span id="connection-status" class="status disconnected" aria-live="polite" aria-atomic="true">
+                <span class="status-dot" aria-hidden="true"></span>
                 <span class="status-text">接続中...</span>
             </span>
-            <button id="btn-notify" class="btn-icon" title="通知を有効にする">&#128276;</button>
-            <button id="btn-sound" class="btn-icon active" title="サウンド ON/OFF">&#128266;</button>
-            <button id="btn-poll" class="btn-icon" title="手動ポーリング">&#8635;</button>
+            <button id="btn-notify" class="btn-icon" title="通知を有効にする" aria-label="デスクトップ通知" aria-pressed="false">&#128276;</button>
+            <button id="btn-sound" class="btn-icon active" title="サウンド ON/OFF" aria-label="サウンドアラート: 有効" aria-pressed="true">&#128266;</button>
+            <button id="btn-poll" class="btn-icon" title="手動ポーリング" aria-label="手動でEDINETをポーリング">&#8635;</button>
         </div>
     </header>
 
     <!-- Ticker -->
-    <div id="ticker-bar">
+    <div id="ticker-bar" role="marquee" aria-label="最新の報告書">
         <div id="ticker-content">
             <span class="ticker-label">LIVE</span>
             <span id="ticker-text">起動中... EDINET APIからデータを取得しています</span>
@@ -38,12 +38,14 @@
     <!-- Main Layout -->
     <div id="main-layout">
         <!-- Left: Live Feed -->
-        <div id="feed-panel" class="panel">
+        <div id="feed-panel" class="panel" role="region" aria-label="ライブフィード">
             <div class="panel-header">
                 <span class="panel-title">LIVE FEED</span>
                 <div class="feed-controls">
-                    <input type="text" id="feed-search" placeholder="検索..." class="search-input">
-                    <select id="feed-filter" class="filter-select">
+                    <label for="feed-search" class="visually-hidden">フィードを検索</label>
+                    <input type="text" id="feed-search" placeholder="検索..." class="search-input" aria-label="企業名・証券コードで検索">
+                    <label for="feed-filter" class="visually-hidden">報告書タイプ</label>
+                    <select id="feed-filter" class="filter-select" aria-label="報告書タイプでフィルター">
                         <option value="all">すべて</option>
                         <option value="new">新規報告のみ</option>
                         <option value="change">変更報告のみ</option>
@@ -51,7 +53,7 @@
                     </select>
                 </div>
             </div>
-            <div id="feed-list" class="feed-list">
+            <div id="feed-list" class="feed-list" role="feed" aria-label="報告書一覧">
                 <div class="feed-empty">データを読み込んでいます...</div>
             </div>
         </div>
@@ -59,7 +61,7 @@
         <!-- Right: Sidebar -->
         <div id="sidebar">
             <!-- Stats Panel -->
-            <div id="stats-panel" class="panel">
+            <div id="stats-panel" class="panel" role="region" aria-label="本日の統計">
                 <div class="panel-header">
                     <span class="panel-title">TODAY</span>
                 </div>
@@ -84,13 +86,15 @@
             </div>
 
             <!-- Watchlist Panel -->
-            <div id="watchlist-panel" class="panel">
+            <div id="watchlist-panel" class="panel" role="region" aria-label="ウォッチリスト">
                 <div class="panel-header">
                     <span class="panel-title">WATCHLIST</span>
-                    <button id="btn-add-watch" class="btn-small" title="銘柄を追加">+</button>
+                    <button id="btn-add-watch" class="btn-small" title="銘柄を追加" aria-label="ウォッチリストに銘柄を追加">+</button>
                 </div>
                 <div id="watchlist-form" class="watchlist-form hidden">
+                    <label for="watch-name" class="visually-hidden">企業名</label>
                     <input type="text" id="watch-name" placeholder="企業名" class="input-small">
+                    <label for="watch-code" class="visually-hidden">証券コード</label>
                     <input type="text" id="watch-code" placeholder="証券コード" class="input-small">
                     <button id="btn-save-watch" class="btn-small btn-accent">追加</button>
                     <button id="btn-cancel-watch" class="btn-small">取消</button>
@@ -101,7 +105,7 @@
             </div>
 
             <!-- Top Filers Panel -->
-            <div id="top-filers-panel" class="panel">
+            <div id="top-filers-panel" class="panel" role="region" aria-label="本日の提出者ランキング">
                 <div class="panel-header">
                     <span class="panel-title">TOP FILERS</span>
                 </div>
@@ -113,21 +117,29 @@
     </div>
 
     <!-- Detail Modal -->
-    <div id="detail-modal" class="modal hidden">
+    <div id="detail-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title-text">
         <div class="modal-overlay"></div>
         <div class="modal-content">
             <div class="modal-header">
-                <span class="modal-title">報告書詳細</span>
-                <button class="modal-close">&times;</button>
+                <span class="modal-title" id="modal-title-text">報告書詳細</span>
+                <button class="modal-close" aria-label="閉じる">&times;</button>
             </div>
             <div id="modal-body" class="modal-body"></div>
         </div>
     </div>
 
-    <!-- Audio for alerts -->
-    <audio id="alert-sound" preload="auto">
-        <!-- We generate a short beep via Web Audio API instead -->
-    </audio>
+    <!-- Confirm Dialog -->
+    <div id="confirm-dialog" class="modal hidden" role="alertdialog" aria-modal="true" aria-labelledby="dialog-title">
+        <div class="modal-overlay"></div>
+        <div class="dialog">
+            <div class="dialog-title" id="dialog-title">確認</div>
+            <div class="dialog-message" id="dialog-message"></div>
+            <div class="dialog-actions">
+                <button class="dialog-btn" id="dialog-cancel">キャンセル</button>
+                <button class="dialog-btn danger" id="dialog-confirm">削除</button>
+            </div>
+        </div>
+    </div>
 
     <script src="/static/js/app.js"></script>
 </body>

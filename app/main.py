@@ -2,10 +2,12 @@
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 
 from fastapi import APIRouter, FastAPI, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import desc, func, or_, select
@@ -56,7 +58,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["*"],
+)
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Simple in-memory rate limiter for poll endpoint
+_poll_last_called: float = 0.0
+_POLL_COOLDOWN = 10.0  # seconds
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +364,17 @@ poll_router = APIRouter(tags=["Poll"])
 
 @poll_router.post("/api/poll")
 async def trigger_poll():
-    """Manually trigger an EDINET poll."""
+    """Manually trigger an EDINET poll (rate-limited to once per 10s)."""
+    global _poll_last_called
+    now = time.monotonic()
+    if now - _poll_last_called < _POLL_COOLDOWN:
+        remaining = int(_POLL_COOLDOWN - (now - _poll_last_called))
+        return JSONResponse(
+            {"error": f"Rate limited. Try again in {remaining}s"},
+            status_code=429,
+        )
+    _poll_last_called = now
+
     from app.poller import poll_edinet
 
     asyncio.create_task(poll_edinet())

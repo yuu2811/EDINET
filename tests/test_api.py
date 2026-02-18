@@ -287,6 +287,22 @@ class TestWatchlistAPI:
         )
 
 
+class TestWatchlistFilingsAPI:
+    """Tests for /api/watchlist/filings endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_watchlist_filings_empty_watchlist(self, client):
+        """Should return empty list when watchlist is empty."""
+        # Delete the existing watchlist item first
+        resp = await client.get("/api/watchlist")
+        for w in resp.json()["watchlist"]:
+            await client.delete(f"/api/watchlist/{w['id']}")
+
+        resp = await client.get("/api/watchlist/filings")
+        assert resp.status_code == 200
+        assert resp.json()["filings"] == []
+
+
 class TestSSEEndpoint:
     """Tests for /api/stream SSE endpoint."""
 
@@ -309,7 +325,24 @@ class TestPollEndpoint:
 
     @pytest.mark.asyncio
     async def test_trigger_poll(self, client):
+        # Reset rate limiter for test
+        import app.main as main_mod
+        main_mod._poll_last_called = 0.0
+
         resp = await client.post("/api/poll")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "poll_triggered"
+
+    @pytest.mark.asyncio
+    async def test_poll_rate_limited(self, client):
+        """Rapid polling should be rate-limited (429)."""
+        import app.main as main_mod
+        main_mod._poll_last_called = 0.0
+
+        resp1 = await client.post("/api/poll")
+        assert resp1.status_code == 200
+
+        resp2 = await client.post("/api/poll")
+        assert resp2.status_code == 429
+        assert "Rate limited" in resp2.json()["error"]

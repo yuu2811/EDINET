@@ -15,8 +15,8 @@
     --border-accent: #3a3a5e;
 
     --text-primary: #e0e0e8;
-    --text-secondary: #8888a0;
-    --text-dim: #555570;
+    --text-secondary: #a0a0b8; /* Improved from #8888a0 for WCAG AA (4.5:1+) */
+    --text-dim: #707088;       /* Improved from #555570 for better readability */
 
     --amber: #ff9800;
     --amber-dim: #b36a00;
@@ -56,6 +56,40 @@ body {
     height: 100vh;
     display: flex;
     flex-direction: column;
+}
+
+/* ==========================================================================
+   Accessibility
+   ========================================================================== */
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}
+
+/* Keyboard focus indicators */
+.btn-icon:focus-visible,
+.btn-small:focus-visible,
+.filter-select:focus-visible,
+.search-input:focus-visible,
+.input-small:focus-visible,
+.card-link:focus-visible,
+.modal-close:focus-visible,
+.dialog-btn:focus-visible {
+    outline: 2px solid var(--cyan);
+    outline-offset: 2px;
+}
+
+.watch-delete:focus-visible {
+    outline: 2px solid var(--red);
+    outline-offset: 2px;
 }
 
 /* ==========================================================================
@@ -345,13 +379,43 @@ body {
     border-left-color: var(--purple);
 }
 
+/* New filing flash animation (improved: longer, more visible) */
 .feed-card.flash {
-    animation: card-flash 1.5s ease-out;
+    animation: card-flash 2.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 @keyframes card-flash {
-    0% { background: rgba(255, 152, 0, 0.3); }
-    100% { background: var(--bg-card); }
+    0% {
+        background: rgba(255, 152, 0, 0.4);
+        box-shadow: inset 0 0 0 1px var(--amber);
+    }
+    40% {
+        background: rgba(255, 152, 0, 0.2);
+    }
+    100% {
+        background: var(--bg-card);
+        box-shadow: none;
+    }
+}
+
+/* Watchlist match highlight */
+.feed-card.watchlist-match {
+    animation: watchlist-highlight 3s ease-out;
+}
+
+@keyframes watchlist-highlight {
+    0% {
+        background: rgba(179, 136, 255, 0.3);
+        box-shadow: inset 0 0 0 1px var(--purple);
+    }
+    50% {
+        background: rgba(179, 136, 255, 0.15);
+        box-shadow: inset 0 0 0 1px var(--purple);
+    }
+    100% {
+        background: var(--bg-card);
+        box-shadow: none;
+    }
 }
 
 .card-top {
@@ -397,6 +461,12 @@ body {
     margin-left: 4px;
 }
 
+.badge-watchlist {
+    background: var(--purple);
+    color: #fff;
+    margin-left: 4px;
+}
+
 .card-main {
     margin-bottom: 4px;
 }
@@ -431,7 +501,7 @@ body {
 }
 
 .card-ratio {
-    font-size: var(--font-size-lg);
+    font-size: 16px;
     font-weight: bold;
     font-variant-numeric: tabular-nums;
 }
@@ -623,15 +693,19 @@ body {
 
 .watch-delete {
     background: none;
-    border: none;
+    border: 1px solid transparent;
     color: var(--text-dim);
     cursor: pointer;
     font-size: var(--font-size-sm);
-    padding: 2px 4px;
+    padding: 2px 6px;
+    border-radius: 2px;
+    transition: all 0.15s;
 }
 
 .watch-delete:hover {
     color: var(--red);
+    border-color: var(--red-dim);
+    background: rgba(255, 23, 68, 0.1);
 }
 
 /* ==========================================================================
@@ -790,6 +864,68 @@ body {
 
 .detail-value.negative {
     color: var(--red);
+}
+
+/* ==========================================================================
+   Confirm Dialog
+   ========================================================================== */
+
+.dialog {
+    position: relative;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-accent);
+    border-radius: 4px;
+    padding: 16px;
+    max-width: 400px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.dialog-title {
+    color: var(--amber);
+    font-size: var(--font-size-lg);
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.dialog-message {
+    color: var(--text-primary);
+    font-size: var(--font-size-md);
+    margin-bottom: 16px;
+    line-height: 1.5;
+}
+
+.dialog-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.dialog-btn {
+    padding: 4px 12px;
+    font-size: var(--font-size-sm);
+    font-family: var(--font-mono);
+    border-radius: 2px;
+    border: 1px solid var(--border-primary);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.dialog-btn:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-accent);
+    color: var(--text-primary);
+}
+
+.dialog-btn.danger {
+    border-color: var(--red-dim);
+    color: var(--red);
+}
+
+.dialog-btn.danger:hover {
+    background: var(--red-dim);
+    color: #fff;
 }
 
 /* ==========================================================================
