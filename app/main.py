@@ -3,16 +3,15 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import date, timedelta
+from datetime import date, datetime
 
-from fastapi import Depends, FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import desc, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import async_session, get_session, init_db
+from app.database import async_session, init_db
 from app.edinet import edinet_client
 from app.models import Filing, Watchlist
 from app.poller import broadcaster, run_poller
@@ -38,6 +37,10 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     poller_task.cancel()
+    try:
+        await poller_task
+    except asyncio.CancelledError:
+        pass
     await edinet_client.close()
     logger.info("Shutdown complete")
 
@@ -68,7 +71,6 @@ async def sse_stream(request: Request):
             yield "event: connected\ndata: {\"status\": \"connected\"}\n\n"
 
             while True:
-                # Check if client disconnected
                 if await request.is_disconnected():
                     break
 
@@ -76,10 +78,12 @@ async def sse_stream(request: Request):
                     message = await asyncio.wait_for(queue.get(), timeout=30.0)
                     yield message
                 except asyncio.TimeoutError:
-                    # Send keepalive
                     yield ": keepalive\n\n"
         finally:
-            broadcaster.unsubscribe(queue)
+            try:
+                broadcaster.unsubscribe(queue)
+            except ValueError:
+                pass
 
     return StreamingResponse(
         event_generator(),
@@ -109,6 +113,24 @@ async def list_filings(
     offset: int = Query(0, ge=0),
 ):
     """List large shareholding filings with filters."""
+    # Validate date formats
+    if date_from:
+        try:
+            datetime.strptime(date_from, "%Y-%m-%d")
+        except ValueError:
+            return JSONResponse(
+                {"error": "Invalid date_from format. Use YYYY-MM-DD"},
+                status_code=400,
+            )
+    if date_to:
+        try:
+            datetime.strptime(date_to, "%Y-%m-%d")
+        except ValueError:
+            return JSONResponse(
+                {"error": "Invalid date_to format. Use YYYY-MM-DD"},
+                status_code=400,
+            )
+
     async with async_session() as session:
         query = select(Filing).order_by(desc(Filing.submit_date_time), desc(Filing.id))
 
@@ -165,7 +187,7 @@ async def get_filing(doc_id: str):
         )
         filing = result.scalar_one_or_none()
         if not filing:
-            return {"error": "Filing not found"}, 404
+            return JSONResponse({"error": "Filing not found"}, status_code=404)
         return filing.to_dict()
 
 
@@ -181,7 +203,6 @@ async def get_stats():
     today_str = today.strftime("%Y-%m-%d")
 
     async with async_session() as session:
-        # Today's filings
         today_count = (
             await session.execute(
                 select(func.count(Filing.id)).where(
@@ -190,7 +211,6 @@ async def get_stats():
             )
         ).scalar()
 
-        # Today's new reports (not amendments)
         new_reports = (
             await session.execute(
                 select(func.count(Filing.id)).where(
@@ -200,7 +220,6 @@ async def get_stats():
             )
         ).scalar()
 
-        # Today's amendments
         amendments = (
             await session.execute(
                 select(func.count(Filing.id)).where(
@@ -210,12 +229,10 @@ async def get_stats():
             )
         ).scalar()
 
-        # Total filings in DB
         total = (
             await session.execute(select(func.count(Filing.id)))
         ).scalar()
 
-        # Top filers today
         top_filers_q = (
             select(Filing.filer_name, func.count(Filing.id).label("cnt"))
             .where(Filing.submit_date_time.startswith(today_str))
@@ -228,7 +245,6 @@ async def get_stats():
             {"name": row[0], "count": row[1]} for row in top_filers_result
         ]
 
-        # Connected clients
         connected = broadcaster.client_count
 
         return {
@@ -268,7 +284,9 @@ async def add_to_watchlist(request: Request):
     edinet_code = body.get("edinet_code", "").strip() or None
 
     if not company_name:
-        return {"error": "company_name is required"}, 400
+        return JSONResponse(
+            {"error": "company_name is required"}, status_code=400
+        )
 
     async with async_session() as session:
         item = Watchlist(
@@ -291,7 +309,7 @@ async def remove_from_watchlist(item_id: int):
         )
         item = result.scalar_one_or_none()
         if not item:
-            return {"error": "Not found"}, 404
+            return JSONResponse({"error": "Not found"}, status_code=404)
         await session.delete(item)
         await session.commit()
         return {"status": "deleted"}
@@ -301,14 +319,12 @@ async def remove_from_watchlist(item_id: int):
 async def get_watchlist_filings():
     """Get recent filings matching the watchlist."""
     async with async_session() as session:
-        # Get all watchlist items
         wl_result = await session.execute(select(Watchlist))
         watchlist = wl_result.scalars().all()
 
         if not watchlist:
             return {"filings": []}
 
-        # Build filter conditions
         conditions = []
         for w in watchlist:
             if w.sec_code:
@@ -360,8 +376,14 @@ async def trigger_poll():
 @app.get("/", response_class=HTMLResponse)
 async def index():
     """Serve the main dashboard."""
-    with open("static/index.html", "r", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read())
+    try:
+        with open("static/index.html", "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    except FileNotFoundError:
+        return HTMLResponse(
+            content="<h1>Dashboard not found</h1><p>static/index.html is missing</p>",
+            status_code=500,
+        )
 
 
 if __name__ == "__main__":

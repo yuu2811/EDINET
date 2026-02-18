@@ -36,19 +36,21 @@ class SSEBroadcaster:
         return q
 
     def unsubscribe(self, q: asyncio.Queue):
-        self._queues.remove(q)
+        if q in self._queues:
+            self._queues.remove(q)
 
     async def broadcast(self, event: str, data: dict):
         payload = json.dumps(data, cls=JsonEncoder, ensure_ascii=False)
         message = f"event: {event}\ndata: {payload}\n\n"
         dead: list[asyncio.Queue] = []
-        for q in self._queues:
+        for q in self._queues[:]:  # iterate over copy for safety
             try:
                 q.put_nowait(message)
             except asyncio.QueueFull:
                 dead.append(q)
         for q in dead:
-            self._queues.remove(q)
+            if q in self._queues:
+                self._queues.remove(q)
 
     @property
     def client_count(self) -> int:
@@ -111,15 +113,20 @@ async def poll_edinet():
                 is_special_exemption=is_special,
             )
 
-            session.add(filing)
-            await session.flush()
+            try:
+                session.add(filing)
+                await session.flush()
 
-            # Try to parse XBRL for additional data
-            if filing.xbrl_flag and settings.EDINET_API_KEY:
-                await _enrich_from_xbrl(filing)
+                # Try to parse XBRL for additional data
+                if filing.xbrl_flag and settings.EDINET_API_KEY:
+                    await _enrich_from_xbrl(filing)
 
-            await session.commit()
-            await session.refresh(filing)
+                await session.commit()
+                await session.refresh(filing)
+            except Exception as e:
+                logger.error("Failed to store filing %s: %s", doc_id, e)
+                await session.rollback()
+                continue
 
             new_count += 1
 
@@ -142,7 +149,10 @@ async def poll_edinet():
 async def _enrich_from_xbrl(filing: Filing):
     """Download and parse XBRL to enrich filing data."""
     try:
-        zip_content = await edinet_client.download_xbrl(filing.doc_id)
+        zip_content = await asyncio.wait_for(
+            edinet_client.download_xbrl(filing.doc_id),
+            timeout=30.0,
+        )
         if not zip_content:
             return
 
@@ -170,6 +180,8 @@ async def _enrich_from_xbrl(filing: Filing):
             filing.holding_ratio or 0,
             filing.target_company_name or "N/A",
         )
+    except asyncio.TimeoutError:
+        logger.warning("XBRL download timed out for %s", filing.doc_id)
     except Exception as e:
         logger.error("Failed to enrich filing %s from XBRL: %s", filing.doc_id, e)
 
@@ -182,6 +194,9 @@ async def run_poller():
     while True:
         try:
             await poll_edinet()
+        except asyncio.CancelledError:
+            logger.info("Poller cancelled")
+            raise
         except Exception as e:
-            logger.error("Poller error: %s", e)
+            logger.error("Poller error: %s", e, exc_info=True)
         await asyncio.sleep(settings.POLL_INTERVAL)
