@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -10,14 +10,17 @@ class Filing(Base):
     """A large shareholding filing from EDINET."""
 
     __tablename__ = "filings"
+    __table_args__ = (
+        Index("ix_filings_submit_amendment", "submit_date_time", "is_amendment"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     doc_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     seq_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Filer info
-    edinet_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
-    filer_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    edinet_code: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+    filer_name: Mapped[str | None] = mapped_column(String(256), nullable=True, index=True)
     sec_code: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     jcn: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
@@ -49,7 +52,7 @@ class Filing(Base):
     purpose_of_holding: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Timestamps
-    submit_date_time: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    submit_date_time: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     period_start: Mapped[str | None] = mapped_column(String(16), nullable=True)
     period_end: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
@@ -99,7 +102,7 @@ class Filing(Base):
             "is_special_exemption": self.is_special_exemption,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "xbrl_parsed": self.xbrl_parsed,
-            "edinet_url": f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?S100{self.doc_id}"
+            "edinet_url": f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{self.doc_id}"
             if self.doc_id
             else None,
             "pdf_url": f"https://api.edinet-fsa.go.jp/api/v2/documents/{self.doc_id}?type=2"

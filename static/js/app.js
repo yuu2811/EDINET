@@ -56,6 +56,9 @@ function initEventListeners() {
         const btn = document.getElementById('btn-sound');
         btn.classList.toggle('active', state.soundEnabled);
         btn.title = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF';
+        btn.setAttribute('aria-pressed', state.soundEnabled);
+        btn.setAttribute('aria-label',
+            state.soundEnabled ? 'サウンドアラート: 有効' : 'サウンドアラート: 無効');
     });
 
     // Notification permission
@@ -69,6 +72,9 @@ function initEventListeners() {
         const btn = document.getElementById('btn-notify');
         btn.classList.toggle('active', state.notificationsEnabled);
         btn.title = state.notificationsEnabled ? '通知 ON' : '通知 OFF';
+        btn.setAttribute('aria-pressed', state.notificationsEnabled);
+        btn.setAttribute('aria-label',
+            state.notificationsEnabled ? 'デスクトップ通知: 有効' : 'デスクトップ通知: 無効');
     });
 
     // Manual poll
@@ -120,10 +126,13 @@ function initEventListeners() {
     });
 
     // Modal close
-    document.querySelector('.modal-close').addEventListener('click', closeModal);
-    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+    document.querySelector('#detail-modal .modal-close').addEventListener('click', closeModal);
+    document.querySelector('#detail-modal .modal-overlay').addEventListener('click', closeModal);
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeModal();
+        if (e.key === 'Escape') {
+            closeModal();
+            closeConfirmDialog();
+        }
     });
 }
 
@@ -227,7 +236,12 @@ function handleNewFiling(filing) {
     // Flash the new card
     setTimeout(() => {
         const firstCard = document.querySelector('.feed-card');
-        if (firstCard) firstCard.classList.add('flash');
+        if (firstCard) {
+            firstCard.classList.add('flash');
+            firstCard.addEventListener('animationend', () => {
+                firstCard.classList.remove('flash');
+            }, { once: true });
+        }
     }, 50);
 
     // Play sound
@@ -293,6 +307,18 @@ function renderFeed() {
     });
 }
 
+function isWatchlistMatch(f) {
+    for (const w of state.watchlist) {
+        if (w.sec_code && (f.sec_code === w.sec_code || f.target_sec_code === w.sec_code)) return true;
+        if (w.edinet_code && (f.subject_edinet_code === w.edinet_code || f.issuer_edinet_code === w.edinet_code)) return true;
+        if (w.company_name && (
+            (f.target_company_name || '').includes(w.company_name) ||
+            (f.filer_name || '').includes(w.company_name)
+        )) return true;
+    }
+    return false;
+}
+
 function createFeedCard(f) {
     const isChange = f.doc_description && f.doc_description.includes('変更');
     const cardClass = f.is_amendment ? 'amendment' : isChange ? 'change-report' : 'new-report';
@@ -311,6 +337,11 @@ function createFeedCard(f) {
         badge += '<span class="card-badge badge-special">特例</span>';
     }
 
+    // Watchlist match badge
+    if (isWatchlistMatch(f)) {
+        badge += '<span class="card-badge badge-watchlist">WATCH</span>';
+    }
+
     // Time
     const time = f.submit_date_time
         ? f.submit_date_time.split(' ').pop() || f.submit_date_time
@@ -321,13 +352,15 @@ function createFeedCard(f) {
     const target = f.target_company_name || '(対象不明)';
     const targetCode = f.target_sec_code ? `[${f.target_sec_code}]` : '';
 
-    // Ratio
+    // Ratio with change indicator
     let ratioHtml = '';
     if (f.holding_ratio != null) {
         const ratioClass = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : 'neutral';
-        const changeStr = f.ratio_change != null
-            ? `<span class="card-ratio-change">(${f.ratio_change > 0 ? '+' : ''}${f.ratio_change.toFixed(2)}%)</span>`
-            : '';
+        let changeStr = '';
+        if (f.ratio_change != null) {
+            const arrow = f.ratio_change > 0 ? '▲' : '▼';
+            changeStr = `<span class="card-ratio-change">${arrow}${Math.abs(f.ratio_change).toFixed(2)}%</span>`;
+        }
         ratioHtml = `<span class="card-ratio ${ratioClass}">${f.holding_ratio.toFixed(2)}% ${changeStr}</span>`;
     } else {
         ratioHtml = '<span class="card-ratio neutral">-</span>';
@@ -336,17 +369,17 @@ function createFeedCard(f) {
     // Links
     let links = '';
     if (f.pdf_url) {
-        links += `<a href="${f.pdf_url}" target="_blank" class="card-link" onclick="event.stopPropagation()">PDF</a>`;
+        links += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="card-link" onclick="event.stopPropagation()">PDF</a>`;
     }
     if (f.edinet_url) {
-        links += `<a href="${f.edinet_url}" target="_blank" class="card-link" onclick="event.stopPropagation()">EDINET</a>`;
+        links += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="card-link" onclick="event.stopPropagation()">EDINET</a>`;
     }
 
     return `
-        <div class="feed-card ${cardClass}" data-doc-id="${f.doc_id}">
+        <div class="feed-card ${cardClass}" data-doc-id="${escapeHtml(f.doc_id)}" role="article">
             <div class="card-top">
-                <span class="card-time">${escapeHtml(time)}</span>
                 <div>${badge}</div>
+                <span class="card-time">${escapeHtml(time)}</span>
             </div>
             <div class="card-main">
                 <span class="card-filer">${escapeHtml(filer)}</span>
@@ -396,17 +429,26 @@ function renderWatchlist() {
                 <span class="watch-name">${escapeHtml(w.company_name)}</span>
                 <span class="watch-code">${escapeHtml(w.sec_code || '')}</span>
             </div>
-            <button class="watch-delete" data-id="${w.id}" title="削除">&times;</button>
+            <button class="watch-delete" data-id="${w.id}"
+                    aria-label="削除: ${escapeHtml(w.company_name)}"
+                    title="削除">&times;</button>
         </div>`
     ).join('');
 
-    // Delete handlers
+    // Delete handlers (with confirm dialog)
     container.querySelectorAll('.watch-delete').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
             const id = e.target.dataset.id;
-            await deleteWatchItem(id);
+            const item = state.watchlist.find(w => String(w.id) === String(id));
+            if (item) {
+                showDeleteConfirm(item.company_name, id);
+            }
         });
     });
+
+    // Re-render feed to update watchlist badges
+    renderFeed();
 }
 
 function updateTicker() {
@@ -468,29 +510,86 @@ async function deleteWatchItem(id) {
 }
 
 function checkWatchlistMatch(filing) {
-    for (const w of state.watchlist) {
-        const match =
+    if (!isWatchlistMatch(filing)) return;
+
+    // Highlight the card
+    setTimeout(() => {
+        const card = document.querySelector(`[data-doc-id="${filing.doc_id}"]`);
+        if (card) {
+            card.classList.add('watchlist-match');
+            card.addEventListener('animationend', () => {
+                card.classList.remove('watchlist-match');
+            }, { once: true });
+        }
+    }, 100);
+
+    // Extra notification for watchlist match
+    if (state.notificationsEnabled) {
+        const matched = state.watchlist.find(w =>
             (w.sec_code && (filing.sec_code === w.sec_code || filing.target_sec_code === w.sec_code)) ||
             (w.company_name && (
                 (filing.target_company_name || '').includes(w.company_name) ||
                 (filing.filer_name || '').includes(w.company_name)
-            ));
-
-        if (match) {
-            // Extra notification for watchlist match
-            if (state.notificationsEnabled) {
-                new Notification(`WATCHLIST: ${w.company_name}`, {
+            ))
+        );
+        if (matched) {
+            try {
+                new Notification(`WATCHLIST: ${matched.company_name}`, {
                     body: `${filing.filer_name || ''} - ${filing.doc_description || ''}`,
-                    icon: '📊',
                     tag: `watchlist-${filing.doc_id}`,
+                    requireInteraction: true,
                 });
+            } catch (e) {
+                console.warn('Watchlist notification failed:', e);
             }
-            if (state.soundEnabled) {
-                // Play a different (higher) alert for watchlist
-                playAlertSound(880);
-            }
-            break;
         }
+    }
+    if (state.soundEnabled) {
+        // Play a different (higher) alert for watchlist
+        playAlertSound(880);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Confirm Dialog
+// ---------------------------------------------------------------------------
+
+function showDeleteConfirm(companyName, itemId) {
+    const dialog = document.getElementById('confirm-dialog');
+    const message = document.getElementById('dialog-message');
+    message.textContent = `「${companyName}」をウォッチリストから削除しますか？`;
+    dialog.classList.remove('hidden');
+
+    const confirmBtn = document.getElementById('dialog-confirm');
+    const cancelBtn = document.getElementById('dialog-cancel');
+
+    const cleanup = () => {
+        dialog.classList.add('hidden');
+        confirmBtn.replaceWith(confirmBtn.cloneNode(true));
+        cancelBtn.replaceWith(cancelBtn.cloneNode(true));
+    };
+
+    confirmBtn.addEventListener('click', () => {
+        cleanup();
+        deleteWatchItem(itemId);
+    }, { once: true });
+
+    cancelBtn.addEventListener('click', () => {
+        cleanup();
+    }, { once: true });
+
+    // Also close on overlay click
+    dialog.querySelector('.modal-overlay').addEventListener('click', () => {
+        cleanup();
+    }, { once: true });
+
+    confirmBtn.focus();
+}
+
+function closeConfirmDialog() {
+    const dialog = document.getElementById('confirm-dialog');
+    if (!dialog.classList.contains('hidden')) {
+        dialog.classList.add('hidden');
     }
 }
 
@@ -523,8 +622,9 @@ function openModal(filing) {
     }
     if (filing.ratio_change != null) {
         const cls = filing.ratio_change > 0 ? 'positive' : filing.ratio_change < 0 ? 'negative' : '';
+        const arrow = filing.ratio_change > 0 ? '▲' : '▼';
         rows.push(['変動', {
-            html: `<span class="detail-value ${cls}">${filing.ratio_change > 0 ? '+' : ''}${filing.ratio_change.toFixed(2)}%</span>`,
+            html: `<span class="detail-value ${cls}">${arrow}${Math.abs(filing.ratio_change).toFixed(2)}%</span>`,
         }]);
     }
     if (filing.shares_held != null) {
@@ -537,10 +637,10 @@ function openModal(filing) {
     // Links
     const links = [];
     if (filing.pdf_url) {
-        links.push(`<a href="${filing.pdf_url}" target="_blank">PDF ダウンロード</a>`);
+        links.push(`<a href="${filing.pdf_url}" target="_blank" rel="noopener">PDF ダウンロード</a>`);
     }
     if (filing.edinet_url) {
-        links.push(`<a href="${filing.edinet_url}" target="_blank">EDINET で閲覧</a>`);
+        links.push(`<a href="${filing.edinet_url}" target="_blank" rel="noopener">EDINET で閲覧</a>`);
     }
     if (links.length > 0) {
         rows.push(['リンク', { html: `<span class="detail-value">${links.join(' | ')}</span>` }]);
