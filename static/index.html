@@ -2,7 +2,14 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+    <meta name="theme-color" content="#0a0a0f">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="EDINET">
+    <meta name="format-detection" content="telephone=no">
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="apple-touch-icon" href="/static/icon.svg">
     <title>EDINET 大量保有モニター</title>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
@@ -146,6 +153,90 @@
             </div>
         </div>
     </div>
+
+    <!-- Mobile Overlay Panels -->
+    <div id="mobile-stats-panel" class="sidebar-overlay hidden">
+        <div class="overlay-backdrop"></div>
+        <div class="overlay-sheet">
+            <div class="overlay-handle"></div>
+            <div class="overlay-header">
+                <span class="panel-title">TODAY'S STATS</span>
+                <button class="overlay-close" aria-label="閉じる">&times;</button>
+            </div>
+            <div class="overlay-body" id="mobile-stats-body">
+                <!-- Stats content will be cloned here by JS -->
+            </div>
+        </div>
+    </div>
+
+    <div id="mobile-watchlist-panel" class="sidebar-overlay hidden">
+        <div class="overlay-backdrop"></div>
+        <div class="overlay-sheet">
+            <div class="overlay-handle"></div>
+            <div class="overlay-header">
+                <span class="panel-title">WATCHLIST</span>
+                <button class="overlay-close" aria-label="閉じる">&times;</button>
+            </div>
+            <div class="overlay-body" id="mobile-watchlist-body">
+                <!-- Watchlist content will be cloned here by JS -->
+            </div>
+        </div>
+    </div>
+
+    <div id="mobile-settings-panel" class="sidebar-overlay hidden">
+        <div class="overlay-backdrop"></div>
+        <div class="overlay-sheet">
+            <div class="overlay-handle"></div>
+            <div class="overlay-header">
+                <span class="panel-title">SETTINGS</span>
+                <button class="overlay-close" aria-label="閉じる">&times;</button>
+            </div>
+            <div class="overlay-body">
+                <div class="settings-list">
+                    <div class="settings-item">
+                        <span class="settings-label">サウンドアラート</span>
+                        <button id="mobile-btn-sound" class="settings-toggle active" aria-label="サウンド切替">ON</button>
+                    </div>
+                    <div class="settings-item">
+                        <span class="settings-label">デスクトップ通知</span>
+                        <button id="mobile-btn-notify" class="settings-toggle" aria-label="通知切替">OFF</button>
+                    </div>
+                    <div class="settings-item">
+                        <span class="settings-label">手動ポーリング</span>
+                        <button id="mobile-btn-poll" class="settings-toggle" aria-label="手動ポーリング">実行</button>
+                    </div>
+                    <div class="settings-item settings-info">
+                        <span class="settings-label">接続状態</span>
+                        <span id="mobile-connection-status" class="text-green">LIVE</span>
+                    </div>
+                    <div class="settings-item settings-info">
+                        <span class="settings-label">現在時刻</span>
+                        <span id="mobile-clock" class="text-cyan">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mobile Bottom Navigation -->
+    <nav id="mobile-nav" class="mobile-bottom-nav" aria-label="モバイルナビゲーション">
+        <button class="nav-item active" data-panel="feed" aria-label="フィード">
+            <span class="nav-icon">&#128220;</span>
+            <span class="nav-label">フィード</span>
+        </button>
+        <button class="nav-item" data-panel="stats" aria-label="統計">
+            <span class="nav-icon">&#128202;</span>
+            <span class="nav-label">統計</span>
+        </button>
+        <button class="nav-item" data-panel="watchlist" aria-label="ウォッチ">
+            <span class="nav-icon">&#9733;</span>
+            <span class="nav-label">ウォッチ</span>
+        </button>
+        <button class="nav-item" data-panel="settings" aria-label="設定">
+            <span class="nav-icon">&#9881;</span>
+            <span class="nav-label">設定</span>
+        </button>
+    </nav>
 
     <script src="/static/js/app.js"></script>
 </body>
