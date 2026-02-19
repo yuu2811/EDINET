@@ -137,37 +137,70 @@ body {
     gap: 8px;
 }
 
-.status {
-    display: flex;
+/* Connection Status Indicator */
+.connection-status {
+    display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     font-size: var(--font-size-xs);
     padding: 2px 8px;
     border-radius: 3px;
+    font-weight: bold;
+    letter-spacing: 0.5px;
 }
 
-.status.connected {
+.connection-status.connected {
     color: var(--green);
 }
 
-.status.disconnected {
+.connection-status.disconnected {
     color: var(--red);
 }
 
+.connection-status.reconnecting {
+    color: var(--amber);
+}
+
 .status-dot {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
-    background: currentColor;
+    display: inline-block;
+    flex-shrink: 0;
 }
 
-.status.connected .status-dot {
-    animation: pulse 2s infinite;
+.status-dot.connected {
+    background: var(--green);
+    animation: pulse-connected 2s ease-in-out infinite;
 }
 
-@keyframes pulse {
+.status-dot.disconnected {
+    background: var(--red);
+}
+
+.status-dot.reconnecting {
+    background: var(--amber);
+    animation: blink-reconnecting 1s ease-in-out infinite;
+}
+
+.status-text {
+    line-height: 1;
+}
+
+@keyframes pulse-connected {
+    0%, 100% {
+        opacity: 1;
+        box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.4);
+    }
+    50% {
+        opacity: 0.7;
+        box-shadow: 0 0 4px 2px rgba(0, 230, 118, 0.2);
+    }
+}
+
+@keyframes blink-reconnecting {
     0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+    50% { opacity: 0.2; }
 }
 
 .btn-icon {
@@ -345,6 +378,22 @@ body {
     text-align: center;
     padding: 40px 20px;
     font-size: var(--font-size-sm);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.empty-icon {
+    font-size: 28px;
+    opacity: 0.4;
+    line-height: 1;
+}
+
+.empty-text {
+    color: var(--text-dim);
+    font-size: var(--font-size-sm);
+    line-height: 1.4;
 }
 
 /* ==========================================================================
@@ -660,6 +709,19 @@ body {
     color: var(--text-dim);
     text-align: center;
     padding: 16px 10px;
+    font-size: var(--font-size-xs);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.watchlist-empty .empty-icon {
+    font-size: 20px;
+    opacity: 0.4;
+}
+
+.watchlist-empty .empty-text {
     font-size: var(--font-size-xs);
 }
 

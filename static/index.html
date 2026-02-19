@@ -17,9 +17,9 @@
             <span id="current-time" class="clock"></span>
         </div>
         <div class="header-right">
-            <span id="connection-status" class="status disconnected" aria-live="polite" aria-atomic="true">
-                <span class="status-dot" aria-hidden="true"></span>
-                <span class="status-text">接続中...</span>
+            <span id="connection-status" class="connection-status disconnected" aria-live="polite" aria-atomic="true">
+                <span class="status-dot disconnected" aria-hidden="true"></span>
+                <span class="status-text">DISCONNECTED</span>
             </span>
             <button id="btn-notify" class="btn-icon" title="通知を有効にする" aria-label="デスクトップ通知" aria-pressed="false">&#128276;</button>
             <button id="btn-sound" class="btn-icon active" title="サウンド ON/OFF" aria-label="サウンドアラート: 有効" aria-pressed="true">&#128266;</button>
@@ -54,7 +54,10 @@
                 </div>
             </div>
             <div id="feed-list" class="feed-list" role="feed" aria-label="報告書一覧">
-                <div class="feed-empty">データを読み込んでいます...</div>
+                <div class="feed-empty">
+                    <div class="empty-icon">&#128196;</div>
+                    <div class="empty-text">報告書が見つかりません</div>
+                </div>
             </div>
         </div>
 
@@ -100,7 +103,10 @@
                     <button id="btn-cancel-watch" class="btn-small">取消</button>
                 </div>
                 <div id="watchlist-items" class="watchlist-items">
-                    <div class="watchlist-empty">ウォッチリストは空です</div>
+                    <div class="watchlist-empty">
+                        <div class="empty-icon">&#9734;</div>
+                        <div class="empty-text">ウォッチリストに企業を追加してください</div>
+                    </div>
                 </div>
             </div>
 

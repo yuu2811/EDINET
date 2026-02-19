@@ -13,6 +13,7 @@ class Settings:
     )
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
     # Large shareholding report docTypeCodes
     LARGE_HOLDING_DOC_TYPES: list[str] = ["350", "360"]

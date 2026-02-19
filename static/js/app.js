@@ -22,10 +22,88 @@ let eventSource = null;
 let audioCtx = null;
 
 // ---------------------------------------------------------------------------
+// localStorage Persistence
+// ---------------------------------------------------------------------------
+
+const PREFS_PREFIX = 'edinet_';
+
+function savePreferences() {
+    try {
+        const prefs = {
+            filterMode: state.filterMode,
+            searchQuery: state.searchQuery,
+            soundEnabled: state.soundEnabled,
+            notificationsEnabled: state.notificationsEnabled,
+            watchlistPanelOpen: !document.getElementById('watchlist-panel').classList.contains('panel-collapsed'),
+        };
+        localStorage.setItem(PREFS_PREFIX + 'preferences', JSON.stringify(prefs));
+    } catch (e) {
+        console.warn('Failed to save preferences:', e);
+    }
+}
+
+function loadPreferences() {
+    try {
+        const raw = localStorage.getItem(PREFS_PREFIX + 'preferences');
+        if (!raw) return;
+        const prefs = JSON.parse(raw);
+
+        // Restore filter mode
+        if (prefs.filterMode) {
+            state.filterMode = prefs.filterMode;
+            const filterEl = document.getElementById('feed-filter');
+            if (filterEl) filterEl.value = prefs.filterMode;
+        }
+
+        // Restore search text
+        if (prefs.searchQuery) {
+            state.searchQuery = prefs.searchQuery;
+            const searchEl = document.getElementById('feed-search');
+            if (searchEl) searchEl.value = prefs.searchQuery;
+        }
+
+        // Restore sound preference
+        if (typeof prefs.soundEnabled === 'boolean') {
+            state.soundEnabled = prefs.soundEnabled;
+            const btn = document.getElementById('btn-sound');
+            if (btn) {
+                btn.classList.toggle('active', state.soundEnabled);
+                btn.title = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF';
+                btn.setAttribute('aria-pressed', state.soundEnabled);
+                btn.setAttribute('aria-label',
+                    state.soundEnabled ? 'サウンドアラート: 有効' : 'サウンドアラート: 無効');
+            }
+        }
+
+        // Restore notification preference
+        if (typeof prefs.notificationsEnabled === 'boolean') {
+            state.notificationsEnabled = prefs.notificationsEnabled;
+            const btn = document.getElementById('btn-notify');
+            if (btn) {
+                btn.classList.toggle('active', state.notificationsEnabled);
+                btn.title = state.notificationsEnabled ? '通知 ON' : '通知 OFF';
+                btn.setAttribute('aria-pressed', state.notificationsEnabled);
+                btn.setAttribute('aria-label',
+                    state.notificationsEnabled ? 'デスクトップ通知: 有効' : 'デスクトップ通知: 無効');
+            }
+        }
+
+        // Restore watchlist panel open/closed state
+        if (typeof prefs.watchlistPanelOpen === 'boolean' && !prefs.watchlistPanelOpen) {
+            const panel = document.getElementById('watchlist-panel');
+            if (panel) panel.classList.add('panel-collapsed');
+        }
+    } catch (e) {
+        console.warn('Failed to load preferences:', e);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Initialization
 // ---------------------------------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', () => {
+    loadPreferences();
     initClock();
     initSSE();
     initEventListeners();
@@ -59,6 +137,7 @@ function initEventListeners() {
         btn.setAttribute('aria-pressed', state.soundEnabled);
         btn.setAttribute('aria-label',
             state.soundEnabled ? 'サウンドアラート: 有効' : 'サウンドアラート: 無効');
+        savePreferences();
     });
 
     // Notification permission
@@ -75,6 +154,7 @@ function initEventListeners() {
         btn.setAttribute('aria-pressed', state.notificationsEnabled);
         btn.setAttribute('aria-label',
             state.notificationsEnabled ? 'デスクトップ通知: 有効' : 'デスクトップ通知: 無効');
+        savePreferences();
     });
 
     // Manual poll
@@ -97,12 +177,14 @@ function initEventListeners() {
     document.getElementById('feed-search').addEventListener('input', (e) => {
         state.searchQuery = e.target.value.toLowerCase();
         renderFeed();
+        savePreferences();
     });
 
     // Feed filter
     document.getElementById('feed-filter').addEventListener('change', (e) => {
         state.filterMode = e.target.value;
         renderFeed();
+        savePreferences();
     });
 
     // Watchlist add
@@ -145,10 +227,11 @@ function initSSE() {
         eventSource.close();
     }
 
+    setConnectionStatus('reconnecting');
     eventSource = new EventSource('/api/stream');
 
     eventSource.addEventListener('connected', () => {
-        setConnectionStatus(true);
+        setConnectionStatus('connected');
         console.log('SSE connected');
     });
 
@@ -163,20 +246,44 @@ function initSSE() {
     });
 
     eventSource.onopen = () => {
-        setConnectionStatus(true);
+        setConnectionStatus('connected');
     };
 
     eventSource.onerror = () => {
-        setConnectionStatus(false);
+        // EventSource readyState: 0=CONNECTING, 1=OPEN, 2=CLOSED
+        if (eventSource.readyState === EventSource.CONNECTING) {
+            setConnectionStatus('reconnecting');
+        } else {
+            setConnectionStatus('disconnected');
+        }
         // EventSource auto-reconnects
     };
 }
 
-function setConnectionStatus(connected) {
-    state.connected = connected;
+function setConnectionStatus(status) {
+    // status: 'connected' | 'disconnected' | 'reconnecting'
+    state.connected = status === 'connected';
     const el = document.getElementById('connection-status');
-    el.className = `status ${connected ? 'connected' : 'disconnected'}`;
-    el.querySelector('.status-text').textContent = connected ? '接続中' : '切断';
+    const dot = el.querySelector('.status-dot');
+    const text = el.querySelector('.status-text');
+
+    // Remove all state classes
+    el.className = 'connection-status';
+    dot.className = 'status-dot';
+
+    if (status === 'connected') {
+        el.classList.add('connected');
+        dot.classList.add('connected');
+        text.textContent = 'LIVE';
+    } else if (status === 'reconnecting') {
+        el.classList.add('reconnecting');
+        dot.classList.add('reconnecting');
+        text.textContent = 'RECONNECTING...';
+    } else {
+        el.classList.add('disconnected');
+        dot.classList.add('disconnected');
+        text.textContent = 'DISCONNECTED';
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -289,7 +396,10 @@ function renderFeed() {
     }
 
     if (filtered.length === 0) {
-        container.innerHTML = '<div class="feed-empty">該当する報告書はありません</div>';
+        container.innerHTML = `<div class="feed-empty">
+            <div class="empty-icon">&#128196;</div>
+            <div class="empty-text">報告書が見つかりません</div>
+        </div>`;
         return;
     }
 
@@ -419,7 +529,10 @@ function renderStats() {
 function renderWatchlist() {
     const container = document.getElementById('watchlist-items');
     if (state.watchlist.length === 0) {
-        container.innerHTML = '<div class="watchlist-empty">ウォッチリストは空です</div>';
+        container.innerHTML = `<div class="watchlist-empty">
+            <div class="empty-icon">&#9734;</div>
+            <div class="empty-text">ウォッチリストに企業を追加してください</div>
+        </div>`;
         return;
     }
 
