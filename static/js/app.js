@@ -21,6 +21,9 @@ const state = {
 
 let eventSource = null;
 let audioCtx = null;
+let pollCountdownInterval = null;
+let lastPollTime = Date.now();
+const POLL_INTERVAL_MS = 60000; // matches server default
 
 // ---------------------------------------------------------------------------
 // Mobile Detection
@@ -122,6 +125,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     loadPreferences();
     initClock();
+    initPollCountdown();
     initSSE();
     initEventListeners();
     initDateNav();
@@ -148,6 +152,21 @@ function initClock() {
     }
     update();
     setInterval(update, 1000);
+}
+
+function initPollCountdown() {
+    const el = document.getElementById('poll-countdown');
+    if (!el) return;
+
+    function update() {
+        const elapsed = Date.now() - lastPollTime;
+        const remaining = Math.max(0, Math.ceil((POLL_INTERVAL_MS - elapsed) / 1000));
+        el.textContent = `${remaining}s`;
+        el.classList.toggle('soon', remaining <= 10);
+    }
+
+    update();
+    pollCountdownInterval = setInterval(update, 1000);
 }
 
 function initEventListeners() {
@@ -187,6 +206,7 @@ function initEventListeners() {
         btn.style.opacity = '0.5';
         try {
             await fetch('/api/poll', { method: 'POST' });
+            lastPollTime = Date.now();
         } catch (e) {
             console.error('Poll trigger failed:', e);
         }
@@ -237,6 +257,16 @@ function initEventListeners() {
         if (e.key === 'Escape') {
             closeModal();
             closeConfirmDialog();
+        }
+        // Arrow key navigation in modal
+        const modal = document.getElementById('detail-modal');
+        if (modal && !modal.classList.contains('hidden')) {
+            const idx = parseInt(modal.dataset.filingIndex, 10);
+            if (e.key === 'ArrowLeft' && idx > 0) {
+                openModal(state.filings[idx - 1]);
+            } else if (e.key === 'ArrowRight' && idx < state.filings.length - 1) {
+                openModal(state.filings[idx + 1]);
+            }
         }
     });
 }
@@ -370,6 +400,7 @@ async function loadWatchlist() {
 // ---------------------------------------------------------------------------
 
 function handleNewFiling(filing) {
+    lastPollTime = Date.now();
     // Add to top of list
     state.filings.unshift(filing);
 
@@ -453,6 +484,8 @@ function renderFeed() {
             if (filing) openModal(filing);
         });
     });
+
+    renderSummary();
 }
 
 function isWatchlistMatch(f) {
@@ -567,6 +600,9 @@ function createFeedCard(f) {
 function renderStats() {
     const s = state.stats;
     document.getElementById('stat-total').textContent = s.today_total ?? '-';
+    // Update header filing count badge
+    const badge = document.getElementById('filing-count-badge');
+    if (badge) badge.textContent = s.today_total ?? '0';
     document.getElementById('stat-new').textContent = s.today_new_reports ?? '-';
     document.getElementById('stat-amendments').textContent = s.today_amendments ?? '-';
     document.getElementById('stat-clients').textContent = s.connected_clients ?? '-';
@@ -590,6 +626,76 @@ function renderStats() {
     } else {
         filersList.innerHTML = '<div class="filers-empty">本日の提出なし</div>';
     }
+
+    renderSummary();
+}
+
+function renderSummary() {
+    const container = document.getElementById('summary-content');
+    if (!container) return;
+
+    const filings = state.filings.filter(f => f.ratio_change != null && f.ratio_change !== 0);
+
+    if (filings.length === 0) {
+        container.innerHTML = '<div class="summary-empty">データなし</div>';
+        return;
+    }
+
+    const increases = filings.filter(f => f.ratio_change > 0);
+    const decreases = filings.filter(f => f.ratio_change < 0);
+    const avgChange = filings.reduce((sum, f) => sum + f.ratio_change, 0) / filings.length;
+
+    let largestIncrease = null;
+    let largestDecrease = null;
+
+    for (const f of filings) {
+        if (!largestIncrease || f.ratio_change > largestIncrease.ratio_change) {
+            largestIncrease = f;
+        }
+        if (!largestDecrease || f.ratio_change < largestDecrease.ratio_change) {
+            largestDecrease = f;
+        }
+    }
+
+    const avgClass = avgChange > 0 ? 'positive' : avgChange < 0 ? 'negative' : 'neutral';
+    const avgSign = avgChange > 0 ? '+' : '';
+
+    let html = `
+        <div class="summary-row">
+            <span class="summary-label">増加</span>
+            <span class="summary-value positive">${increases.length}件</span>
+        </div>
+        <div class="summary-row">
+            <span class="summary-label">減少</span>
+            <span class="summary-value negative">${decreases.length}件</span>
+        </div>
+        <div class="summary-row">
+            <span class="summary-label">平均変動</span>
+            <span class="summary-value ${avgClass}">${avgSign}${avgChange.toFixed(2)}%</span>
+        </div>
+    `;
+
+    if (largestIncrease && largestIncrease.ratio_change > 0) {
+        const name = largestIncrease.target_company_name || largestIncrease.filer_name || '不明';
+        html += `
+        <div class="summary-highlight">
+            <div class="summary-highlight-label">最大増加</div>
+            <div class="summary-highlight-value positive">+${largestIncrease.ratio_change.toFixed(2)}%</div>
+            <div class="summary-highlight-company">${escapeHtml(name)}</div>
+        </div>`;
+    }
+
+    if (largestDecrease && largestDecrease.ratio_change < 0) {
+        const name = largestDecrease.target_company_name || largestDecrease.filer_name || '不明';
+        html += `
+        <div class="summary-highlight">
+            <div class="summary-highlight-label">最大減少</div>
+            <div class="summary-highlight-value negative">${largestDecrease.ratio_change.toFixed(2)}%</div>
+            <div class="summary-highlight-company">${escapeHtml(name)}</div>
+        </div>`;
+    }
+
+    container.innerHTML = html;
 }
 
 function renderWatchlist() {
@@ -789,23 +895,43 @@ function openModal(filing) {
         ['対象証券コード', filing.target_sec_code || '-'],
     ];
 
-    // Ratio section
+    // Visual ratio gauge section
+    let ratioGaugeHtml = '';
     if (filing.holding_ratio != null) {
-        const ratioClass = filing.ratio_change > 0 ? 'positive' : filing.ratio_change < 0 ? 'negative' : '';
-        rows.push(['保有割合', {
-            html: `<span class="detail-value large ${ratioClass}">${filing.holding_ratio.toFixed(2)}%</span>`,
-        }]);
+        const ratioClass = filing.ratio_change > 0 ? 'positive' : filing.ratio_change < 0 ? 'negative' : 'neutral';
+        const currWidth = Math.min(filing.holding_ratio, 100);
+        const prevWidth = filing.previous_holding_ratio != null ? Math.min(filing.previous_holding_ratio, 100) : 0;
+
+        let changeText = '';
+        if (filing.ratio_change != null && filing.ratio_change !== 0) {
+            const arrow = filing.ratio_change > 0 ? '▲' : '▼';
+            const sign = filing.ratio_change > 0 ? '+' : '';
+            changeText = `<span class="modal-ratio-change ${ratioClass}">${arrow} ${sign}${filing.ratio_change.toFixed(2)}%</span>`;
+        }
+
+        ratioGaugeHtml = `
+            <div class="modal-ratio-section">
+                <div class="modal-ratio-header">
+                    <span class="modal-ratio-value ${ratioClass}">${filing.holding_ratio.toFixed(2)}%</span>
+                    ${changeText}
+                </div>
+                <div class="modal-ratio-gauge">
+                    ${prevWidth > 0 ? `<div class="gauge-bar gauge-prev" style="width: ${prevWidth}%"></div>` : ''}
+                    <div class="gauge-bar gauge-curr ${ratioClass}" style="width: ${currWidth}%"></div>
+                    <div class="gauge-labels">
+                        ${filing.previous_holding_ratio != null ?
+                            `<span class="gauge-label" style="left: ${prevWidth}%">前回 ${filing.previous_holding_ratio.toFixed(2)}%</span>` : ''}
+                    </div>
+                </div>
+                <div class="modal-ratio-footer">
+                    <span>0%</span>
+                    <span>50%</span>
+                    <span>100%</span>
+                </div>
+            </div>
+        `;
     }
-    if (filing.previous_holding_ratio != null) {
-        rows.push(['前回保有割合', `${filing.previous_holding_ratio.toFixed(2)}%`]);
-    }
-    if (filing.ratio_change != null) {
-        const cls = filing.ratio_change > 0 ? 'positive' : filing.ratio_change < 0 ? 'negative' : '';
-        const arrow = filing.ratio_change > 0 ? '▲' : '▼';
-        rows.push(['変動', {
-            html: `<span class="detail-value ${cls}">${arrow}${Math.abs(filing.ratio_change).toFixed(2)}%</span>`,
-        }]);
-    }
+
     if (filing.shares_held != null) {
         rows.push(['保有株数', filing.shares_held.toLocaleString()]);
     }
@@ -825,7 +951,7 @@ function openModal(filing) {
         rows.push(['リンク', { html: `<span class="detail-value">${links.join(' | ')}</span>` }]);
     }
 
-    body.innerHTML = rows.map(([label, value]) => {
+    body.innerHTML = ratioGaugeHtml + rows.map(([label, value]) => {
         const valHtml = typeof value === 'object' && value.html
             ? value.html
             : `<span class="detail-value">${escapeHtml(String(value))}</span>`;
@@ -835,6 +961,9 @@ function openModal(filing) {
         </div>`;
     }).join('');
 
+    // Store current filing index for keyboard navigation
+    const currentIndex = state.filings.findIndex(f => f.doc_id === filing.doc_id);
+    document.getElementById('detail-modal').dataset.filingIndex = currentIndex;
     document.getElementById('detail-modal').classList.remove('hidden');
 }
 

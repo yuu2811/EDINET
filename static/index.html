@@ -22,6 +22,8 @@
         </div>
         <div class="header-center">
             <span id="current-time" class="clock"></span>
+            <span id="filing-count-badge" class="filing-count-badge" title="本日の提出数">0</span>
+            <span id="poll-countdown" class="poll-countdown" title="次回ポーリングまで">--s</span>
         </div>
         <div class="header-right">
             <span id="connection-status" class="connection-status disconnected" aria-live="polite" aria-atomic="true">
@@ -99,6 +101,16 @@
                         <span class="stat-value" id="stat-clients">-</span>
                         <span class="stat-label">接続数</span>
                     </div>
+                </div>
+            </div>
+
+            <!-- Market Summary Panel -->
+            <div id="summary-panel" class="panel" role="region" aria-label="マーケットサマリー">
+                <div class="panel-header">
+                    <span class="panel-title">SUMMARY</span>
+                </div>
+                <div id="summary-content" class="summary-content">
+                    <div class="summary-empty">-</div>
                 </div>
             </div>
 

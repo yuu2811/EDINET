@@ -131,6 +131,34 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
+.header-center {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.filing-count-badge {
+    background: #b36a00;
+    color: #fff;
+    font-size: 10px;
+    font-weight: bold;
+    padding: 1px 6px;
+    border-radius: 8px;
+    min-width: 20px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.poll-countdown {
+    font-size: 10px;
+    color: #707088;
+    font-variant-numeric: tabular-nums;
+}
+
+.poll-countdown.soon {
+    color: #ff9800;
+}
+
 .header-right {
     display: flex;
     align-items: center;
@@ -928,6 +956,106 @@ body {
     color: var(--red);
 }
 
+/* Modal Ratio Gauge */
+.modal-ratio-section {
+    background: #1a1a28;
+    border: 1px solid #2a2a3e;
+    border-radius: 4px;
+    padding: 12px;
+    margin-bottom: 12px;
+}
+
+.modal-ratio-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.modal-ratio-value {
+    font-size: 24px;
+    font-weight: bold;
+    font-variant-numeric: tabular-nums;
+}
+
+.modal-ratio-value.positive { color: #00e676; }
+.modal-ratio-value.negative { color: #ff1744; }
+.modal-ratio-value.neutral { color: #a0a0b8; }
+
+.modal-ratio-change {
+    font-size: 14px;
+    font-weight: bold;
+    padding: 2px 8px;
+    border-radius: 3px;
+}
+
+.modal-ratio-change.positive {
+    background: rgba(0, 230, 118, 0.18);
+    color: #00e676;
+}
+
+.modal-ratio-change.negative {
+    background: rgba(255, 23, 68, 0.18);
+    color: #ff1744;
+}
+
+.modal-ratio-gauge {
+    position: relative;
+    height: 16px;
+    background: #0a0a0f;
+    border-radius: 4px;
+    overflow: visible;
+    margin: 8px 0 4px;
+}
+
+.gauge-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.4s ease;
+}
+
+.gauge-prev {
+    background: #555570;
+    opacity: 0.5;
+    z-index: 1;
+}
+
+.gauge-curr {
+    z-index: 2;
+}
+
+.gauge-curr.positive { background: #00e676; }
+.gauge-curr.negative { background: #ff1744; }
+.gauge-curr.neutral { background: #a0a0b8; }
+
+.gauge-labels {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    height: 20px;
+}
+
+.gauge-label {
+    position: absolute;
+    transform: translateX(-50%);
+    font-size: 9px;
+    color: #707088;
+    top: 2px;
+    white-space: nowrap;
+}
+
+.modal-ratio-footer {
+    display: flex;
+    justify-content: space-between;
+    font-size: 9px;
+    color: #555570;
+    margin-top: 4px;
+}
+
 /* ==========================================================================
    Confirm Dialog
    ========================================================================== */
@@ -1616,6 +1744,84 @@ body {
 
 .ratio-bar-curr.neutral {
     background: var(--text-dim);
+}
+
+/* ==========================================================================
+   Market Summary Panel
+   ========================================================================== */
+
+.summary-content {
+    padding: 8px;
+    font-size: 11px;
+}
+
+.summary-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 8px;
+    border-bottom: 1px solid #2a2a3e;
+}
+
+.summary-row:last-child {
+    border-bottom: none;
+}
+
+.summary-label {
+    color: #a0a0b8;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.summary-value {
+    font-weight: bold;
+    font-variant-numeric: tabular-nums;
+}
+
+.summary-value.positive {
+    color: #00e676;
+}
+
+.summary-value.negative {
+    color: #ff1744;
+}
+
+.summary-value.neutral {
+    color: #a0a0b8;
+}
+
+.summary-highlight {
+    padding: 6px 8px;
+    background: #1a1a28;
+    border-radius: 3px;
+    margin: 4px 0;
+}
+
+.summary-highlight-label {
+    font-size: 9px;
+    color: #707088;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+}
+
+.summary-highlight-value {
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.summary-highlight-company {
+    font-size: 10px;
+    color: #00bcd4;
+    margin-top: 1px;
+}
+
+.summary-empty {
+    color: #707088;
+    text-align: center;
+    padding: 16px 10px;
+    font-size: 11px;
 }
 
 /* ==========================================================================
