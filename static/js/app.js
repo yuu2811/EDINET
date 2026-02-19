@@ -140,6 +140,9 @@ function initClock() {
             minute: '2-digit',
             second: '2-digit',
         });
+        // Update mobile clock
+        const mobileClockEl = document.getElementById('mobile-clock');
+        if (mobileClockEl) mobileClockEl.textContent = clockEl.textContent;
     }
     update();
     setInterval(update, 1000);
@@ -301,6 +304,15 @@ function setConnectionStatus(status) {
         el.classList.add('disconnected');
         dot.classList.add('disconnected');
         text.textContent = 'DISCONNECTED';
+    }
+
+    // Update mobile connection status
+    const mobileStatus = document.getElementById('mobile-connection-status');
+    if (mobileStatus) {
+        mobileStatus.textContent = status === 'connected' ? 'LIVE' :
+                                    status === 'reconnecting' ? 'RECONNECTING...' : 'DISCONNECTED';
+        mobileStatus.className = status === 'connected' ? 'text-green' :
+                                  status === 'reconnecting' ? 'text-amber' : 'text-red';
     }
 }
 
