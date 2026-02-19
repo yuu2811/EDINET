@@ -2150,3 +2150,120 @@ body {
 .text-amber { color: var(--amber); }
 .text-cyan { color: var(--cyan); }
 .text-dim { color: var(--text-dim); }
+
+/* ==========================================================================
+   Stock Data Section (Modal)
+   ========================================================================== */
+
+.modal-stock-section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #1a1a2e;
+}
+
+.stock-loading {
+    text-align: center;
+    padding: 20px;
+    color: #666;
+    font-size: 12px;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+}
+
+.stock-no-data {
+    text-align: center;
+    padding: 12px;
+    color: #555;
+    font-size: 11px;
+}
+
+.stock-info-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 12px;
+    background: #0a0a14;
+    border-radius: 4px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+
+.stock-price {
+    font-size: 18px;
+    font-weight: 700;
+    color: #e0e0e8;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.stock-metric {
+    font-size: 12px;
+    color: #888;
+}
+
+.stock-metric strong {
+    color: #00ccff;
+    font-weight: 600;
+}
+
+.stock-chart-container {
+    width: 100%;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #08080e;
+    padding: 4px 0;
+}
+
+.stock-chart-container canvas {
+    display: block;
+    width: 100%;
+}
+
+/* ==========================================================================
+   Card Market Data
+   ========================================================================== */
+
+.card-market-data {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    font-size: 10px;
+    color: #666;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    padding: 2px 0;
+    margin-top: 4px;
+}
+
+.card-market-data span {
+    background: #0a0a14;
+    padding: 1px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+}
+
+/* ==========================================================================
+   Stock Data Section - Responsive (max-width: 480px)
+   ========================================================================== */
+
+@media (max-width: 480px) {
+    .stock-info-bar {
+        gap: 8px;
+        padding: 6px 8px;
+    }
+
+    .stock-price {
+        font-size: 15px;
+    }
+
+    .stock-metric {
+        font-size: 11px;
+    }
+
+    .modal-stock-section {
+        margin-top: 12px;
+        padding-top: 12px;
+    }
+}

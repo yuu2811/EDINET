@@ -27,6 +27,36 @@ let lastPollTime = Date.now();
 const POLL_INTERVAL_MS = 60000; // matches server default
 
 // ---------------------------------------------------------------------------
+// Stock Data Cache & Fetcher
+// ---------------------------------------------------------------------------
+
+const stockCache = {}; // { secCode: { data, fetchedAt } }
+const STOCK_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+async function fetchStockData(secCode) {
+    if (!secCode) return null;
+    // Normalize: strip trailing 0 if 5-digit code
+    const code = secCode.length === 5 ? secCode.slice(0, 4) : secCode;
+
+    // Check cache
+    const cached = stockCache[code];
+    if (cached && Date.now() - cached.fetchedAt < STOCK_CACHE_TTL) {
+        return cached.data;
+    }
+
+    try {
+        const resp = await fetch(`/api/stock/${code}`);
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        stockCache[code] = { data, fetchedAt: Date.now() };
+        return data;
+    } catch (e) {
+        console.warn('Stock data fetch failed:', e);
+        return null;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Mobile Detection
 // ---------------------------------------------------------------------------
 
@@ -374,8 +404,30 @@ async function loadFilings() {
         state.filings = data.filings || [];
         renderFeed();
         updateTicker();
+        preloadStockData();
     } catch (e) {
         console.error('Failed to load filings:', e);
+    }
+}
+
+function preloadStockData() {
+    const codes = new Set();
+    for (const f of state.filings) {
+        const code = f.target_sec_code || f.sec_code;
+        if (code) {
+            const normalized = code.length === 5 ? code.slice(0, 4) : code;
+            codes.add(normalized);
+        }
+    }
+    // Fetch up to 5 unique codes in background (staggered)
+    let delay = 0;
+    let count = 0;
+    for (const code of codes) {
+        if (count >= 5) break;
+        if (stockCache[code]) continue;
+        setTimeout(() => fetchStockData(code), delay);
+        delay += 2000; // 2s between each to avoid hammering
+        count++;
     }
 }
 
@@ -604,6 +656,24 @@ function createFeedCard(f) {
         links += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="card-link" onclick="event.stopPropagation()">EDINET</a>`;
     }
 
+    // Market data from cache
+    const secCode = f.target_sec_code || f.sec_code;
+    let marketDataHtml = '';
+    if (secCode) {
+        const code = secCode.length === 5 ? secCode.slice(0, 4) : secCode;
+        const cached = stockCache[code];
+        if (cached && cached.data) {
+            const sd = cached.data;
+            const parts = [];
+            if (sd.market_cap_display) parts.push(`時価:${sd.market_cap_display}`);
+            if (sd.pbr) parts.push(`PBR:${sd.pbr.toFixed(2)}倍`);
+            if (sd.current_price) parts.push(`\u00a5${sd.current_price.toLocaleString()}`);
+            if (parts.length > 0) {
+                marketDataHtml = `<div class="card-market-data">${parts.map(p => `<span>${p}</span>`).join('')}</div>`;
+            }
+        }
+    }
+
     return `
         <div class="feed-card ${cardClass}" data-doc-id="${escapeHtml(f.doc_id)}" role="article">
             <div class="card-top">
@@ -618,6 +688,7 @@ function createFeedCard(f) {
             </div>
             <div class="card-bottom">
                 ${ratioHtml}
+                ${marketDataHtml}
                 <div class="card-links">${links}</div>
             </div>
         </div>
@@ -906,6 +977,121 @@ function closeConfirmDialog() {
 }
 
 // ---------------------------------------------------------------------------
+// Stock Chart Renderer (Canvas-based Candlestick)
+// ---------------------------------------------------------------------------
+
+function renderStockChart(canvas, prices, options = {}) {
+    if (!prices || prices.length === 0) return;
+
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const W = rect.width;
+    const H = options.height || 250;
+
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.scale(dpr, dpr);
+
+    // Layout
+    const padding = { top: 10, right: 60, bottom: 30, left: 10 };
+    const chartW = W - padding.left - padding.right;
+    const volumeH = H * 0.18;
+    const priceH = H - padding.top - padding.bottom - volumeH - 5;
+
+    // Find price range
+    let minPrice = Infinity, maxPrice = -Infinity, maxVol = 0;
+    for (const p of prices) {
+        if (p.low < minPrice) minPrice = p.low;
+        if (p.high > maxPrice) maxPrice = p.high;
+        if (p.volume > maxVol) maxVol = p.volume;
+    }
+    const priceRange = maxPrice - minPrice || 1;
+    const pricePad = priceRange * 0.05;
+    minPrice -= pricePad;
+    maxPrice += pricePad;
+
+    const candleW = Math.max(1, (chartW / prices.length) * 0.7);
+    const gap = chartW / prices.length;
+
+    // Clear
+    ctx.clearRect(0, 0, W, H);
+
+    // Grid lines (horizontal)
+    ctx.strokeStyle = '#1a1a2e';
+    ctx.lineWidth = 0.5;
+    const gridLines = 5;
+    for (let i = 0; i <= gridLines; i++) {
+        const y = padding.top + (priceH * i / gridLines);
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(W - padding.right, y);
+        ctx.stroke();
+
+        // Price label
+        const price = maxPrice - (maxPrice - minPrice) * (i / gridLines);
+        ctx.fillStyle = '#666';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(price.toFixed(0), W - padding.right + 5, y + 3);
+    }
+
+    // Draw candles
+    const upColor = '#00ff88';
+    const downColor = '#ff4444';
+
+    for (let i = 0; i < prices.length; i++) {
+        const p = prices[i];
+        const x = padding.left + i * gap + gap / 2;
+        const isUp = p.close >= p.open;
+        const color = isUp ? upColor : downColor;
+
+        // Wick (high-low line)
+        const highY = padding.top + (1 - (p.high - minPrice) / (maxPrice - minPrice)) * priceH;
+        const lowY = padding.top + (1 - (p.low - minPrice) / (maxPrice - minPrice)) * priceH;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, highY);
+        ctx.lineTo(x, lowY);
+        ctx.stroke();
+
+        // Body
+        const openY = padding.top + (1 - (p.open - minPrice) / (maxPrice - minPrice)) * priceH;
+        const closeY = padding.top + (1 - (p.close - minPrice) / (maxPrice - minPrice)) * priceH;
+        const bodyTop = Math.min(openY, closeY);
+        const bodyH = Math.max(Math.abs(closeY - openY), 1);
+
+        ctx.fillStyle = isUp ? 'rgba(0,255,136,0.8)' : 'rgba(255,68,68,0.8)';
+        ctx.fillRect(x - candleW / 2, bodyTop, candleW, bodyH);
+
+        // Volume bar
+        if (maxVol > 0) {
+            const volH = (p.volume / maxVol) * volumeH;
+            const volY = H - padding.bottom - volH;
+            ctx.fillStyle = isUp ? 'rgba(0,255,136,0.25)' : 'rgba(255,68,68,0.25)';
+            ctx.fillRect(x - candleW / 2, volY, candleW, volH);
+        }
+    }
+
+    // Date labels (show every ~3 months)
+    ctx.fillStyle = '#666';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'center';
+    let lastMonth = '';
+    for (let i = 0; i < prices.length; i++) {
+        const month = prices[i].date.slice(0, 7); // YYYY-MM
+        if (month !== lastMonth && i % Math.max(1, Math.floor(prices.length / 8)) === 0) {
+            lastMonth = month;
+            const x = padding.left + i * gap + gap / 2;
+            ctx.fillText(month, x, H - padding.bottom + 15);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Modal
 // ---------------------------------------------------------------------------
 
@@ -987,6 +1173,42 @@ function openModal(filing) {
             ${valHtml}
         </div>`;
     }).join('');
+
+    // Add stock data section
+    const secCode = filing.target_sec_code || filing.sec_code;
+    if (secCode) {
+        const stockSection = document.createElement('div');
+        stockSection.className = 'modal-stock-section';
+        stockSection.innerHTML = '<div class="stock-loading">株価データ読み込み中...</div>';
+        body.appendChild(stockSection);
+
+        // Fetch async
+        fetchStockData(secCode).then(stockData => {
+            if (!stockData) {
+                stockSection.innerHTML = '<div class="stock-no-data">株価データを取得できませんでした</div>';
+                return;
+            }
+
+            let infoHtml = '<div class="stock-info-bar">';
+            if (stockData.current_price) {
+                infoHtml += `<span class="stock-price">\u00a5${stockData.current_price.toLocaleString()}</span>`;
+            }
+            if (stockData.market_cap_display) {
+                infoHtml += `<span class="stock-metric">時価: <strong>${stockData.market_cap_display}</strong></span>`;
+            }
+            if (stockData.pbr) {
+                infoHtml += `<span class="stock-metric">PBR: <strong>${stockData.pbr.toFixed(2)}倍</strong></span>`;
+            }
+            infoHtml += '</div>';
+
+            stockSection.innerHTML = infoHtml + '<div class="stock-chart-container"><canvas id="stock-chart-canvas"></canvas></div>';
+
+            const chartCanvas = document.getElementById('stock-chart-canvas');
+            if (chartCanvas && stockData.weekly_prices && stockData.weekly_prices.length > 0) {
+                renderStockChart(chartCanvas, stockData.weekly_prices);
+            }
+        });
+    }
 
     // Store current filing index for keyboard navigation
     const currentIndex = state.filings.findIndex(f => f.doc_id === filing.doc_id);
