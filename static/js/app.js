@@ -16,6 +16,7 @@ const state = {
     notificationsEnabled: false,
     searchQuery: '',
     filterMode: 'all', // all | new | change | amendment
+    selectedDate: new Date().toISOString().slice(0, 10), // YYYY-MM-DD
 };
 
 let eventSource = null;
@@ -123,6 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initClock();
     initSSE();
     initEventListeners();
+    initDateNav();
     loadInitialData();
     initMobileNav();
     initPullToRefresh();
@@ -326,7 +328,12 @@ async function loadInitialData() {
 
 async function loadFilings() {
     try {
-        const resp = await fetch('/api/filings?limit=200');
+        const params = new URLSearchParams({ limit: '500' });
+        if (state.selectedDate) {
+            params.set('date_from', state.selectedDate);
+            params.set('date_to', state.selectedDate);
+        }
+        const resp = await fetch(`/api/filings?${params}`);
         const data = await resp.json();
         state.filings = data.filings || [];
         renderFeed();
@@ -338,7 +345,8 @@ async function loadFilings() {
 
 async function loadStats() {
     try {
-        const resp = await fetch('/api/stats');
+        const params = state.selectedDate ? `?date=${state.selectedDate}` : '';
+        const resp = await fetch(`/api/stats${params}`);
         state.stats = await resp.json();
         renderStats();
     } catch (e) {
@@ -492,18 +500,39 @@ function createFeedCard(f) {
     const target = f.target_company_name || '(対象不明)';
     const targetCode = f.target_sec_code ? `[${f.target_sec_code}]` : '';
 
-    // Ratio with change indicator
+    // Ratio with change indicator (improved visibility)
     let ratioHtml = '';
     if (f.holding_ratio != null) {
         const ratioClass = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : 'neutral';
-        let changeStr = '';
-        if (f.ratio_change != null) {
+
+        let changeHtml = '';
+        if (f.ratio_change != null && f.ratio_change !== 0) {
             const arrow = f.ratio_change > 0 ? '▲' : '▼';
-            changeStr = `<span class="card-ratio-change">${arrow}${Math.abs(f.ratio_change).toFixed(2)}%</span>`;
+            const sign = f.ratio_change > 0 ? '+' : '';
+            changeHtml = `<span class="ratio-change-pill ${ratioClass}">${arrow} ${sign}${f.ratio_change.toFixed(2)}%</span>`;
         }
-        ratioHtml = `<span class="card-ratio ${ratioClass}">${f.holding_ratio.toFixed(2)}% ${changeStr}</span>`;
+
+        let prevHtml = '';
+        if (f.previous_holding_ratio != null) {
+            prevHtml = `<span class="ratio-prev">前回 ${f.previous_holding_ratio.toFixed(2)}%</span>`;
+        }
+
+        const barWidth = Math.min(f.holding_ratio, 100);
+        const prevBarWidth = f.previous_holding_ratio != null ? Math.min(f.previous_holding_ratio, 100) : 0;
+        const barHtml = `<div class="ratio-bar-container">${
+            prevBarWidth > 0 ? `<div class="ratio-bar ratio-bar-prev" style="width: ${prevBarWidth}%"></div>` : ''
+        }<div class="ratio-bar ratio-bar-curr ${ratioClass}" style="width: ${barWidth}%"></div></div>`;
+
+        ratioHtml = `<div class="ratio-display ${ratioClass}">
+            <div class="ratio-main-row">
+                <span class="card-ratio ${ratioClass}">${f.holding_ratio.toFixed(2)}%</span>
+                ${changeHtml}
+            </div>
+            ${prevHtml}
+            ${barHtml}
+        </div>`;
     } else {
-        ratioHtml = '<span class="card-ratio neutral">-</span>';
+        ratioHtml = '<div class="ratio-display neutral"><span class="card-ratio neutral">-</span></div>';
     }
 
     // Links
@@ -541,6 +570,13 @@ function renderStats() {
     document.getElementById('stat-new').textContent = s.today_new_reports ?? '-';
     document.getElementById('stat-amendments').textContent = s.today_amendments ?? '-';
     document.getElementById('stat-clients').textContent = s.connected_clients ?? '-';
+
+    // Update panel title to show the selected date
+    const isToday = state.selectedDate === new Date().toISOString().slice(0, 10);
+    const statsTitle = document.querySelector('#stats-panel .panel-title');
+    if (statsTitle) {
+        statsTitle.textContent = isToday ? 'TODAY' : state.selectedDate;
+    }
 
     // Top filers
     const filersList = document.getElementById('top-filers-list');
@@ -891,40 +927,22 @@ function openMobileOverlay(panelId) {
     const panel = document.getElementById(panelId);
     if (!panel) return;
     panel.classList.remove('hidden');
-    // Trigger animation
-    requestAnimationFrame(() => {
-        const sheet = panel.querySelector('.overlay-sheet');
-        if (sheet) sheet.classList.add('sheet-visible');
-    });
-    // Sync content
     syncMobilePanel(panelId);
 }
 
 function closeMobileOverlay(panelId) {
     const panel = document.getElementById(panelId);
     if (!panel) return;
-    const sheet = panel.querySelector('.overlay-sheet');
-    if (sheet) {
-        sheet.classList.remove('sheet-visible');
-        sheet.addEventListener('transitionend', () => {
-            panel.classList.add('hidden');
-        }, { once: true });
-    } else {
-        panel.classList.add('hidden');
-    }
+    panel.classList.add('hidden');
     // Reset nav active state to feed
-    document.querySelectorAll('.nav-item').forEach(item => {
+    document.querySelectorAll('.mobile-bottom-nav .nav-item').forEach(item => {
         item.classList.toggle('active', item.dataset.panel === 'feed');
     });
 }
 
 function closeAllMobileOverlays() {
     document.querySelectorAll('.sidebar-overlay').forEach(panel => {
-        if (!panel.classList.contains('hidden')) {
-            const sheet = panel.querySelector('.overlay-sheet');
-            if (sheet) sheet.classList.remove('sheet-visible');
-            panel.classList.add('hidden');
-        }
+        panel.classList.add('hidden');
     });
 }
 
@@ -1292,6 +1310,72 @@ function initPullToRefresh() {
         startY = 0;
         currentY = 0;
     });
+}
+
+// ---------------------------------------------------------------------------
+// Date Navigation
+// ---------------------------------------------------------------------------
+
+function initDateNav() {
+    const picker = document.getElementById('date-picker');
+    const prevBtn = document.getElementById('date-prev');
+    const nextBtn = document.getElementById('date-next');
+    const todayBtn = document.getElementById('date-today');
+    const fetchBtn = document.getElementById('date-fetch');
+
+    if (!picker) return;
+
+    picker.value = state.selectedDate;
+    picker.max = new Date().toISOString().slice(0, 10);
+
+    picker.addEventListener('change', (e) => {
+        state.selectedDate = e.target.value;
+        loadFilings();
+        loadStats();
+    });
+
+    prevBtn.addEventListener('click', () => navigateDate(-1));
+    nextBtn.addEventListener('click', () => navigateDate(1));
+
+    todayBtn.addEventListener('click', () => {
+        state.selectedDate = new Date().toISOString().slice(0, 10);
+        picker.value = state.selectedDate;
+        loadFilings();
+        loadStats();
+    });
+
+    fetchBtn.addEventListener('click', async () => {
+        fetchBtn.disabled = true;
+        const origText = fetchBtn.textContent;
+        fetchBtn.textContent = 'FETCHING...';
+        try {
+            await fetch(`/api/poll?date=${state.selectedDate}`, { method: 'POST' });
+            // Wait for the poll to process, then reload
+            setTimeout(async () => {
+                await loadFilings();
+                await loadStats();
+                fetchBtn.disabled = false;
+                fetchBtn.textContent = origText;
+            }, 5000);
+        } catch (e) {
+            console.error('Fetch failed:', e);
+            fetchBtn.disabled = false;
+            fetchBtn.textContent = origText;
+        }
+    });
+}
+
+function navigateDate(days) {
+    const d = new Date(state.selectedDate + 'T00:00:00');
+    d.setDate(d.getDate() + days);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (d > today) return;
+
+    state.selectedDate = d.toISOString().slice(0, 10);
+    document.getElementById('date-picker').value = state.selectedDate;
+    loadFilings();
+    loadStats();
 }
 
 // ---------------------------------------------------------------------------

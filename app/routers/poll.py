@@ -2,15 +2,18 @@
 
 import asyncio
 import time
+from datetime import date as date_type
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
 router = APIRouter(tags=["Poll"])
 
 
 @router.post("/api/poll")
-async def trigger_poll() -> dict:
+async def trigger_poll(
+    date: str | None = Query(None, description="Date to poll (YYYY-MM-DD)"),
+) -> dict:
     """Manually trigger an EDINET poll (rate-limited to once per 10s)."""
     import app.main as _main
 
@@ -25,5 +28,12 @@ async def trigger_poll() -> dict:
 
     from app.poller import poll_edinet
 
-    asyncio.create_task(poll_edinet())
-    return {"status": "poll_triggered"}
+    target_date = None
+    if date:
+        try:
+            target_date = date_type.fromisoformat(date)
+        except ValueError:
+            return JSONResponse({"error": "Invalid date format"}, status_code=400)
+
+    asyncio.create_task(poll_edinet(target_date))
+    return {"status": "poll_triggered", "date": str(target_date or date_type.today())}

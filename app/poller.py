@@ -105,9 +105,9 @@ class SSEBroadcaster:
 broadcaster = SSEBroadcaster()
 
 
-async def poll_edinet():
+async def poll_edinet(target_date=None):
     """Poll EDINET for new large shareholding filings."""
-    today = date.today()
+    today = target_date or date.today()
 
     logger.info("Polling EDINET for date %s...", today)
 
