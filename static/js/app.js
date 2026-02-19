@@ -24,6 +24,7 @@ let eventSource = null;
 let audioCtx = null;
 let pollCountdownInterval = null;
 let lastPollTime = Date.now();
+let currentModalDocId = null; // tracks which filing is shown in the modal
 const POLL_INTERVAL_MS = 60000; // matches server default
 
 // ---------------------------------------------------------------------------
@@ -420,14 +421,21 @@ function preloadStockData() {
         }
     }
     // Fetch up to 5 unique codes in background (staggered)
+    const promises = [];
     let delay = 0;
     let count = 0;
     for (const code of codes) {
         if (count >= 5) break;
         if (stockCache[code]) continue;
-        setTimeout(() => fetchStockData(code), delay);
+        promises.push(new Promise(resolve => {
+            setTimeout(() => fetchStockData(code).then(resolve, resolve), delay);
+        }));
         delay += 2000; // 2s between each to avoid hammering
         count++;
+    }
+    // Re-render feed once all preloads finish so cards show market data
+    if (promises.length > 0) {
+        Promise.all(promises).then(() => renderFeed());
     }
 }
 
@@ -685,10 +693,10 @@ function createFeedCard(f) {
                 <span class="card-arrow">&#x2192;</span>
                 <span class="card-target">${escapeHtml(target)} ${escapeHtml(targetCode)}</span>
                 <div class="card-desc">${escapeHtml(f.doc_description || '')}</div>
+                ${marketDataHtml}
             </div>
             <div class="card-bottom">
                 ${ratioHtml}
-                ${marketDataHtml}
                 <div class="card-links">${links}</div>
             </div>
         </div>
@@ -1106,6 +1114,7 @@ function renderStockChart(canvas, prices, options = {}) {
 // ---------------------------------------------------------------------------
 
 function openModal(filing) {
+    currentModalDocId = filing.doc_id;
     const body = document.getElementById('modal-body');
 
     const rows = [
@@ -1192,8 +1201,14 @@ function openModal(filing) {
         stockSection.innerHTML = '<div class="stock-loading">株価データ読み込み中...</div>';
         body.appendChild(stockSection);
 
+        // Snapshot doc_id to detect stale callbacks when user switches modals
+        const docIdSnapshot = filing.doc_id;
+
         // Fetch async
         fetchStockData(secCode).then(stockData => {
+            // Abort if user already opened a different modal
+            if (currentModalDocId !== docIdSnapshot) return;
+
             if (!stockData) {
                 stockSection.innerHTML = '<div class="stock-no-data">株価データを取得できませんでした</div>';
                 return;
@@ -1227,6 +1242,7 @@ function openModal(filing) {
 }
 
 function closeModal() {
+    currentModalDocId = null;
     document.getElementById('detail-modal').classList.add('hidden');
 }
 

@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import logging
+import math
 import time
 from datetime import date, timedelta
 
@@ -85,7 +86,8 @@ def _parse_float(v: str | None) -> float | None:
     if not v or v in ("N/A", "-", ""):
         return None
     try:
-        return float(v)
+        result = float(v)
+        return result if math.isfinite(result) else None
     except (ValueError, TypeError):
         return None
 
@@ -209,11 +211,12 @@ async def _fetch_yahoo_finance_meta(
 
     try:
         chart_result = data["chart"]["result"][0]
-        meta = chart_result.get("meta", {})
+        meta = chart_result.get("meta") or {}
         result["current_price"] = meta.get("regularMarketPrice")
         # marketCap is not always in chart endpoint; try anyway
-        if "marketCap" in meta:
-            result["market_cap"] = meta["marketCap"]
+        mc = meta.get("marketCap")
+        if mc is not None:
+            result["market_cap"] = mc
         # Short name / long name
         if meta.get("shortName"):
             result["name"] = meta["shortName"]
