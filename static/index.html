@@ -60,6 +60,14 @@
                         <option value="change">変更報告のみ</option>
                         <option value="amendment">訂正のみ</option>
                     </select>
+                    <select id="feed-sort" class="filter-select" aria-label="並び替え">
+                        <option value="time-desc">新しい順</option>
+                        <option value="time-asc">古い順</option>
+                        <option value="ratio-desc">保有割合 高→低</option>
+                        <option value="ratio-asc">保有割合 低→高</option>
+                        <option value="change-desc">変動 大→小</option>
+                        <option value="change-asc">変動 小→大</option>
+                    </select>
                 </div>
             </div>
             <div id="date-nav" class="date-nav">
@@ -68,6 +76,7 @@
                 <button id="date-next" class="date-nav-btn" title="翌日">&#9654;</button>
                 <button id="date-today" class="date-nav-btn date-today-btn">TODAY</button>
                 <button id="date-fetch" class="date-nav-btn date-fetch-btn" title="この日のEDINETデータを取得">FETCH</button>
+                <button id="date-export" class="date-nav-btn date-export-btn" title="CSVエクスポート">CSV</button>
             </div>
             <div id="feed-list" class="feed-list" role="feed" aria-label="報告書一覧">
                 <div class="feed-empty">
