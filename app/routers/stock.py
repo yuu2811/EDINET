@@ -48,14 +48,19 @@ def _normalise_sec_code(sec_code: str) -> str:
     EDINET codes are typically 5 digits (e.g. "39320") where the 5th digit
     is a check digit that can be any value (not only "0").
     Always take the first 4 digits of a 5-digit code.
+
+    Raises HTTPException(400) for invalid codes to prevent URL injection
+    and unbounded cache growth from arbitrary input strings.
     """
     sec_code = sec_code.strip()
     if len(sec_code) == 5 and sec_code[:4].isdigit():
         return sec_code[:4]
     if len(sec_code) == 4 and sec_code.isdigit():
         return sec_code
-    # Fallback: return as-is
-    return sec_code
+    raise HTTPException(
+        status_code=400,
+        detail=f"Invalid securities code: {sec_code!r} (expected 4 or 5 digit code)",
+    )
 
 
 def _format_market_cap(value: float | int | None) -> str | None:
@@ -129,7 +134,7 @@ async def _fetch_stooq_history(
         return []
 
     text = resp.text.strip()
-    if not text or "No data" in text:
+    if not text or "No data" in text or "<html" in text[:200].lower():
         return []
 
     reader = csv.DictReader(io.StringIO(text))
@@ -172,7 +177,7 @@ async def _fetch_stooq_quote(
         return result
 
     text = resp.text.strip()
-    if not text or "No data" in text:
+    if not text or "No data" in text or "<html" in text[:200].lower():
         return result
 
     reader = csv.DictReader(io.StringIO(text))
