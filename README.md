@@ -5,30 +5,32 @@ EDINETから大量保有報告書・変更報告書をリアルタイムに検�
 ## アーキテクチャ
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                  Web Dashboard (Browser)                     │
-│  ┌─────────────┬────────────┬────────────────────────────┐  │
-│  │  Live Feed   │  Watchlist  │  Stats / Top Filers        │  │
-│  │  (SSE)       │  (CRUD)    │  Connected Clients          │  │
-│  └──────┬──────┴─────┬──────┴─────────────┬──────────────┘  │
-│         │  Desktop Notification  │  Web Audio Alert Sound    │
-│         │  Ticker Bar            │  Filter / Search          │
-└─────────┼────────────────────────┼──────────────────────────┘
-          │ HTTP REST / SSE        │
-┌─────────┴────────────────────────┴──────────────────────────┐
-│                    FastAPI Backend                            │
-│  ┌──────────────┬───────────────┬─────────────────────────┐  │
-│  │  REST API    │  SSE Stream   │  Background Poller       │  │
-│  │  9 endpoints │  /api/stream  │  (configurable interval) │  │
-│  └──────────────┴───────────────┴─────────────────────────┘  │
-│  ┌──────────────┬─────────────────────────────────────────┐  │
-│  │  SQLite DB   │  EDINET API Client + XBRL Parser (lxml) │  │
-│  │  (aiosqlite) │  XBRL ZIP → 保有割合・保有者・対象会社   │  │
-│  └──────────────┴──────────────┬──────────────────────────┘  │
-└─────────────────────────────────┼────────────────────────────┘
-                                  │ HTTPS
-                           EDINET API v2
-                  (api.edinet-fsa.go.jp/api/v2)
+┌──────────────────────────────────────────────────────────────────┐
+│                    Web Dashboard (Browser)                        │
+│  ┌────────────────┬──────────────┬───────────────────────────┐   │
+│  │  Live Feed      │  Watchlist    │  Stats / Summary          │   │
+│  │  (SSE)          │  (CRUD)      │  Top Filers / CSV Export  │   │
+│  │  Date Nav       │              │  Market Summary           │   │
+│  │  Sort / Filter  │              │  Poll Countdown           │   │
+│  └──────┬─────────┴──────┬───────┴──────────┬────────────────┘   │
+│         │ Desktop Notification │  Web Audio Alert Sound           │
+│         │ Ticker Bar           │  Keyboard Navigation             │
+└─────────┼──────────────────────┼─────────────────────────────────┘
+          │ HTTP REST / SSE      │
+┌─────────┴──────────────────────┴─────────────────────────────────┐
+│                      FastAPI Backend                              │
+│  ┌───────────────┬────────────────┬────────────────────────────┐ │
+│  │  REST API     │  SSE Stream    │  Background Poller          │ │
+│  │  10 endpoints │  /api/stream   │  (configurable interval)    │ │
+│  └───────────────┴────────────────┴────────────────────────────┘ │
+│  ┌───────────────┬───────────────────────────────────────────┐   │
+│  │  SQLite DB    │  EDINET API Client + XBRL Parser (lxml)   │   │
+│  │  (aiosqlite)  │  XBRL ZIP → 保有割合・保有者・対象会社     │   │
+│  └───────────────┴──────────────┬────────────────────────────┘   │
+└──────────────────────────────────┼───────────────────────────────┘
+                                   │ HTTPS
+                            EDINET API v2
+                   (api.edinet-fsa.go.jp/api/v2)
 ```
 
 ## 機能一覧
@@ -38,28 +40,50 @@ EDINETから大量保有報告書・変更報告書をリアルタイムに検�
 - **デスクトップ通知**: Desktop Notification API による OS レベルの通知。クリックで該当報告書の詳細を表示
 - **サウンドアラート**: Web Audio API による Bloomberg 風アラート音（660Hz: 通常、880Hz: ウォッチリスト一致時）
 - **ティッカーバー**: 直近10件の報告書がスクロール表示される Bloomberg 風ティッカー
+- **ポーリングカウントダウン**: ヘッダーに次回ポーリングまでの残り秒数をリアルタイム表示
+- **提出数バッジ**: ヘッダーに当日の提出数をバッジ表示
 
 ### データ分析
 - **XBRL自動解析**: EDINET の XBRL データから保有割合・前回保有割合・保有者名・対象会社名・証券コード・保有株数・保有目的を自動抽出
 - **保有割合変動の自動計算**: 前回比の変動幅を算出し、増加(緑)/減少(赤)を色分け表示
 - **報告書分類**: 新規報告(350)/訂正報告(360)/特例対象の自動判定
+- **マーケットサマリー**: 当日の増加/減少件数、平均変動幅、最大変動銘柄を自動集計・表示
+
+### 日付ナビゲーション
+- **日付ピッカー**: カレンダーUIで任意の日付を選択
+- **前日/翌日ボタン**: ワンクリックで日付を前後に移動
+- **TODAYボタン**: 今日の日付に即座に戻る
+- **FETCHボタン**: 選択した日付のデータをEDINETから取得（手動ポーリング）
+- **過去データ閲覧**: 当日以外の過去の報告書データも閲覧可能
+
+### フィルタリング・検索・ソート
+- 報告種別フィルタ: 全件 / 新規報告 / 変更報告 / 訂正報告
+- テキスト検索: 提出者名・対象会社名・報告書説明で絞り込み
+- 日付範囲・証券コードによる API レベルのフィルタリング
+- **ソート**: 新しい順 / 古い順 / 保有割合 高→低 / 保有割合 低→高 / 変動 大→小 / 変動 小→大
+
+### CSVエクスポート
+- **CSVダウンロード**: 表示中のフィード一覧をCSVファイルとしてエクスポート
+- BOM付きUTF-8で出力（Excel での日本語文字化け防止）
+- 提出日時、提出者名、対象会社、証券コード、保有割合、前回保有割合、変動幅、報告書種別を含む
 
 ### ウォッチリスト
 - 特定銘柄（会社名・証券コード・EDINETコード）を登録
 - ウォッチリスト銘柄に関連する報告書を即座に検出し、特別なアラート音(880Hz)で通知
 - ウォッチリスト関連の報告書一覧を専用エンドポイントで取得
 
-### フィルタリング・検索
-- 報告種別フィルタ: 全件 / 新規報告 / 変更報告 / 訂正報告
-- テキスト検索: 提出者名・対象会社名・報告書説明で絞り込み
-- 日付範囲・証券コードによる API レベルのフィルタリング
-
 ### UI
 - **Bloomberg端末風ダークテーマ**: #0a0a0f 背景、アンバー/グリーン/レッドの配色
 - **高密度表示**: モノスペースフォント、情報密度の高いカードレイアウト
 - **左ボーダーによる色分け**: 新規報告(緑)・変更報告(アンバー)・訂正報告(紫)
-- **詳細モーダル**: 報告書の全フィールドを表示、EDINET原本・PDFへのリンク
-- **レスポンシブ対応**: モバイルでも閲覧可能
+- **カード背景グラデーション**: 保有割合が増加した報告書は緑グラデーション、減少は赤グラデーションでカード全体を着色
+- **変動ピル**: 保有割合の変動幅を +/- 付きの色分けバッジで表示
+- **保有割合バー**: 視覚的なプログレスバーで保有割合を直感的に表示
+- **詳細モーダル**: 報告書の全フィールドを表示、EDINET原本・PDFへのリンク、保有割合ゲージ（前回比の視覚的比較）
+- **キーボードナビゲーション**: モーダル表示中に左右矢印キーで前後の報告書を閲覧
+- **マーケットサマリーパネル**: 増加/減少件数、平均変動、最大変動銘柄をサイドバーに表示
+- **レスポンシブ対応**: モバイル用ボトムナビゲーション、オーバーレイパネル対応
+- **PWA対応**: manifest.json によるホーム画面への追加対応
 
 ## セットアップ
 
@@ -98,6 +122,22 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ブラウザで http://localhost:8000 を開くとダッシュボードが表示されます。
+
+## Render へのデプロイ
+
+本プロジェクトは Render の Free プランで動作するように構成されています。
+
+### デプロイ手順
+
+1. GitHub リポジトリを Render に接続
+2. `render.yaml` がルートディレクトリにあることを確認（Blueprint として自動検出されます）
+3. `EDINET_API_KEY` 環境変数を設定
+
+### 注意事項
+
+- Free プランでは永続ディスクが利用できないため、SQLite データベースは `/tmp` に配置されます
+- デプロイのたびにデータベースは初期化されます（ポーラーが再取得します）
+- `DATABASE_URL` は絶対パスで指定する必要があります: `sqlite+aiosqlite:////tmp/edinet_monitor.db`（スラッシュ4つ）
 
 ## 設定
 
@@ -197,6 +237,12 @@ Server-Sent Events ストリーム。接続すると以下のイベントが配�
 
 ダッシュボード用の統計情報を取得。
 
+**クエリパラメータ:**
+
+| パラメータ | 型 | 説明 |
+|-----------|------|------|
+| `date` | string | 対象日 (`YYYY-MM-DD`)。省略時は今日 |
+
 **レスポンス:**
 
 ```json
@@ -263,10 +309,24 @@ Server-Sent Events ストリーム。接続すると以下のイベントが配�
 
 #### `POST /api/poll`
 
-バックグラウンドで即座にEDINETポーリングを実行。
+バックグラウンドで即座にEDINETポーリングを実行。レートリミット: 10秒に1回。
+
+**クエリパラメータ:**
+
+| パラメータ | 型 | 説明 |
+|-----------|------|------|
+| `date` | string | ポーリング対象日 (`YYYY-MM-DD`)。省略時は今日 |
+
+**レスポンス:**
 
 ```json
-{"status": "poll_triggered"}
+{"status": "poll_triggered", "date": "2026-02-18"}
+```
+
+**エラーレスポンス (429):**
+
+```json
+{"error": "Rate limited. Try again in 8s"}
 ```
 
 ## XBRL 解析の仕組み
@@ -301,9 +361,10 @@ EDINET から取得した XBRL ZIP ファイルを解析し、大量保有報告
 3. **フィルタリング**: `docTypeCode` が `350`（大量保有報告書/変更報告書）または `360`（訂正報告書）の書類のみ抽出
 4. **重複排除**: `doc_id` の一意制約で既存報告書をスキップ
 5. **XBRL enrichment**: `xbrl_flag=true` かつ API キーが設定されている場合、XBRL をダウンロード・解析して追加データを付与
-6. **エラーハンドリング**: 個別の報告書ごとに try/except で処理。失敗時は `session.rollback()` して次へ
-7. **SSE配信**: 新規報告書ごとに `new_filing` イベントを配信。ポーリング完了時に `stats_update` を配信
-8. **シャットダウン**: `CancelledError` を捕捉して正常終了
+6. **リトライ**: EDINET API 呼び出し失敗時は指数バックオフ（2秒→4秒→最大30秒）で最大3回リトライ
+7. **エラーハンドリング**: 個別の報告書ごとに try/except で処理。失敗時は `session.rollback()` して次へ
+8. **SSE配信**: 新規報告書ごとに `new_filing` イベントを配信。ポーリング完了時に `stats_update` を配信
+9. **シャットダウン**: `CancelledError` を捕捉して正常終了
 
 ## プロジェクト構造
 
@@ -311,30 +372,44 @@ EDINET から取得した XBRL ZIP ファイルを解析し、大量保有報告
 EDINET/
 ├── app/
 │   ├── __init__.py
-│   ├── config.py          # 環境変数ベースの設定管理
-│   ├── database.py        # SQLAlchemy async エンジン・セッション
-│   ├── edinet.py          # EDINET API v2 クライアント + XBRL パーサー
-│   ├── main.py            # FastAPI アプリ (REST API + SSE + lifespan)
-│   ├── models.py          # Filing / Watchlist ORM モデル
-│   └── poller.py          # バックグラウンドポーラー + SSEBroadcaster
+│   ├── config.py            # 環境変数ベースの設定管理
+│   ├── database.py          # SQLAlchemy async エンジン・セッション・DB初期化
+│   ├── edinet.py            # EDINET API v2 クライアント + XBRL パーサー
+│   ├── errors.py            # グローバルエラーハンドラ登録
+│   ├── logging_config.py    # ロギング設定
+│   ├── main.py              # FastAPI アプリ (REST API + SSE + lifespan)
+│   ├── models.py            # Filing / Watchlist ORM モデル
+│   ├── schemas.py           # Pydantic スキーマ
+│   ├── poller.py            # バックグラウンドポーラー + SSEBroadcaster
+│   └── routers/
+│       ├── __init__.py
+│       ├── filings.py       # 報告書一覧・詳細 API
+│       ├── poll.py          # 手動ポーリング API（日付指定対応）
+│       ├── stats.py         # 統計情報 API（日付指定対応）
+│       ├── stream.py        # SSE ストリーム
+│       └── watchlist.py     # ウォッチリスト CRUD API
 ├── static/
-│   ├── index.html         # ダッシュボード HTML
+│   ├── index.html           # ダッシュボード HTML
+│   ├── icon.svg             # PWA アイコン
+│   ├── manifest.json        # PWA マニフェスト
 │   ├── css/
-│   │   └── style.css      # Bloomberg風ダークテーマ CSS
+│   │   └── style.css        # Bloomberg風ダークテーマ CSS
 │   └── js/
-│       └── app.js         # フロントエンド JS (SSE・通知・UI)
+│       └── app.js           # フロントエンド JS (SSE・通知・日付ナビ・ソート・CSV・UI)
 ├── tests/
 │   ├── __init__.py
-│   ├── conftest.py        # テストフィクスチャ・モックデータ
-│   ├── test_api.py        # REST API エンドポイントテスト (18件)
-│   ├── test_edinet.py     # EDINET クライアント・XBRL パーステスト (11件)
-│   ├── test_models.py     # ORM モデルテスト (9件)
-│   └── test_poller.py     # ポーラー・SSEブロードキャスターテスト (9件)
-├── .env.example           # 環境変数テンプレート
+│   ├── conftest.py          # テストフィクスチャ・モックデータ
+│   ├── test_api.py          # REST API エンドポイントテスト (18件)
+│   ├── test_edinet.py       # EDINET クライアント・XBRL パーステスト (11件)
+│   ├── test_models.py       # ORM モデルテスト (9件)
+│   └── test_poller.py       # ポーラー・SSEブロードキャスターテスト (9件)
+├── .env.example             # 環境変数テンプレート
 ├── .gitignore
-├── pytest.ini             # pytest 設定 (asyncio_mode = auto)
+├── Dockerfile               # Docker ビルド定義
+├── pytest.ini               # pytest 設定 (asyncio_mode = auto)
 ├── README.md
-└── requirements.txt       # Python 依存パッケージ
+├── render.yaml              # Render デプロイ設定
+└── requirements.txt         # Python 依存パッケージ
 ```
 
 ## テスト
@@ -370,6 +445,7 @@ pytest tests/test_poller.py
 | Frontend | Vanilla HTML / CSS / JavaScript (フレームワーク不使用) |
 | Scheduler | asyncio ベースのポーリングループ |
 | Testing | pytest / pytest-asyncio |
+| Deploy | Render (Docker) |
 
 ## EDINET API について
 
