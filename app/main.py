@@ -10,17 +10,17 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.database import init_db
+from app.database import async_session, init_db  # noqa: F401 – routers resolve async_session here
 from app.edinet import edinet_client
 from app.errors import register_error_handlers
 from app.poller import run_poller
 from app.routers import filings, poll, stats, stream, watchlist
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+_poll_last_called: float = 0.0  # rate limiter state for /api/poll
+_POLL_COOLDOWN = 10.0
 
 
 @asynccontextmanager
@@ -46,14 +46,12 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
-
 register_error_handlers(app)
 for r in (stream.router, filings.router, stats.router, watchlist.router, poll.router):
     app.include_router(r)
@@ -75,5 +73,4 @@ async def index():
 
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run("app.main:app", host=settings.HOST, port=settings.PORT, reload=True)

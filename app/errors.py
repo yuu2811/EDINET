@@ -31,7 +31,7 @@ def register_error_handlers(app: FastAPI) -> None:
         detail = "; ".join(errors)
         return JSONResponse(
             status_code=422,
-            content={"error": "Validation error", "detail": detail},
+            content={"error": "Invalid request parameters", "detail": detail},
         )
 
     @app.exception_handler(HTTPException)

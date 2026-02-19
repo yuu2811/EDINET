@@ -6,10 +6,15 @@ from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy import desc, func, or_, select
 
-from app.database import async_session
 from app.models import Filing
 
 router = APIRouter(prefix="/api/filings", tags=["Filings"])
+
+
+def _get_async_session():
+    """Resolve async_session at runtime via app.main for testability."""
+    import app.main
+    return app.main.async_session
 
 
 @router.get("")
@@ -24,7 +29,7 @@ async def list_filings(
     offset: int = Query(0, ge=0),
 ) -> dict:
     """List large shareholding filings with filters."""
-    async with async_session() as session:
+    async with _get_async_session()() as session:
         query = select(Filing).order_by(desc(Filing.submit_date_time), desc(Filing.id))
 
         if date_from:
@@ -76,7 +81,7 @@ async def list_filings(
 @router.get("/{doc_id}")
 async def get_filing(doc_id: str) -> dict:
     """Get a single filing by document ID."""
-    async with async_session() as session:
+    async with _get_async_session()() as session:
         result = await session.execute(
             select(Filing).where(Filing.doc_id == doc_id)
         )

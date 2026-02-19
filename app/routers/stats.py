@@ -6,11 +6,16 @@ from fastapi import APIRouter
 from sqlalchemy import desc, func, select
 
 from app.config import settings
-from app.database import async_session
 from app.models import Filing
 from app.poller import broadcaster
 
 router = APIRouter(tags=["Stats"])
+
+
+def _get_async_session():
+    """Resolve async_session at runtime via app.main for testability."""
+    import app.main
+    return app.main.async_session
 
 
 @router.get("/api/stats")
@@ -19,7 +24,7 @@ async def get_stats() -> dict:
     today = date.today()
     today_str = today.strftime("%Y-%m-%d")
 
-    async with async_session() as session:
+    async with _get_async_session()() as session:
         today_count = (
             await session.execute(
                 select(func.count(Filing.id)).where(
