@@ -44,12 +44,12 @@ def _cache_set(key: str, value: dict) -> None:
 def _normalise_sec_code(sec_code: str) -> str:
     """Convert EDINET securities code to a 4-digit ticker.
 
-    EDINET codes are typically 5 digits (e.g. "39320").  Strip the trailing
-    check-digit "0" to get the 4-digit TSE ticker (e.g. "3932").
-    If the code is already 4 digits, return as-is.
+    EDINET codes are typically 5 digits (e.g. "39320") where the 5th digit
+    is a check digit that can be any value (not only "0").
+    Always take the first 4 digits of a 5-digit code.
     """
     sec_code = sec_code.strip()
-    if len(sec_code) == 5 and sec_code[-1] == "0":
+    if len(sec_code) == 5 and sec_code[:4].isdigit():
         return sec_code[:4]
     if len(sec_code) == 4 and sec_code.isdigit():
         return sec_code
@@ -59,7 +59,7 @@ def _normalise_sec_code(sec_code: str) -> str:
 
 def _format_market_cap(value: float | int | None) -> str | None:
     """Format a market cap (JPY) in Japanese style using 億 / 兆."""
-    if value is None:
+    if value is None or value <= 0:
         return None
     value = float(value)
     cho = 1_000_000_000_000  # 兆 = 1 trillion

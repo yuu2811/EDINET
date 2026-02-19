@@ -666,8 +666,8 @@ function createFeedCard(f) {
             const sd = cached.data;
             const parts = [];
             if (sd.market_cap_display) parts.push(`時価:${sd.market_cap_display}`);
-            if (sd.pbr) parts.push(`PBR:${sd.pbr.toFixed(2)}倍`);
-            if (sd.current_price) parts.push(`\u00a5${sd.current_price.toLocaleString()}`);
+            if (sd.pbr != null) parts.push(`PBR:${Number(sd.pbr).toFixed(2)}倍`);
+            if (sd.current_price != null) parts.push(`\u00a5${Math.round(sd.current_price).toLocaleString()}`);
             if (parts.length > 0) {
                 marketDataHtml = `<div class="card-market-data">${parts.map(p => `<span>${p}</span>`).join('')}</div>`;
             }
@@ -983,11 +983,19 @@ function closeConfirmDialog() {
 function renderStockChart(canvas, prices, options = {}) {
     if (!prices || prices.length === 0) return;
 
+    // Filter out entries with missing OHLC values
+    prices = prices.filter(p =>
+        p.open != null && p.high != null && p.low != null && p.close != null
+    );
+    if (prices.length === 0) return;
+
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.parentElement.getBoundingClientRect();
     const W = rect.width;
     const H = options.height || 250;
+
+    if (W <= 0) return; // container not visible yet
 
     canvas.width = W * dpr;
     canvas.height = H * dpr;
@@ -1006,7 +1014,8 @@ function renderStockChart(canvas, prices, options = {}) {
     for (const p of prices) {
         if (p.low < minPrice) minPrice = p.low;
         if (p.high > maxPrice) maxPrice = p.high;
-        if (p.volume > maxVol) maxVol = p.volume;
+        const vol = p.volume || 0;
+        if (vol > maxVol) maxVol = vol;
     }
     const priceRange = maxPrice - minPrice || 1;
     const pricePad = priceRange * 0.05;
@@ -1068,8 +1077,9 @@ function renderStockChart(canvas, prices, options = {}) {
         ctx.fillRect(x - candleW / 2, bodyTop, candleW, bodyH);
 
         // Volume bar
-        if (maxVol > 0) {
-            const volH = (p.volume / maxVol) * volumeH;
+        const vol = p.volume || 0;
+        if (maxVol > 0 && vol > 0) {
+            const volH = (vol / maxVol) * volumeH;
             const volY = H - padding.bottom - volH;
             ctx.fillStyle = isUp ? 'rgba(0,255,136,0.25)' : 'rgba(255,68,68,0.25)';
             ctx.fillRect(x - candleW / 2, volY, candleW, volH);
@@ -1190,14 +1200,14 @@ function openModal(filing) {
             }
 
             let infoHtml = '<div class="stock-info-bar">';
-            if (stockData.current_price) {
-                infoHtml += `<span class="stock-price">\u00a5${stockData.current_price.toLocaleString()}</span>`;
+            if (stockData.current_price != null) {
+                infoHtml += `<span class="stock-price">\u00a5${Math.round(stockData.current_price).toLocaleString()}</span>`;
             }
             if (stockData.market_cap_display) {
                 infoHtml += `<span class="stock-metric">時価: <strong>${stockData.market_cap_display}</strong></span>`;
             }
-            if (stockData.pbr) {
-                infoHtml += `<span class="stock-metric">PBR: <strong>${stockData.pbr.toFixed(2)}倍</strong></span>`;
+            if (stockData.pbr != null) {
+                infoHtml += `<span class="stock-metric">PBR: <strong>${Number(stockData.pbr).toFixed(2)}倍</strong></span>`;
             }
             infoHtml += '</div>';
 
