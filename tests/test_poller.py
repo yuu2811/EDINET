@@ -16,33 +16,37 @@ from app.poller import SSEBroadcaster, broadcaster
 class TestSSEBroadcaster:
     """Tests for the SSE broadcaster."""
 
-    def test_subscribe_returns_queue(self):
+    @pytest.mark.asyncio
+    async def test_subscribe_returns_id_and_queue(self):
         b = SSEBroadcaster()
-        q = b.subscribe()
+        client_id, q = await b.subscribe()
+        assert isinstance(client_id, int)
         assert isinstance(q, asyncio.Queue)
         assert b.client_count == 1
 
-    def test_unsubscribe_removes_queue(self):
+    @pytest.mark.asyncio
+    async def test_unsubscribe_removes_client(self):
         b = SSEBroadcaster()
-        q = b.subscribe()
+        client_id, q = await b.subscribe()
         assert b.client_count == 1
-        b.unsubscribe(q)
+        await b.unsubscribe(client_id)
         assert b.client_count == 0
 
-    def test_multiple_clients(self):
+    @pytest.mark.asyncio
+    async def test_multiple_clients(self):
         b = SSEBroadcaster()
-        q1 = b.subscribe()
-        q2 = b.subscribe()
-        q3 = b.subscribe()
+        id1, q1 = await b.subscribe()
+        id2, q2 = await b.subscribe()
+        id3, q3 = await b.subscribe()
         assert b.client_count == 3
-        b.unsubscribe(q2)
+        await b.unsubscribe(id2)
         assert b.client_count == 2
 
     @pytest.mark.asyncio
     async def test_broadcast_sends_to_all(self):
         b = SSEBroadcaster()
-        q1 = b.subscribe()
-        q2 = b.subscribe()
+        _id1, q1 = await b.subscribe()
+        _id2, q2 = await b.subscribe()
 
         await b.broadcast("test_event", {"message": "hello"})
 
@@ -55,7 +59,7 @@ class TestSSEBroadcaster:
     @pytest.mark.asyncio
     async def test_broadcast_format(self):
         b = SSEBroadcaster()
-        q = b.subscribe()
+        _id, q = await b.subscribe()
 
         await b.broadcast("new_filing", {"doc_id": "X1"})
 
@@ -69,15 +73,15 @@ class TestSSEBroadcaster:
     async def test_broadcast_drops_full_queues(self):
         """Full queues should be dropped instead of blocking."""
         b = SSEBroadcaster()
-        # Use a bounded queue to test overflow behavior
+        # Manually inject a bounded queue to test overflow
         bounded_q = asyncio.Queue(maxsize=2)
-        b._queues.append(bounded_q)
+        b._clients[999] = (bounded_q, 0.0)
 
         # Fill the queue to capacity
         bounded_q.put_nowait("msg_1")
         bounded_q.put_nowait("msg_2")
 
-        # This should not raise - it should drop the full queue
+        # This should not raise - it should drop the full client
         await b.broadcast("test", {"x": 1})
         assert b.client_count == 0
 
@@ -85,7 +89,7 @@ class TestSSEBroadcaster:
     async def test_broadcast_japanese(self):
         """Japanese characters should be serialized correctly."""
         b = SSEBroadcaster()
-        q = b.subscribe()
+        _id, q = await b.subscribe()
 
         await b.broadcast("filing", {"name": "テスト証券"})
 

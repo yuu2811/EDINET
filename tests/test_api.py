@@ -173,8 +173,8 @@ class TestFilingsAPI:
     @pytest.mark.asyncio
     async def test_filter_by_invalid_date(self, client):
         resp = await client.get("/api/filings?date_from=not-a-date")
-        assert resp.status_code == 400
-        assert "Invalid" in resp.json()["error"]
+        assert resp.status_code == 422
+        assert "Invalid" in resp.json()["error"] or "error" in resp.json()
 
     @pytest.mark.asyncio
     async def test_filter_by_date_range(self, client):

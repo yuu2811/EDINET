@@ -1,0 +1,17 @@
+{
+    "name": "EDINET 大量保有モニター",
+    "short_name": "EDINET",
+    "description": "大量保有報告書リアルタイムモニタリング",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#0a0a0f",
+    "theme_color": "#0a0a0f",
+    "orientation": "portrait",
+    "icons": [
+        {
+            "src": "/static/icon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml"
+        }
+    ]
+}

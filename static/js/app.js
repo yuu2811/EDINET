@@ -22,14 +22,110 @@ let eventSource = null;
 let audioCtx = null;
 
 // ---------------------------------------------------------------------------
+// Mobile Detection
+// ---------------------------------------------------------------------------
+
+function isMobile() {
+    return window.innerWidth <= 480;
+}
+
+// ---------------------------------------------------------------------------
+// localStorage Persistence
+// ---------------------------------------------------------------------------
+
+const PREFS_PREFIX = 'edinet_';
+
+function savePreferences() {
+    try {
+        const prefs = {
+            filterMode: state.filterMode,
+            searchQuery: state.searchQuery,
+            soundEnabled: state.soundEnabled,
+            notificationsEnabled: state.notificationsEnabled,
+            watchlistPanelOpen: !document.getElementById('watchlist-panel').classList.contains('panel-collapsed'),
+        };
+        localStorage.setItem(PREFS_PREFIX + 'preferences', JSON.stringify(prefs));
+    } catch (e) {
+        console.warn('Failed to save preferences:', e);
+    }
+}
+
+function loadPreferences() {
+    try {
+        const raw = localStorage.getItem(PREFS_PREFIX + 'preferences');
+        if (!raw) return;
+        const prefs = JSON.parse(raw);
+
+        // Restore filter mode
+        if (prefs.filterMode) {
+            state.filterMode = prefs.filterMode;
+            const filterEl = document.getElementById('feed-filter');
+            if (filterEl) filterEl.value = prefs.filterMode;
+        }
+
+        // Restore search text
+        if (prefs.searchQuery) {
+            state.searchQuery = prefs.searchQuery;
+            const searchEl = document.getElementById('feed-search');
+            if (searchEl) searchEl.value = prefs.searchQuery;
+        }
+
+        // Restore sound preference
+        if (typeof prefs.soundEnabled === 'boolean') {
+            state.soundEnabled = prefs.soundEnabled;
+            const btn = document.getElementById('btn-sound');
+            if (btn) {
+                btn.classList.toggle('active', state.soundEnabled);
+                btn.title = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF';
+                btn.setAttribute('aria-pressed', state.soundEnabled);
+                btn.setAttribute('aria-label',
+                    state.soundEnabled ? 'サウンドアラート: 有効' : 'サウンドアラート: 無効');
+            }
+        }
+
+        // Restore notification preference
+        if (typeof prefs.notificationsEnabled === 'boolean') {
+            state.notificationsEnabled = prefs.notificationsEnabled;
+            const btn = document.getElementById('btn-notify');
+            if (btn) {
+                btn.classList.toggle('active', state.notificationsEnabled);
+                btn.title = state.notificationsEnabled ? '通知 ON' : '通知 OFF';
+                btn.setAttribute('aria-pressed', state.notificationsEnabled);
+                btn.setAttribute('aria-label',
+                    state.notificationsEnabled ? 'デスクトップ通知: 有効' : 'デスクトップ通知: 無効');
+            }
+        }
+
+        // Restore watchlist panel open/closed state
+        if (typeof prefs.watchlistPanelOpen === 'boolean' && !prefs.watchlistPanelOpen) {
+            const panel = document.getElementById('watchlist-panel');
+            if (panel) panel.classList.add('panel-collapsed');
+        }
+    } catch (e) {
+        console.warn('Failed to load preferences:', e);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Initialization
 // ---------------------------------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', () => {
+    // iOS viewport height fix (100vh includes address bar)
+    function setVH() {
+        const vh = window.innerHeight * 0.01;
+        document.documentElement.style.setProperty('--vh', `${vh}px`);
+    }
+    setVH();
+    window.addEventListener('resize', setVH);
+
+    loadPreferences();
     initClock();
     initSSE();
     initEventListeners();
     loadInitialData();
+    initMobileNav();
+    initPullToRefresh();
 });
 
 function initClock() {
@@ -44,6 +140,9 @@ function initClock() {
             minute: '2-digit',
             second: '2-digit',
         });
+        // Update mobile clock
+        const mobileClockEl = document.getElementById('mobile-clock');
+        if (mobileClockEl) mobileClockEl.textContent = clockEl.textContent;
     }
     update();
     setInterval(update, 1000);
@@ -59,6 +158,7 @@ function initEventListeners() {
         btn.setAttribute('aria-pressed', state.soundEnabled);
         btn.setAttribute('aria-label',
             state.soundEnabled ? 'サウンドアラート: 有効' : 'サウンドアラート: 無効');
+        savePreferences();
     });
 
     // Notification permission
@@ -75,6 +175,7 @@ function initEventListeners() {
         btn.setAttribute('aria-pressed', state.notificationsEnabled);
         btn.setAttribute('aria-label',
             state.notificationsEnabled ? 'デスクトップ通知: 有効' : 'デスクトップ通知: 無効');
+        savePreferences();
     });
 
     // Manual poll
@@ -97,12 +198,14 @@ function initEventListeners() {
     document.getElementById('feed-search').addEventListener('input', (e) => {
         state.searchQuery = e.target.value.toLowerCase();
         renderFeed();
+        savePreferences();
     });
 
     // Feed filter
     document.getElementById('feed-filter').addEventListener('change', (e) => {
         state.filterMode = e.target.value;
         renderFeed();
+        savePreferences();
     });
 
     // Watchlist add
@@ -145,10 +248,11 @@ function initSSE() {
         eventSource.close();
     }
 
+    setConnectionStatus('reconnecting');
     eventSource = new EventSource('/api/stream');
 
     eventSource.addEventListener('connected', () => {
-        setConnectionStatus(true);
+        setConnectionStatus('connected');
         console.log('SSE connected');
     });
 
@@ -163,20 +267,53 @@ function initSSE() {
     });
 
     eventSource.onopen = () => {
-        setConnectionStatus(true);
+        setConnectionStatus('connected');
     };
 
     eventSource.onerror = () => {
-        setConnectionStatus(false);
+        // EventSource readyState: 0=CONNECTING, 1=OPEN, 2=CLOSED
+        if (eventSource.readyState === EventSource.CONNECTING) {
+            setConnectionStatus('reconnecting');
+        } else {
+            setConnectionStatus('disconnected');
+        }
         // EventSource auto-reconnects
     };
 }
 
-function setConnectionStatus(connected) {
-    state.connected = connected;
+function setConnectionStatus(status) {
+    // status: 'connected' | 'disconnected' | 'reconnecting'
+    state.connected = status === 'connected';
     const el = document.getElementById('connection-status');
-    el.className = `status ${connected ? 'connected' : 'disconnected'}`;
-    el.querySelector('.status-text').textContent = connected ? '接続中' : '切断';
+    const dot = el.querySelector('.status-dot');
+    const text = el.querySelector('.status-text');
+
+    // Remove all state classes
+    el.className = 'connection-status';
+    dot.className = 'status-dot';
+
+    if (status === 'connected') {
+        el.classList.add('connected');
+        dot.classList.add('connected');
+        text.textContent = 'LIVE';
+    } else if (status === 'reconnecting') {
+        el.classList.add('reconnecting');
+        dot.classList.add('reconnecting');
+        text.textContent = 'RECONNECTING...';
+    } else {
+        el.classList.add('disconnected');
+        dot.classList.add('disconnected');
+        text.textContent = 'DISCONNECTED';
+    }
+
+    // Update mobile connection status
+    const mobileStatus = document.getElementById('mobile-connection-status');
+    if (mobileStatus) {
+        mobileStatus.textContent = status === 'connected' ? 'LIVE' :
+                                    status === 'reconnecting' ? 'RECONNECTING...' : 'DISCONNECTED';
+        mobileStatus.className = status === 'connected' ? 'text-green' :
+                                  status === 'reconnecting' ? 'text-amber' : 'text-red';
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -289,7 +426,10 @@ function renderFeed() {
     }
 
     if (filtered.length === 0) {
-        container.innerHTML = '<div class="feed-empty">該当する報告書はありません</div>';
+        container.innerHTML = `<div class="feed-empty">
+            <div class="empty-icon">&#128196;</div>
+            <div class="empty-text">報告書が見つかりません</div>
+        </div>`;
         return;
     }
 
@@ -419,7 +559,10 @@ function renderStats() {
 function renderWatchlist() {
     const container = document.getElementById('watchlist-items');
     if (state.watchlist.length === 0) {
-        container.innerHTML = '<div class="watchlist-empty">ウォッチリストは空です</div>';
+        container.innerHTML = `<div class="watchlist-empty">
+            <div class="empty-icon">&#9734;</div>
+            <div class="empty-text">ウォッチリストに企業を追加してください</div>
+        </div>`;
         return;
     }
 
@@ -738,6 +881,417 @@ function sendDesktopNotification(filing) {
     } catch (e) {
         console.warn('Desktop notification failed:', e);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Mobile Overlay Management
+// ---------------------------------------------------------------------------
+
+function openMobileOverlay(panelId) {
+    const panel = document.getElementById(panelId);
+    if (!panel) return;
+    panel.classList.remove('hidden');
+    // Trigger animation
+    requestAnimationFrame(() => {
+        const sheet = panel.querySelector('.overlay-sheet');
+        if (sheet) sheet.classList.add('sheet-visible');
+    });
+    // Sync content
+    syncMobilePanel(panelId);
+}
+
+function closeMobileOverlay(panelId) {
+    const panel = document.getElementById(panelId);
+    if (!panel) return;
+    const sheet = panel.querySelector('.overlay-sheet');
+    if (sheet) {
+        sheet.classList.remove('sheet-visible');
+        sheet.addEventListener('transitionend', () => {
+            panel.classList.add('hidden');
+        }, { once: true });
+    } else {
+        panel.classList.add('hidden');
+    }
+    // Reset nav active state to feed
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.panel === 'feed');
+    });
+}
+
+function closeAllMobileOverlays() {
+    document.querySelectorAll('.sidebar-overlay').forEach(panel => {
+        if (!panel.classList.contains('hidden')) {
+            const sheet = panel.querySelector('.overlay-sheet');
+            if (sheet) sheet.classList.remove('sheet-visible');
+            panel.classList.add('hidden');
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Mobile Panel Content Sync
+// ---------------------------------------------------------------------------
+
+function syncMobilePanel(panelId) {
+    if (panelId === 'mobile-stats-panel') {
+        const mobileStatsBody = document.getElementById('mobile-stats-body');
+        if (!mobileStatsBody) return;
+
+        let html = '';
+
+        // Clone stats grid
+        const statsGrid = document.querySelector('#stats-panel .stats-grid');
+        if (statsGrid) {
+            html += statsGrid.outerHTML;
+        }
+
+        // Clone top filers
+        const topFilers = document.getElementById('top-filers-list');
+        if (topFilers) {
+            html += '<div class="top-filers-section"><h3 class="section-title">TOP FILERS</h3>';
+            html += topFilers.outerHTML;
+            html += '</div>';
+        }
+
+        mobileStatsBody.innerHTML = html;
+
+    } else if (panelId === 'mobile-watchlist-panel') {
+        const mobileWatchBody = document.getElementById('mobile-watchlist-body');
+        if (!mobileWatchBody) return;
+
+        let html = '';
+
+        // Clone watchlist items
+        const watchlistItems = document.getElementById('watchlist-items');
+        if (watchlistItems) {
+            html += watchlistItems.innerHTML;
+        }
+
+        // Clone watchlist form
+        const watchlistForm = document.getElementById('watchlist-form');
+        if (watchlistForm) {
+            html += `<div class="mobile-watchlist-form">
+                <div class="form-group">
+                    <input type="text" id="mobile-watch-name" placeholder="企業名" class="form-input" />
+                </div>
+                <div class="form-group">
+                    <input type="text" id="mobile-watch-code" placeholder="証券コード" class="form-input" />
+                </div>
+                <div class="form-actions">
+                    <button id="mobile-btn-save-watch" class="btn btn-primary">追加</button>
+                    <button id="mobile-btn-cancel-watch" class="btn btn-secondary">キャンセル</button>
+                </div>
+            </div>`;
+        }
+
+        mobileWatchBody.innerHTML = html;
+
+        // Re-attach delete button listeners
+        mobileWatchBody.querySelectorAll('.watch-delete').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = e.target.dataset.id;
+                const item = state.watchlist.find(w => String(w.id) === String(id));
+                if (item) {
+                    showDeleteConfirm(item.company_name, id);
+                }
+            });
+        });
+
+        // Re-attach form button listeners
+        const mobileSaveBtn = document.getElementById('mobile-btn-save-watch');
+        if (mobileSaveBtn) {
+            mobileSaveBtn.addEventListener('click', async () => {
+                const name = document.getElementById('mobile-watch-name').value.trim();
+                const code = document.getElementById('mobile-watch-code').value.trim();
+                if (!name) return;
+                try {
+                    const resp = await fetch('/api/watchlist', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ company_name: name, sec_code: code || null }),
+                    });
+                    if (resp.ok) {
+                        await loadWatchlist();
+                        syncMobilePanel('mobile-watchlist-panel');
+                    }
+                } catch (e) {
+                    console.error('Failed to save watchlist item:', e);
+                }
+            });
+        }
+
+        const mobileCancelBtn = document.getElementById('mobile-btn-cancel-watch');
+        if (mobileCancelBtn) {
+            mobileCancelBtn.addEventListener('click', () => {
+                const nameInput = document.getElementById('mobile-watch-name');
+                const codeInput = document.getElementById('mobile-watch-code');
+                if (nameInput) nameInput.value = '';
+                if (codeInput) codeInput.value = '';
+            });
+        }
+
+    } else if (panelId === 'mobile-settings-panel') {
+        // Sync button states with desktop buttons
+        const desktopSoundBtn = document.getElementById('btn-sound');
+        const mobileSoundBtn = document.getElementById('mobile-btn-sound');
+        if (desktopSoundBtn && mobileSoundBtn) {
+            mobileSoundBtn.classList.toggle('active', state.soundEnabled);
+            mobileSoundBtn.textContent = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF';
+        }
+
+        const desktopNotifyBtn = document.getElementById('btn-notify');
+        const mobileNotifyBtn = document.getElementById('mobile-btn-notify');
+        if (desktopNotifyBtn && mobileNotifyBtn) {
+            mobileNotifyBtn.classList.toggle('active', state.notificationsEnabled);
+            mobileNotifyBtn.textContent = state.notificationsEnabled ? '通知 ON' : '通知 OFF';
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Overlay Swipe-to-Close Gesture
+// ---------------------------------------------------------------------------
+
+function initOverlaySwipe(overlayEl) {
+    const sheet = overlayEl.querySelector('.overlay-sheet');
+    if (!sheet) return;
+
+    let startY = 0;
+    let currentY = 0;
+    let isDragging = false;
+
+    sheet.addEventListener('touchstart', (e) => {
+        // Only start drag from the handle area (top 40px)
+        const rect = sheet.getBoundingClientRect();
+        if (e.touches[0].clientY - rect.top > 40) return;
+        startY = e.touches[0].clientY;
+        isDragging = true;
+        sheet.style.transition = 'none';
+    }, { passive: true });
+
+    sheet.addEventListener('touchmove', (e) => {
+        if (!isDragging) return;
+        currentY = e.touches[0].clientY;
+        const diff = currentY - startY;
+        if (diff > 0) {
+            sheet.style.transform = `translateY(${diff}px)`;
+        }
+    }, { passive: true });
+
+    sheet.addEventListener('touchend', () => {
+        if (!isDragging) return;
+        isDragging = false;
+        sheet.style.transition = '';
+        const diff = currentY - startY;
+        if (diff > 100) {
+            // Close the overlay
+            closeMobileOverlay(overlayEl.id);
+        }
+        sheet.style.transform = '';
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Mobile Bottom Nav
+// ---------------------------------------------------------------------------
+
+function initMobileNav() {
+    const mobileNav = document.getElementById('mobile-nav');
+    if (!mobileNav) return;
+
+    const navItems = mobileNav.querySelectorAll('.nav-item');
+
+    navItems.forEach(item => {
+        item.addEventListener('click', () => {
+            // Toggle active class: remove from siblings, add to clicked
+            navItems.forEach(sibling => sibling.classList.remove('active'));
+            item.classList.add('active');
+
+            const panel = item.dataset.panel;
+
+            if (panel === 'feed') {
+                // Hide overlays, show feed (default view)
+                closeAllMobileOverlays();
+            } else if (panel === 'stats') {
+                closeAllMobileOverlays();
+                openMobileOverlay('mobile-stats-panel');
+            } else if (panel === 'watchlist') {
+                closeAllMobileOverlays();
+                openMobileOverlay('mobile-watchlist-panel');
+            } else if (panel === 'settings') {
+                closeAllMobileOverlays();
+                openMobileOverlay('mobile-settings-panel');
+            }
+        });
+    });
+
+    // Overlay backdrop close handlers
+    document.querySelectorAll('.overlay-backdrop').forEach(backdrop => {
+        backdrop.addEventListener('click', () => {
+            const overlay = backdrop.closest('.sidebar-overlay');
+            if (overlay) closeMobileOverlay(overlay.id);
+        });
+    });
+
+    // Overlay close button handlers
+    document.querySelectorAll('.overlay-close').forEach(closeBtn => {
+        closeBtn.addEventListener('click', () => {
+            const overlay = closeBtn.closest('.sidebar-overlay');
+            if (overlay) closeMobileOverlay(overlay.id);
+        });
+    });
+
+    // Initialize swipe-to-close on all overlays
+    document.querySelectorAll('.sidebar-overlay').forEach(overlayEl => {
+        initOverlaySwipe(overlayEl);
+    });
+
+    // Mobile settings panel handlers
+    const mobileSoundBtn = document.getElementById('mobile-btn-sound');
+    if (mobileSoundBtn) {
+        mobileSoundBtn.addEventListener('click', () => {
+            state.soundEnabled = !state.soundEnabled;
+
+            // Update mobile button
+            mobileSoundBtn.classList.toggle('active', state.soundEnabled);
+            mobileSoundBtn.textContent = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF';
+
+            // Sync with desktop button
+            const desktopBtn = document.getElementById('btn-sound');
+            if (desktopBtn) {
+                desktopBtn.classList.toggle('active', state.soundEnabled);
+                desktopBtn.title = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF';
+                desktopBtn.setAttribute('aria-pressed', state.soundEnabled);
+                desktopBtn.setAttribute('aria-label',
+                    state.soundEnabled ? 'サウンドアラート: 有効' : 'サウンドアラート: 無効');
+            }
+
+            savePreferences();
+        });
+    }
+
+    const mobileNotifyBtn = document.getElementById('mobile-btn-notify');
+    if (mobileNotifyBtn) {
+        mobileNotifyBtn.addEventListener('click', async () => {
+            if (!('Notification' in window)) {
+                alert('このブラウザはデスクトップ通知に対応していません');
+                return;
+            }
+            const perm = await Notification.requestPermission();
+            state.notificationsEnabled = perm === 'granted';
+
+            // Update mobile button
+            mobileNotifyBtn.classList.toggle('active', state.notificationsEnabled);
+            mobileNotifyBtn.textContent = state.notificationsEnabled ? '通知 ON' : '通知 OFF';
+
+            // Sync with desktop button
+            const desktopBtn = document.getElementById('btn-notify');
+            if (desktopBtn) {
+                desktopBtn.classList.toggle('active', state.notificationsEnabled);
+                desktopBtn.title = state.notificationsEnabled ? '通知 ON' : '通知 OFF';
+                desktopBtn.setAttribute('aria-pressed', state.notificationsEnabled);
+                desktopBtn.setAttribute('aria-label',
+                    state.notificationsEnabled ? 'デスクトップ通知: 有効' : 'デスクトップ通知: 無効');
+            }
+
+            savePreferences();
+        });
+    }
+
+    const mobilePollBtn = document.getElementById('mobile-btn-poll');
+    if (mobilePollBtn) {
+        mobilePollBtn.addEventListener('click', async () => {
+            mobilePollBtn.disabled = true;
+            mobilePollBtn.style.opacity = '0.5';
+            try {
+                await fetch('/api/poll', { method: 'POST' });
+            } catch (e) {
+                console.error('Poll trigger failed:', e);
+            }
+            setTimeout(() => {
+                mobilePollBtn.disabled = false;
+                mobilePollBtn.style.opacity = '1';
+            }, 3000);
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pull-to-Refresh Gesture
+// ---------------------------------------------------------------------------
+
+function initPullToRefresh() {
+    const feedList = document.getElementById('feed-list');
+    if (!feedList) return;
+
+    let startY = 0;
+    let currentY = 0;
+    let isDragging = false;
+    let indicator = null;
+
+    feedList.addEventListener('touchstart', (e) => {
+        if (!isMobile()) return;
+        // Only activate when scrolled to top
+        if (feedList.scrollTop > 0) return;
+        startY = e.touches[0].clientY;
+        isDragging = true;
+    }, { passive: true });
+
+    feedList.addEventListener('touchmove', (e) => {
+        if (!isDragging) return;
+        currentY = e.touches[0].clientY;
+        const diff = currentY - startY;
+
+        if (diff > 0 && feedList.scrollTop === 0) {
+            // Show pull indicator
+            if (!indicator) {
+                indicator = document.createElement('div');
+                indicator.className = 'pull-to-refresh-indicator';
+                indicator.style.cssText = 'text-align:center;padding:10px;color:#00ff88;font-size:12px;font-family:monospace;';
+                feedList.parentNode.insertBefore(indicator, feedList);
+            }
+            if (diff > 60) {
+                indicator.textContent = 'Release to refresh';
+            } else {
+                indicator.textContent = 'Pull to refresh...';
+            }
+            indicator.style.opacity = Math.min(diff / 60, 1);
+        }
+    }, { passive: true });
+
+    feedList.addEventListener('touchend', () => {
+        if (!isDragging) return;
+        isDragging = false;
+        const diff = currentY - startY;
+
+        if (diff > 60 && feedList.scrollTop === 0) {
+            // Trigger refresh
+            if (indicator) {
+                indicator.textContent = 'Refreshing...';
+            }
+            loadInitialData().then(() => {
+                if (indicator) {
+                    indicator.textContent = 'Updated!';
+                    setTimeout(() => {
+                        if (indicator && indicator.parentNode) {
+                            indicator.parentNode.removeChild(indicator);
+                            indicator = null;
+                        }
+                    }, 800);
+                }
+            });
+        } else {
+            // Remove indicator without refresh
+            if (indicator && indicator.parentNode) {
+                indicator.parentNode.removeChild(indicator);
+                indicator = null;
+            }
+        }
+
+        startY = 0;
+        currentY = 0;
+    });
 }
 
 // ---------------------------------------------------------------------------
