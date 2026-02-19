@@ -12,7 +12,7 @@ services:
       - key: POLL_INTERVAL
         value: 300
       - key: DATABASE_URL
-        value: sqlite+aiosqlite:///tmp/edinet_monitor.db
+        value: sqlite+aiosqlite:////tmp/edinet_monitor.db
       - key: LOG_LEVEL
         value: INFO
     healthCheckPath: /api/stats
