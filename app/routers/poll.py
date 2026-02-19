@@ -9,6 +9,9 @@ from fastapi.responses import JSONResponse
 
 router = APIRouter(tags=["Poll"])
 
+# Store references to background tasks so they are not garbage-collected mid-execution.
+_background_tasks: set[asyncio.Task] = set()
+
 
 @router.post("/api/poll")
 async def trigger_poll(
@@ -35,5 +38,7 @@ async def trigger_poll(
         except ValueError:
             return JSONResponse({"error": "Invalid date format"}, status_code=400)
 
-    asyncio.create_task(poll_edinet(target_date))
+    task = asyncio.create_task(poll_edinet(target_date))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     return {"status": "poll_triggered", "date": str(target_date or date_type.today())}

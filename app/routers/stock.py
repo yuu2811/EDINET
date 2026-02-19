@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import logging
+import math
 import time
 from datetime import date, timedelta
 
@@ -47,14 +48,19 @@ def _normalise_sec_code(sec_code: str) -> str:
     EDINET codes are typically 5 digits (e.g. "39320") where the 5th digit
     is a check digit that can be any value (not only "0").
     Always take the first 4 digits of a 5-digit code.
+
+    Raises HTTPException(400) for invalid codes to prevent URL injection
+    and unbounded cache growth from arbitrary input strings.
     """
     sec_code = sec_code.strip()
     if len(sec_code) == 5 and sec_code[:4].isdigit():
         return sec_code[:4]
     if len(sec_code) == 4 and sec_code.isdigit():
         return sec_code
-    # Fallback: return as-is
-    return sec_code
+    raise HTTPException(
+        status_code=400,
+        detail=f"Invalid securities code: {sec_code!r} (expected 4 or 5 digit code)",
+    )
 
 
 def _format_market_cap(value: float | int | None) -> str | None:
@@ -85,7 +91,8 @@ def _parse_float(v: str | None) -> float | None:
     if not v or v in ("N/A", "-", ""):
         return None
     try:
-        return float(v)
+        result = float(v)
+        return result if math.isfinite(result) else None
     except (ValueError, TypeError):
         return None
 
@@ -127,7 +134,7 @@ async def _fetch_stooq_history(
         return []
 
     text = resp.text.strip()
-    if not text or "No data" in text:
+    if not text or "No data" in text or "<html" in text[:200].lower():
         return []
 
     reader = csv.DictReader(io.StringIO(text))
@@ -170,7 +177,7 @@ async def _fetch_stooq_quote(
         return result
 
     text = resp.text.strip()
-    if not text or "No data" in text:
+    if not text or "No data" in text or "<html" in text[:200].lower():
         return result
 
     reader = csv.DictReader(io.StringIO(text))
@@ -209,11 +216,12 @@ async def _fetch_yahoo_finance_meta(
 
     try:
         chart_result = data["chart"]["result"][0]
-        meta = chart_result.get("meta", {})
+        meta = chart_result.get("meta") or {}
         result["current_price"] = meta.get("regularMarketPrice")
         # marketCap is not always in chart endpoint; try anyway
-        if "marketCap" in meta:
-            result["market_cap"] = meta["marketCap"]
+        mc = meta.get("marketCap")
+        if mc is not None:
+            result["market_cap"] = mc
         # Short name / long name
         if meta.get("shortName"):
             result["name"] = meta["shortName"]

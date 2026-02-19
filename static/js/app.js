@@ -24,6 +24,7 @@ let eventSource = null;
 let audioCtx = null;
 let pollCountdownInterval = null;
 let lastPollTime = Date.now();
+let currentModalDocId = null; // tracks which filing is shown in the modal
 const POLL_INTERVAL_MS = 60000; // matches server default
 
 // ---------------------------------------------------------------------------
@@ -298,6 +299,7 @@ function initEventListeners() {
         const modal = document.getElementById('detail-modal');
         if (modal && !modal.classList.contains('hidden')) {
             const idx = parseInt(modal.dataset.filingIndex, 10);
+            if (isNaN(idx) || idx < 0) return;
             if (e.key === 'ArrowLeft' && idx > 0) {
                 openModal(state.filings[idx - 1]);
             } else if (e.key === 'ArrowRight' && idx < state.filings.length - 1) {
@@ -420,14 +422,21 @@ function preloadStockData() {
         }
     }
     // Fetch up to 5 unique codes in background (staggered)
+    const promises = [];
     let delay = 0;
     let count = 0;
     for (const code of codes) {
         if (count >= 5) break;
         if (stockCache[code]) continue;
-        setTimeout(() => fetchStockData(code), delay);
+        promises.push(new Promise(resolve => {
+            setTimeout(() => fetchStockData(code).then(resolve, resolve), delay);
+        }));
         delay += 2000; // 2s between each to avoid hammering
         count++;
+    }
+    // Re-render feed once all preloads finish so cards show market data
+    if (promises.length > 0) {
+        Promise.all(promises).then(() => renderFeed());
     }
 }
 
@@ -685,10 +694,10 @@ function createFeedCard(f) {
                 <span class="card-arrow">&#x2192;</span>
                 <span class="card-target">${escapeHtml(target)} ${escapeHtml(targetCode)}</span>
                 <div class="card-desc">${escapeHtml(f.doc_description || '')}</div>
+                ${marketDataHtml}
             </div>
             <div class="card-bottom">
                 ${ratioHtml}
-                ${marketDataHtml}
                 <div class="card-links">${links}</div>
             </div>
         </div>
@@ -1106,6 +1115,7 @@ function renderStockChart(canvas, prices, options = {}) {
 // ---------------------------------------------------------------------------
 
 function openModal(filing) {
+    currentModalDocId = filing.doc_id;
     const body = document.getElementById('modal-body');
 
     const rows = [
@@ -1192,8 +1202,14 @@ function openModal(filing) {
         stockSection.innerHTML = '<div class="stock-loading">株価データ読み込み中...</div>';
         body.appendChild(stockSection);
 
+        // Snapshot doc_id to detect stale callbacks when user switches modals
+        const docIdSnapshot = filing.doc_id;
+
         // Fetch async
         fetchStockData(secCode).then(stockData => {
+            // Abort if user already opened a different modal
+            if (currentModalDocId !== docIdSnapshot) return;
+
             if (!stockData) {
                 stockSection.innerHTML = '<div class="stock-no-data">株価データを取得できませんでした</div>';
                 return;
@@ -1227,6 +1243,7 @@ function openModal(filing) {
 }
 
 function closeModal() {
+    currentModalDocId = null;
     document.getElementById('detail-modal').classList.add('hidden');
 }
 
@@ -1771,6 +1788,14 @@ function navigateDate(days) {
     loadStats();
 }
 
+function csvEscape(val) {
+    const s = String(val);
+    if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+        return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+}
+
 function exportFilingsCSV() {
     if (state.filings.length === 0) return;
 
@@ -1782,22 +1807,25 @@ function exportFilingsCSV() {
 
     const rows = state.filings.map(f => [
         f.submit_date_time || '',
-        (f.holder_name || f.filer_name || '').replace(/,/g, '、'),
-        (f.target_company_name || '').replace(/,/g, '、'),
+        f.holder_name || f.filer_name || '',
+        f.target_company_name || '',
         f.target_sec_code || f.sec_code || '',
         f.holding_ratio != null ? f.holding_ratio.toFixed(2) : '',
         f.previous_holding_ratio != null ? f.previous_holding_ratio.toFixed(2) : '',
         f.ratio_change != null ? f.ratio_change.toFixed(2) : '',
-        f.shares_held != null ? f.shares_held : '',
-        (f.doc_description || '').replace(/,/g, '、'),
+        f.shares_held != null ? String(f.shares_held) : '',
+        f.doc_description || '',
         f.is_amendment ? 'Yes' : 'No',
         f.edinet_url || ''
     ]);
 
     const bom = '\uFEFF';
-    const csv = bom + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const csvContent = bom + [
+        headers.map(csvEscape).join(','),
+        ...rows.map(r => r.map(csvEscape).join(','))
+    ].join('\n');
 
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
