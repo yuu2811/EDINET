@@ -3,10 +3,10 @@ services:
     name: edinet-monitor
     runtime: docker
     plan: free
-    branch: claude/edinet-notification-system-yrFGE
+    branch: main
     envVars:
       - key: EDINET_API_KEY
-        sync: false
+        value: adbe03f107c94b999e8bcdc827cdcb9a
       - key: PORT
         value: 8000
       - key: POLL_INTERVAL
