@@ -44,12 +44,12 @@ def _cache_set(key: str, value: dict) -> None:
 def _normalise_sec_code(sec_code: str) -> str:
     """Convert EDINET securities code to a 4-digit ticker.
 
-    EDINET codes are typically 5 digits (e.g. "39320").  Strip the trailing
-    check-digit "0" to get the 4-digit TSE ticker (e.g. "3932").
-    If the code is already 4 digits, return as-is.
+    EDINET codes are typically 5 digits (e.g. "39320") where the 5th digit
+    is a check digit that can be any value (not only "0").
+    Always take the first 4 digits of a 5-digit code.
     """
     sec_code = sec_code.strip()
-    if len(sec_code) == 5 and sec_code[-1] == "0":
+    if len(sec_code) == 5 and sec_code[:4].isdigit():
         return sec_code[:4]
     if len(sec_code) == 4 and sec_code.isdigit():
         return sec_code
@@ -59,7 +59,7 @@ def _normalise_sec_code(sec_code: str) -> str:
 
 def _format_market_cap(value: float | int | None) -> str | None:
     """Format a market cap (JPY) in Japanese style using 億 / 兆."""
-    if value is None:
+    if value is None or value <= 0:
         return None
     value = float(value)
     cho = 1_000_000_000_000  # 兆 = 1 trillion
@@ -142,6 +142,9 @@ async def _fetch_stooq_history(
         entry["volume"] = _parse_int(row.get("Volume"))
         if entry["date"]:
             rows.append(entry)
+
+    # Ensure chronological order (oldest first) for chart rendering
+    rows.sort(key=lambda r: r["date"])
     return rows
 
 
@@ -248,8 +251,9 @@ async def _fetch_yahoo_quote_summary(
     try:
         summary = data["quoteSummary"]["result"][0]
 
-        price_info = summary.get("price", {})
-        market_cap_raw = price_info.get("marketCap", {}).get("raw")
+        price_info = summary.get("price") or {}
+        market_cap_obj = price_info.get("marketCap") or {}
+        market_cap_raw = market_cap_obj.get("raw") if isinstance(market_cap_obj, dict) else None
         if market_cap_raw:
             result["market_cap"] = market_cap_raw
 
@@ -257,8 +261,9 @@ async def _fetch_yahoo_quote_summary(
         if name:
             result["name"] = name
 
-        key_stats = summary.get("defaultKeyStatistics", {})
-        pbr_raw = key_stats.get("priceToBook", {}).get("raw")
+        key_stats = summary.get("defaultKeyStatistics") or {}
+        pbr_obj = key_stats.get("priceToBook") or {}
+        pbr_raw = pbr_obj.get("raw") if isinstance(pbr_obj, dict) else None
         if pbr_raw is not None:
             result["pbr"] = round(float(pbr_raw), 2)
     except (KeyError, IndexError, TypeError):
@@ -278,12 +283,12 @@ async def get_stock_data(sec_code: str) -> dict:
     Accepts EDINET-style 5-digit codes (e.g. ``39320``) or plain 4-digit
     TSE codes (e.g. ``3932``).
     """
-    # Check cache first
-    cached = _cache_get(sec_code)
+    ticker = _normalise_sec_code(sec_code)
+
+    # Check cache using normalized ticker so "3932" and "39320" share one entry
+    cached = _cache_get(ticker)
     if cached is not None:
         return cached
-
-    ticker = _normalise_sec_code(sec_code)
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         # Fetch stooq data (history + current quote) in parallel
@@ -336,5 +341,5 @@ async def get_stock_data(sec_code: str) -> dict:
         "weekly_prices": weekly_prices,
     }
 
-    _cache_set(sec_code, result)
+    _cache_set(ticker, result)
     return result
