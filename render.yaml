@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: edinet-monitor
+    runtime: docker
+    plan: free
+    branch: claude/edinet-notification-system-yrFGE
+    envVars:
+      - key: EDINET_API_KEY
+        sync: false
+      - key: PORT
+        value: 8000
+      - key: POLL_INTERVAL
+        value: 300
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///./data/edinet_monitor.db
+      - key: LOG_LEVEL
+        value: INFO
+    disk:
+      name: edinet-data
+      mountPath: /app/data
+      sizeGB: 1
+    healthCheckPath: /api/stats
