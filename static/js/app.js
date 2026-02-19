@@ -16,6 +16,7 @@ const state = {
     notificationsEnabled: false,
     searchQuery: '',
     filterMode: 'all', // all | new | change | amendment
+    sortMode: 'time-desc',
     selectedDate: new Date().toISOString().slice(0, 10), // YYYY-MM-DD
 };
 
@@ -228,6 +229,11 @@ function initEventListeners() {
         state.filterMode = e.target.value;
         renderFeed();
         savePreferences();
+    });
+
+    document.getElementById('feed-sort').addEventListener('change', (e) => {
+        state.sortMode = e.target.value;
+        renderFeed();
     });
 
     // Watchlist add
@@ -464,6 +470,25 @@ function renderFeed() {
         );
     }
 
+    // Sort filings
+    filtered.sort((a, b) => {
+        switch (state.sortMode) {
+            case 'time-asc':
+                return (a.submit_date_time || '').localeCompare(b.submit_date_time || '');
+            case 'ratio-desc':
+                return (b.holding_ratio ?? -1) - (a.holding_ratio ?? -1);
+            case 'ratio-asc':
+                return (a.holding_ratio ?? 999) - (b.holding_ratio ?? 999);
+            case 'change-desc':
+                return (b.ratio_change ?? -999) - (a.ratio_change ?? -999);
+            case 'change-asc':
+                return (a.ratio_change ?? 999) - (b.ratio_change ?? 999);
+            case 'time-desc':
+            default:
+                return (b.submit_date_time || '').localeCompare(a.submit_date_time || '');
+        }
+    });
+
     if (filtered.length === 0) {
         container.innerHTML = `<div class="feed-empty">
             <div class="empty-icon">&#128196;</div>
@@ -502,7 +527,9 @@ function isWatchlistMatch(f) {
 
 function createFeedCard(f) {
     const isChange = f.doc_description && f.doc_description.includes('変更');
-    const cardClass = f.is_amendment ? 'amendment' : isChange ? 'change-report' : 'new-report';
+    let cardClass = f.is_amendment ? 'amendment' : isChange ? 'change-report' : 'new-report';
+    if (f.ratio_change > 0) cardClass += ' ratio-up';
+    else if (f.ratio_change < 0) cardClass += ' ratio-down';
 
     // Badge
     let badge = '';
@@ -1492,6 +1519,11 @@ function initDateNav() {
             fetchBtn.textContent = origText;
         }
     });
+
+    const exportBtn = document.getElementById('date-export');
+    if (exportBtn) {
+        exportBtn.addEventListener('click', () => exportFilingsCSV());
+    }
 }
 
 function navigateDate(days) {
@@ -1505,6 +1537,41 @@ function navigateDate(days) {
     document.getElementById('date-picker').value = state.selectedDate;
     loadFilings();
     loadStats();
+}
+
+function exportFilingsCSV() {
+    if (state.filings.length === 0) return;
+
+    const headers = [
+        '提出日時', '提出者', '対象会社', '証券コード',
+        '保有割合(%)', '前回保有割合(%)', '変動(%)',
+        '保有株数', '書類種別', '訂正', 'EDINET URL'
+    ];
+
+    const rows = state.filings.map(f => [
+        f.submit_date_time || '',
+        (f.holder_name || f.filer_name || '').replace(/,/g, '、'),
+        (f.target_company_name || '').replace(/,/g, '、'),
+        f.target_sec_code || f.sec_code || '',
+        f.holding_ratio != null ? f.holding_ratio.toFixed(2) : '',
+        f.previous_holding_ratio != null ? f.previous_holding_ratio.toFixed(2) : '',
+        f.ratio_change != null ? f.ratio_change.toFixed(2) : '',
+        f.shares_held != null ? f.shares_held : '',
+        (f.doc_description || '').replace(/,/g, '、'),
+        f.is_amendment ? 'Yes' : 'No',
+        f.edinet_url || ''
+    ]);
+
+    const bom = '\uFEFF';
+    const csv = bom + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `edinet_filings_${state.selectedDate}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
 }
 
 // ---------------------------------------------------------------------------

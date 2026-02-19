@@ -126,15 +126,12 @@ body {
 }
 
 .header-center {
-    font-size: var(--font-size-md);
-    color: var(--cyan);
-    font-variant-numeric: tabular-nums;
-}
-
-.header-center {
     display: flex;
     align-items: center;
     gap: 8px;
+    font-size: var(--font-size-md);
+    color: var(--cyan);
+    font-variant-numeric: tabular-nums;
 }
 
 .filing-count-badge {
@@ -454,6 +451,22 @@ body {
 
 .feed-card.amendment {
     border-left-color: var(--purple);
+}
+
+.feed-card.ratio-up {
+    background: linear-gradient(90deg, rgba(0, 230, 118, 0.08) 0%, var(--bg-card) 40%);
+}
+
+.feed-card.ratio-up:hover {
+    background: linear-gradient(90deg, rgba(0, 230, 118, 0.12) 0%, var(--bg-card-hover) 40%);
+}
+
+.feed-card.ratio-down {
+    background: linear-gradient(90deg, rgba(255, 23, 68, 0.08) 0%, var(--bg-card) 40%);
+}
+
+.feed-card.ratio-down:hover {
+    background: linear-gradient(90deg, rgba(255, 23, 68, 0.12) 0%, var(--bg-card-hover) 40%);
 }
 
 /* New filing flash animation (improved: longer, more visible) */
@@ -1631,6 +1644,16 @@ body {
 .date-fetch-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+.date-export-btn {
+    color: var(--green);
+    border-color: var(--green-dim);
+}
+
+.date-export-btn:hover {
+    background: var(--green-dim);
+    color: #fff;
 }
 
 .date-picker {
