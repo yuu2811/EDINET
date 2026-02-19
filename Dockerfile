@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 COPY static/ ./static/
 
-RUN mkdir -p /app/data
+RUN mkdir -p /tmp
 
 EXPOSE 8000
 
