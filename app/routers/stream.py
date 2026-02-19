@@ -15,7 +15,7 @@ async def sse_stream(request: Request) -> StreamingResponse:
     """Server-Sent Events stream for real-time filing notifications."""
 
     async def event_generator():
-        queue = broadcaster.subscribe()
+        client_id, queue = await broadcaster.subscribe()
         try:
             yield "event: connected\ndata: {\"status\": \"connected\"}\n\n"
 
@@ -29,7 +29,7 @@ async def sse_stream(request: Request) -> StreamingResponse:
                 except asyncio.TimeoutError:
                     yield ": keepalive\n\n"
         finally:
-            broadcaster.unsubscribe(queue)
+            await broadcaster.unsubscribe(client_id)
 
     return StreamingResponse(
         event_generator(),
