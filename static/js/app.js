@@ -1038,7 +1038,7 @@ function renderStockChart(canvas, prices, options = {}) {
     ctx.clearRect(0, 0, W, H);
 
     // Grid lines (horizontal)
-    ctx.strokeStyle = '#1a1a2e';
+    ctx.strokeStyle = 'rgba(30, 30, 52, 0.6)';
     ctx.lineWidth = 0.5;
     const gridLines = 5;
     for (let i = 0; i <= gridLines; i++) {
@@ -1050,15 +1050,15 @@ function renderStockChart(canvas, prices, options = {}) {
 
         // Price label
         const price = maxPrice - (maxPrice - minPrice) * (i / gridLines);
-        ctx.fillStyle = '#666';
+        ctx.fillStyle = '#707088';
         ctx.font = '10px monospace';
         ctx.textAlign = 'left';
         ctx.fillText(price.toFixed(0), W - padding.right + 5, y + 3);
     }
 
     // Draw candles
-    const upColor = '#00ff88';
-    const downColor = '#ff4444';
+    const upColor = '#00e676';
+    const downColor = '#ff1744';
 
     for (let i = 0; i < prices.length; i++) {
         const p = prices[i];
@@ -1082,7 +1082,7 @@ function renderStockChart(canvas, prices, options = {}) {
         const bodyTop = Math.min(openY, closeY);
         const bodyH = Math.max(Math.abs(closeY - openY), 1);
 
-        ctx.fillStyle = isUp ? 'rgba(0,255,136,0.8)' : 'rgba(255,68,68,0.8)';
+        ctx.fillStyle = isUp ? 'rgba(0,230,118,0.85)' : 'rgba(255,23,68,0.85)';
         ctx.fillRect(x - candleW / 2, bodyTop, candleW, bodyH);
 
         // Volume bar
@@ -1090,13 +1090,13 @@ function renderStockChart(canvas, prices, options = {}) {
         if (maxVol > 0 && vol > 0) {
             const volH = (vol / maxVol) * volumeH;
             const volY = H - padding.bottom - volH;
-            ctx.fillStyle = isUp ? 'rgba(0,255,136,0.25)' : 'rgba(255,68,68,0.25)';
+            ctx.fillStyle = isUp ? 'rgba(0,230,118,0.18)' : 'rgba(255,23,68,0.18)';
             ctx.fillRect(x - candleW / 2, volY, candleW, volH);
         }
     }
 
     // Date labels (show every ~3 months)
-    ctx.fillStyle = '#666';
+    ctx.fillStyle = '#707088';
     ctx.font = '9px monospace';
     ctx.textAlign = 'center';
     let lastMonth = '';
@@ -1671,7 +1671,7 @@ function initPullToRefresh() {
             if (!indicator) {
                 indicator = document.createElement('div');
                 indicator.className = 'pull-to-refresh-indicator';
-                indicator.style.cssText = 'text-align:center;padding:10px;color:#00ff88;font-size:12px;font-family:monospace;';
+                indicator.style.cssText = 'text-align:center;padding:10px;color:#00e676;font-size:12px;font-family:monospace;';
                 feedList.parentNode.insertBefore(indicator, feedList);
             }
             if (diff > 60) {
