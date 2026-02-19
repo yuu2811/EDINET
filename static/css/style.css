@@ -131,6 +131,34 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
+.header-center {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.filing-count-badge {
+    background: #b36a00;
+    color: #fff;
+    font-size: 10px;
+    font-weight: bold;
+    padding: 1px 6px;
+    border-radius: 8px;
+    min-width: 20px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.poll-countdown {
+    font-size: 10px;
+    color: #707088;
+    font-variant-numeric: tabular-nums;
+}
+
+.poll-countdown.soon {
+    color: #ff9800;
+}
+
 .header-right {
     display: flex;
     align-items: center;
@@ -928,6 +956,106 @@ body {
     color: var(--red);
 }
 
+/* Modal Ratio Gauge */
+.modal-ratio-section {
+    background: #1a1a28;
+    border: 1px solid #2a2a3e;
+    border-radius: 4px;
+    padding: 12px;
+    margin-bottom: 12px;
+}
+
+.modal-ratio-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.modal-ratio-value {
+    font-size: 24px;
+    font-weight: bold;
+    font-variant-numeric: tabular-nums;
+}
+
+.modal-ratio-value.positive { color: #00e676; }
+.modal-ratio-value.negative { color: #ff1744; }
+.modal-ratio-value.neutral { color: #a0a0b8; }
+
+.modal-ratio-change {
+    font-size: 14px;
+    font-weight: bold;
+    padding: 2px 8px;
+    border-radius: 3px;
+}
+
+.modal-ratio-change.positive {
+    background: rgba(0, 230, 118, 0.18);
+    color: #00e676;
+}
+
+.modal-ratio-change.negative {
+    background: rgba(255, 23, 68, 0.18);
+    color: #ff1744;
+}
+
+.modal-ratio-gauge {
+    position: relative;
+    height: 16px;
+    background: #0a0a0f;
+    border-radius: 4px;
+    overflow: visible;
+    margin: 8px 0 4px;
+}
+
+.gauge-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.4s ease;
+}
+
+.gauge-prev {
+    background: #555570;
+    opacity: 0.5;
+    z-index: 1;
+}
+
+.gauge-curr {
+    z-index: 2;
+}
+
+.gauge-curr.positive { background: #00e676; }
+.gauge-curr.negative { background: #ff1744; }
+.gauge-curr.neutral { background: #a0a0b8; }
+
+.gauge-labels {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    height: 20px;
+}
+
+.gauge-label {
+    position: absolute;
+    transform: translateX(-50%);
+    font-size: 9px;
+    color: #707088;
+    top: 2px;
+    white-space: nowrap;
+}
+
+.modal-ratio-footer {
+    display: flex;
+    justify-content: space-between;
+    font-size: 9px;
+    color: #555570;
+    margin-top: 4px;
+}
+
 /* ==========================================================================
    Confirm Dialog
    ========================================================================== */
@@ -1448,6 +1576,255 @@ body {
 }
 
 /* ==========================================================================
+   Date Navigation
+   ========================================================================== */
+
+.date-nav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-primary);
+    flex-shrink: 0;
+}
+
+.date-nav-btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    padding: 3px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.date-nav-btn:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+    border-color: var(--border-accent);
+}
+
+.date-today-btn {
+    color: var(--cyan);
+    border-color: var(--cyan-dim);
+}
+
+.date-today-btn:hover {
+    background: var(--cyan-dim);
+    color: #fff;
+}
+
+.date-fetch-btn {
+    color: var(--amber);
+    border-color: var(--amber-dim);
+}
+
+.date-fetch-btn:hover {
+    background: var(--amber-dim);
+    color: #fff;
+}
+
+.date-fetch-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.date-picker {
+    background: var(--bg-input);
+    border: 1px solid var(--border-primary);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    padding: 3px 8px;
+    border-radius: 3px;
+    outline: none;
+    color-scheme: dark;
+}
+
+.date-picker:focus {
+    border-color: var(--cyan);
+}
+
+/* ==========================================================================
+   Ratio Display (improved increase/decrease visibility)
+   ========================================================================== */
+
+.ratio-display {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.ratio-display.positive {
+    border-left: 3px solid var(--green);
+    padding-left: 8px;
+}
+
+.ratio-display.negative {
+    border-left: 3px solid var(--red);
+    padding-left: 8px;
+}
+
+.ratio-display.neutral {
+    border-left: 3px solid var(--text-dim);
+    padding-left: 8px;
+}
+
+.ratio-main-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ratio-change-pill {
+    display: inline-flex;
+    align-items: center;
+    font-size: var(--font-size-sm);
+    font-weight: bold;
+    padding: 1px 8px;
+    border-radius: 3px;
+    letter-spacing: 0.3px;
+}
+
+.ratio-change-pill.positive {
+    background: rgba(0, 230, 118, 0.18);
+    color: var(--green);
+}
+
+.ratio-change-pill.negative {
+    background: rgba(255, 23, 68, 0.18);
+    color: var(--red);
+}
+
+.ratio-prev {
+    font-size: var(--font-size-xs);
+    color: var(--text-dim);
+}
+
+.ratio-bar-container {
+    position: relative;
+    height: 4px;
+    background: var(--bg-primary);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 2px;
+    max-width: 120px;
+}
+
+.ratio-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+
+.ratio-bar-prev {
+    background: var(--text-dim);
+    opacity: 0.4;
+    z-index: 1;
+}
+
+.ratio-bar-curr {
+    z-index: 2;
+}
+
+.ratio-bar-curr.positive {
+    background: var(--green);
+}
+
+.ratio-bar-curr.negative {
+    background: var(--red);
+}
+
+.ratio-bar-curr.neutral {
+    background: var(--text-dim);
+}
+
+/* ==========================================================================
+   Market Summary Panel
+   ========================================================================== */
+
+.summary-content {
+    padding: 8px;
+    font-size: 11px;
+}
+
+.summary-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 8px;
+    border-bottom: 1px solid #2a2a3e;
+}
+
+.summary-row:last-child {
+    border-bottom: none;
+}
+
+.summary-label {
+    color: #a0a0b8;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.summary-value {
+    font-weight: bold;
+    font-variant-numeric: tabular-nums;
+}
+
+.summary-value.positive {
+    color: #00e676;
+}
+
+.summary-value.negative {
+    color: #ff1744;
+}
+
+.summary-value.neutral {
+    color: #a0a0b8;
+}
+
+.summary-highlight {
+    padding: 6px 8px;
+    background: #1a1a28;
+    border-radius: 3px;
+    margin: 4px 0;
+}
+
+.summary-highlight-label {
+    font-size: 9px;
+    color: #707088;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+}
+
+.summary-highlight-value {
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.summary-highlight-company {
+    font-size: 10px;
+    color: #00bcd4;
+    margin-top: 1px;
+}
+
+.summary-empty {
+    color: #707088;
+    text-align: center;
+    padding: 16px 10px;
+    font-size: 11px;
+}
+
+/* ==========================================================================
    Mobile Bottom Navigation (.mobile-bottom-nav)
    ========================================================================== */
 
@@ -1471,7 +1848,7 @@ body {
         justify-content: space-around;
     }
 
-    .mobile-bottom-nav-item {
+    .mobile-bottom-nav .nav-item {
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -1492,36 +1869,52 @@ body {
         transition: color 0.15s;
     }
 
-    .mobile-bottom-nav-item .nav-icon {
+    .mobile-bottom-nav .nav-item .nav-icon {
         font-size: 20px;
         line-height: 1;
     }
 
-    .mobile-bottom-nav-item .nav-label {
+    .mobile-bottom-nav .nav-item .nav-label {
         font-size: 9px;
         letter-spacing: 0.5px;
         white-space: nowrap;
     }
 
-    .mobile-bottom-nav-item.active {
+    .mobile-bottom-nav .nav-item.active {
         color: var(--amber);
     }
 
-    .mobile-bottom-nav-item.active .nav-icon {
+    .mobile-bottom-nav .nav-item.active .nav-icon {
         color: var(--amber);
     }
 
-    .mobile-bottom-nav-item:hover {
+    .mobile-bottom-nav .nav-item:hover {
         color: var(--text-secondary);
     }
 
-    .mobile-bottom-nav-item.active:hover {
+    .mobile-bottom-nav .nav-item.active:hover {
         color: var(--amber);
     }
 
-    /* When bottom nav is present, add padding to body so content is not hidden */
     body.has-bottom-nav {
         padding-bottom: calc(56px + env(safe-area-inset-bottom));
+    }
+
+    .date-nav {
+        gap: 4px;
+        padding: 4px 8px;
+        flex-wrap: wrap;
+    }
+
+    .date-nav-btn {
+        min-height: 36px;
+        padding: 4px 10px;
+        font-size: var(--font-size-sm);
+    }
+
+    .date-picker {
+        flex: 1;
+        min-height: 36px;
     }
 }
 
@@ -1529,57 +1922,51 @@ body {
    Sidebar Overlay (slide-up panel on mobile)
    ========================================================================== */
 
-.sidebar-overlay-backdrop {
-    display: none;
-}
-
 .sidebar-overlay {
     display: none;
 }
 
+.overlay-backdrop {
+    display: none;
+}
+
+.overlay-sheet {
+    display: none;
+}
+
 @media (max-width: 480px) {
-    .sidebar-overlay-backdrop {
-        display: none;
+    .sidebar-overlay {
         position: fixed;
         inset: 0;
-        background: rgba(0, 0, 0, 0.6);
-        z-index: 950;
-        opacity: 0;
-        transition: opacity 0.3s ease;
-    }
-
-    .sidebar-overlay-backdrop.active {
-        display: block;
-        opacity: 1;
-    }
-
-    .sidebar-overlay {
-        display: none;
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        max-height: 70vh;
-        background: var(--bg-panel);
-        border-top: 1px solid var(--border-accent);
-        border-radius: 12px 12px 0 0;
         z-index: 960;
         flex-direction: column;
+        justify-content: flex-end;
+    }
+
+    .sidebar-overlay:not(.hidden) {
+        display: flex;
+    }
+
+    .overlay-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        display: block;
+    }
+
+    .overlay-sheet {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg-panel);
+        border-radius: 12px 12px 0 0;
+        border-top: 1px solid var(--border-accent);
+        max-height: 70vh;
         overflow: hidden;
-        transform: translateY(100%);
-        transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
         padding-bottom: env(safe-area-inset-bottom);
     }
 
-    .sidebar-overlay.active {
-        display: flex;
-        transform: translateY(0);
-    }
-
-    /* Drag handle indicator */
-    .sidebar-overlay::before {
-        content: '';
-        display: block;
+    .overlay-handle {
         width: 36px;
         height: 4px;
         background: var(--border-accent);
@@ -1588,42 +1975,142 @@ body {
         flex-shrink: 0;
     }
 
-    .sidebar-overlay .panel-header {
+    .overlay-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
         padding: 8px 12px;
         border-bottom: 1px solid var(--border-primary);
     }
 
-    .sidebar-overlay .panel-body {
+    .overlay-close {
+        background: none;
+        border: none;
+        color: var(--text-secondary);
+        font-size: var(--font-size-xl);
+        cursor: pointer;
+        min-width: 44px;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .overlay-close:hover {
+        color: var(--red);
+    }
+
+    .overlay-body {
         flex: 1;
         overflow-y: auto;
+        padding: 8px;
         -webkit-overflow-scrolling: touch;
     }
 
-    /* Animation for opening */
-    @keyframes slide-up {
-        from {
-            transform: translateY(100%);
-        }
-        to {
-            transform: translateY(0);
-        }
+    /* Settings list in mobile overlay */
+    .settings-list {
+        display: flex;
+        flex-direction: column;
     }
 
-    @keyframes fade-in {
-        from {
-            opacity: 0;
-        }
-        to {
-            opacity: 1;
-        }
+    .settings-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 8px;
+        border-bottom: 1px solid var(--border-primary);
     }
 
-    .sidebar-overlay.active {
-        animation: slide-up 0.3s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+    .settings-label {
+        color: var(--text-primary);
+        font-size: var(--font-size-md);
     }
 
-    .sidebar-overlay-backdrop.active {
-        animation: fade-in 0.3s ease forwards;
+    .settings-toggle {
+        background: var(--bg-card);
+        border: 1px solid var(--border-primary);
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+        font-size: var(--font-size-sm);
+        padding: 6px 12px;
+        border-radius: 3px;
+        cursor: pointer;
+        min-height: 36px;
+    }
+
+    .settings-toggle.active {
+        color: var(--green);
+        border-color: var(--green-dim);
+    }
+
+    .settings-info {
+        font-size: var(--font-size-sm);
+    }
+
+    /* Mobile form inside overlay */
+    .mobile-watchlist-form {
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        border-top: 1px solid var(--border-primary);
+        margin-top: 8px;
+    }
+
+    .form-input {
+        background: var(--bg-input);
+        border: 1px solid var(--border-primary);
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        font-size: var(--font-size-md);
+        padding: 8px 10px;
+        border-radius: 3px;
+        width: 100%;
+        height: 44px;
+        outline: none;
+    }
+
+    .form-input:focus {
+        border-color: var(--cyan);
+    }
+
+    .form-actions {
+        display: flex;
+        gap: 8px;
+    }
+
+    .btn {
+        flex: 1;
+        height: 44px;
+        font-family: var(--font-mono);
+        font-size: var(--font-size-md);
+        border-radius: 3px;
+        border: 1px solid var(--border-primary);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .btn-primary {
+        background: var(--amber-dim);
+        color: #fff;
+        border-color: var(--amber);
+    }
+
+    .btn-secondary {
+        background: var(--bg-card);
+        color: var(--text-secondary);
+    }
+
+    /* Top filers section title in mobile stats overlay */
+    .section-title {
+        font-size: var(--font-size-xs);
+        font-weight: bold;
+        color: var(--amber);
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        padding: 8px 8px 4px;
     }
 }
 

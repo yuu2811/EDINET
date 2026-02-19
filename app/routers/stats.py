@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from sqlalchemy import desc, func, select
 
 from app.config import settings
@@ -19,9 +19,17 @@ def _get_async_session():
 
 
 @router.get("/api/stats")
-async def get_stats() -> dict:
+async def get_stats(
+    target_date: str | None = Query(None, alias="date", description="Date (YYYY-MM-DD)"),
+) -> dict:
     """Get statistics for the dashboard."""
-    today = date.today()
+    if target_date:
+        try:
+            today = date.fromisoformat(target_date)
+        except ValueError:
+            today = date.today()
+    else:
+        today = date.today()
     today_str = today.strftime("%Y-%m-%d")
 
     async with _get_async_session()() as session:
