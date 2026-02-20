@@ -21,6 +21,7 @@ router = APIRouter(prefix="/api/stock", tags=["Stock"])
 # ---------------------------------------------------------------------------
 _cache: dict[str, tuple[float, dict]] = {}
 _CACHE_TTL = 30 * 60  # 30 minutes
+_external_apis_failed = False  # fast-fail flag when all external APIs are unreachable
 
 
 def _cache_get(key: str) -> dict | None:
@@ -346,6 +347,7 @@ async def get_stock_data(sec_code: str) -> dict:
     Accepts EDINET-style 5-digit codes (e.g. ``39320``) or plain 4-digit
     TSE codes (e.g. ``3932``).
     """
+    global _external_apis_failed
     ticker = _normalise_sec_code(sec_code)
 
     # Check cache using normalized ticker so "3932" and "39320" share one entry
@@ -353,46 +355,49 @@ async def get_stock_data(sec_code: str) -> dict:
     if cached is not None:
         return cached
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        # Fetch stooq data (history + current quote) in parallel
-        # Also try Yahoo Finance for market cap / PBR
-        history_task = asyncio.create_task(_fetch_stooq_history(client, ticker))
-        quote_task = asyncio.create_task(_fetch_stooq_quote(client, ticker))
-        yahoo_meta_task = asyncio.create_task(_fetch_yahoo_finance_meta(client, ticker))
-        yahoo_summary_task = asyncio.create_task(_fetch_yahoo_quote_summary(client, ticker))
+    weekly_prices: list[dict] = []
+    current_price = None
+    name = None
+    market_cap = None
+    pbr = None
 
-        history, quote, yahoo_meta, yahoo_summary = await asyncio.gather(
-            history_task, quote_task, yahoo_meta_task, yahoo_summary_task,
+    # If external APIs previously failed for ALL sources, skip straight to
+    # fallback to avoid 10-second timeouts on every request.
+    if not _external_apis_failed:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            history_task = asyncio.create_task(_fetch_stooq_history(client, ticker))
+            quote_task = asyncio.create_task(_fetch_stooq_quote(client, ticker))
+            yahoo_meta_task = asyncio.create_task(_fetch_yahoo_finance_meta(client, ticker))
+            yahoo_summary_task = asyncio.create_task(_fetch_yahoo_quote_summary(client, ticker))
+
+            history, quote, yahoo_meta, yahoo_summary = await asyncio.gather(
+                history_task, quote_task, yahoo_meta_task, yahoo_summary_task,
+            )
+
+        # Merge results – prefer Yahoo for market cap / PBR, stooq for prices
+        weekly_prices = history
+
+        current_price = quote.get("current_price")
+        if current_price is None:
+            current_price = yahoo_meta.get("current_price")
+
+        name = (
+            yahoo_summary.get("name")
+            or yahoo_meta.get("name")
+            or quote.get("name")
         )
 
-    # Merge results – prefer Yahoo for market cap / PBR, stooq for prices
-    weekly_prices = history
+        market_cap = yahoo_summary.get("market_cap") or yahoo_meta.get("market_cap")
+        pbr = yahoo_summary.get("pbr")
 
-    # Current price: prefer stooq quote, fall back to Yahoo
-    current_price = quote.get("current_price")
-    if current_price is None:
-        current_price = yahoo_meta.get("current_price")
+        # If everything came back empty, mark external APIs as failed
+        # so subsequent requests skip the slow timeout path.
+        if not weekly_prices and current_price is None:
+            _external_apis_failed = True
+            logger.info("All external APIs unreachable; switching to fallback mode")
 
-    # Name: prefer Yahoo (usually Japanese), fall back to stooq
-    name = (
-        yahoo_summary.get("name")
-        or yahoo_meta.get("name")
-        or quote.get("name")
-    )
-
-    # Market cap: from Yahoo
-    market_cap = yahoo_summary.get("market_cap") or yahoo_meta.get("market_cap")
-
-    # PBR: from Yahoo quoteSummary
-    pbr = yahoo_summary.get("pbr")
-
-    # If we have absolutely nothing from external APIs, generate deterministic
-    # fallback data so the chart is still functional.  This covers environments
-    # where outbound HTTPS is blocked (HTTP 403 from stooq / Yahoo).
+    # Generate deterministic fallback data when no real data is available
     if not weekly_prices and current_price is None:
-        logger.info(
-            "All external sources failed for %s; generating fallback data", ticker
-        )
         weekly_prices, current_price, name, market_cap, pbr = (
             _generate_fallback_data(ticker)
         )

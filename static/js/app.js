@@ -457,29 +457,26 @@ async function loadFilings() {
 function preloadStockData() {
     const codes = new Set();
     for (const f of state.filings) {
+        // Try target_sec_code first, then sec_code (EDINET API provides issuer code)
         const code = f.target_sec_code || f.sec_code;
         if (code) {
             const normalized = code.length === 5 ? code.slice(0, 4) : code;
             codes.add(normalized);
         }
     }
-    // Fetch unique codes in background (staggered)
-    // On mobile card view, fetch more aggressively since market cap is prominently shown
-    const isTable = state.viewMode === 'table';
-    const mobile = isMobile();
-    const maxFetch = isTable ? 20 : (mobile ? 15 : 5);
-    const staggerMs = isTable ? 500 : (mobile ? 300 : 2000);
+    if (codes.size === 0) return;
+
+    // Fetch ALL unique codes — on mobile, market cap is prominently shown on every card
+    // Use small stagger to avoid hammering the backend
+    const staggerMs = 100;
     const promises = [];
     let delay = 0;
-    let count = 0;
     for (const code of codes) {
-        if (count >= maxFetch) break;
         if (stockCache[code]) continue;
         promises.push(new Promise(resolve => {
             setTimeout(() => fetchStockData(code).then(resolve, resolve), delay);
         }));
         delay += staggerMs;
-        count++;
     }
     // Re-render feed once all preloads finish so table/cards show market data
     if (promises.length > 0) {
@@ -946,7 +943,12 @@ function createMobileFeedCard(f) {
         priceHtml = `<span class="m-price">\u00a5${Math.round(sd.current_price).toLocaleString()}</span>`;
     }
 
-    const hasMktData = mcapHtml || priceHtml;
+    let pbrHtml = '';
+    if (sd && sd.pbr != null) {
+        pbrHtml = `<span class="m-pbr">PBR ${sd.pbr.toFixed(2)}</span>`;
+    }
+
+    const hasMktData = mcapHtml || priceHtml || pbrHtml;
     const sep = hasMktData ? '<span class="m-sep"></span>' : '';
 
     // PDF link
@@ -965,7 +967,7 @@ function createMobileFeedCard(f) {
     <div class="m-card-data">
         <span class="m-ratio ${ratioClass}">${ratioVal}</span>
         ${changeHtml}
-        ${sep}${mcapHtml}${priceHtml}
+        ${sep}${mcapHtml}${priceHtml}${pbrHtml}
     </div>
     <div class="m-card-foot">
         <span class="m-filer">${escapeHtml(filer)}</span>
