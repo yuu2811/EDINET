@@ -466,6 +466,9 @@ body {
     flex: 1;
     overflow-y: auto;
     padding: 6px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
 }
 
 .feed-list::-webkit-scrollbar {
@@ -1356,6 +1359,16 @@ body {
         flex-direction: column;
     }
 
+    #feed-panel .panel-header {
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    .feed-table .col-filer,
+    .feed-table .col-target {
+        max-width: 140px;
+    }
+
     #sidebar {
         width: 100%;
         flex-direction: row;
@@ -1486,6 +1499,13 @@ body {
 
     .panel-header {
         padding: 6px 8px;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    #feed-panel .panel-header {
+        flex-direction: column;
+        align-items: stretch;
     }
 
     .panel-title {
@@ -1495,10 +1515,11 @@ body {
 
     /* --- Feed Controls --- */
     .feed-controls {
-        flex-direction: column;
+        flex-direction: row;
+        flex-wrap: wrap;
         gap: 4px;
         width: 100%;
-        align-items: stretch;
+        align-items: center;
     }
 
     .search-input {
@@ -1544,12 +1565,20 @@ body {
     /* --- Feed Table mobile --- */
     .feed-table {
         font-size: 10px;
-        min-width: 700px;
     }
 
     .feed-table th,
     .feed-table td {
         padding: 5px 4px;
+    }
+
+    .feed-table .col-filer,
+    .feed-table .col-target {
+        max-width: 100px;
+    }
+
+    .feed-table .col-links {
+        width: 36px;
     }
 
     /* --- Feed Cards --- */
@@ -2579,7 +2608,8 @@ body {
 .feed-table-wrapper {
     overflow-x: auto;
     overflow-y: auto;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     -webkit-overflow-scrolling: touch;
 }
 
@@ -2588,7 +2618,6 @@ body {
     border-collapse: collapse;
     font-size: var(--font-size-sm);
     white-space: nowrap;
-    min-width: 900px;
 }
 
 .feed-table thead {
@@ -2661,20 +2690,24 @@ body {
 }
 
 .feed-table .col-filer {
-    max-width: 160px;
+    max-width: 180px;
     font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .feed-table .col-target {
-    max-width: 160px;
+    max-width: 180px;
     color: var(--cyan);
     font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-.feed-table .col-code {
-    font-variant-numeric: tabular-nums;
-    width: 55px;
+.tbl-code {
+    font-size: 9px;
     color: var(--text-dim);
+    margin-left: 2px;
 }
 
 .feed-table .col-ratio {
@@ -2718,7 +2751,7 @@ body {
 }
 
 .feed-table .col-links {
-    width: 80px;
+    width: 40px;
 }
 
 .tbl-badge {
@@ -2743,6 +2776,10 @@ body {
 
 .tbl-change.negative {
     color: var(--red);
+}
+
+.tbl-loading {
+    animation: pulse 1.5s ease-in-out infinite;
 }
 
 .tbl-link {
