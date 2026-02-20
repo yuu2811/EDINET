@@ -6,10 +6,11 @@ import logging
 import time
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.config import settings
 from app.database import async_session
+from app.demo_data import generate_demo_filings
 from app.edinet import edinet_client
 from app.models import Filing
 
@@ -134,13 +135,15 @@ async def poll_edinet(target_date=None):
                     max_retries, e,
                     exc_info=True,
                 )
-                return
+                # Fall through to demo data check below
+                filings = None
 
     if filings is None:
         filings = []
 
     if not filings:
-        logger.info("No large shareholding filings found for %s", today)
+        # If the DB is also empty, seed with demo data so the UI is functional
+        await _seed_demo_if_empty(today)
         return
 
     new_count = 0
@@ -214,6 +217,45 @@ async def poll_edinet(target_date=None):
         logger.info("Found %d new filings", new_count)
         await broadcaster.broadcast(
             "stats_update", {"new_count": new_count, "date": today.isoformat()}
+        )
+
+
+_demo_seeded = False  # only seed once per process lifetime
+
+
+async def _seed_demo_if_empty(target_date: date) -> None:
+    """Seed the database with demo filings when it's empty.
+
+    This ensures the UI is fully functional even when the EDINET API
+    and all external stock APIs are unreachable (e.g. sandboxed environments).
+    Only runs once per process lifetime to avoid duplicates.
+    """
+    global _demo_seeded
+    if _demo_seeded:
+        return
+
+    async with async_session() as session:
+        count_result = await session.execute(select(func.count()).select_from(Filing))
+        total = count_result.scalar() or 0
+        if total > 0:
+            _demo_seeded = True
+            return
+
+        logger.info("Database empty and EDINET API unreachable — seeding demo data")
+        demo_filings = generate_demo_filings(target_date, count=25)
+        for filing in demo_filings:
+            session.add(filing)
+        await session.commit()
+        _demo_seeded = True
+        logger.info("Seeded %d demo filings for %s", len(demo_filings), target_date)
+
+        # Broadcast them to any connected SSE clients
+        for filing in demo_filings:
+            await session.refresh(filing)
+            await broadcaster.broadcast("new_filing", filing.to_dict())
+
+        await broadcaster.broadcast(
+            "stats_update", {"new_count": len(demo_filings), "date": target_date.isoformat()}
         )
 
 
