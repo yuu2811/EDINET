@@ -1687,6 +1687,16 @@ body {
         margin-left: auto;
     }
 
+    .m-loading {
+        opacity: 0.5;
+        animation: m-pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes m-pulse {
+        0%, 100% { opacity: 0.3; }
+        50% { opacity: 0.7; }
+    }
+
     /* Row 3: filer + prev ratio + PDF */
     .m-card-foot {
         display: flex;

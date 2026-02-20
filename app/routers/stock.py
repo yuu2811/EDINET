@@ -364,7 +364,7 @@ async def get_stock_data(sec_code: str) -> dict:
     # If external APIs previously failed for ALL sources, skip straight to
     # fallback to avoid 10-second timeouts on every request.
     if not _external_apis_failed:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=2.0) as client:
             history_task = asyncio.create_task(_fetch_stooq_history(client, ticker))
             quote_task = asyncio.create_task(_fetch_stooq_quote(client, ticker))
             yahoo_meta_task = asyncio.create_task(_fetch_yahoo_finance_meta(client, ticker))
