@@ -106,22 +106,68 @@ def _parse_int(v: str | None) -> int | None:
     return int(f)
 
 
+# Realistic reference data for major Japanese stocks.
+# {ticker: (name, approx_price_yen, shares_outstanding, pbr)}
+# Data is approximate and used only as fallback when APIs are unreachable.
+_KNOWN_STOCKS: dict[str, tuple[str, int, int, float]] = {
+    "7203": ("トヨタ自動車", 2800, 15_732_000_000, 1.2),
+    "6758": ("ソニーグループ", 3200, 6_020_000_000, 2.5),
+    "6861": ("キーエンス", 65000, 243_000_000, 8.5),
+    "8306": ("三菱UFJ FG", 1800, 11_780_000_000, 1.0),
+    "9984": ("ソフトバンクグループ", 9200, 1_474_000_000, 1.8),
+    "8035": ("東京エレクトロン", 25000, 464_000_000, 7.0),
+    "6501": ("日立製作所", 3800, 4_610_000_000, 2.1),
+    "7974": ("任天堂", 9500, 1_296_000_000, 5.5),
+    "6698": ("リクルートHD", 7500, 1_600_000_000, 7.2),
+    "4063": ("信越化学工業", 5500, 2_063_000_000, 2.8),
+    "6367": ("ダイキン工業", 18000, 293_000_000, 3.5),
+    "7741": ("HOYA", 19000, 364_000_000, 6.0),
+    "6981": ("村田製作所", 2800, 2_030_000_000, 2.2),
+    "8001": ("伊藤忠商事", 7500, 1_498_000_000, 2.0),
+    "8316": ("三井住友 FG", 3300, 5_450_000_000, 0.9),
+    "9983": ("ファーストリテイリング", 42000, 318_000_000, 9.0),
+    "9613": ("NTTデータグループ", 2300, 2_800_000_000, 2.5),
+    "9433": ("KDDI", 4800, 2_304_000_000, 1.9),
+    "6857": ("アドバンテスト", 8000, 740_000_000, 8.0),
+    "6146": ("ディスコ", 42000, 108_000_000, 10.0),
+    "6920": ("レーザーテック", 17000, 90_600_000, 6.5),
+    "4385": ("メルカリ", 2000, 513_000_000, 4.5),
+    "3718": ("マネーフォワード", 4000, 117_000_000, 12.0),
+    "3697": ("SHIFT", 14000, 35_000_000, 8.0),
+    "4443": ("Sansan", 1800, 131_000_000, 7.0),
+    "4980": ("セルソース", 1200, 13_000_000, 3.0),
+    "4378": ("フリー", 3000, 103_000_000, 10.0),
+    "4467": ("ラクスル", 1000, 55_000_000, 5.0),
+    "4169": ("ENECHANGE", 400, 42_000_000, 3.0),
+    "4165": ("プレイド", 600, 55_000_000, 4.0),
+}
+
+
 def _generate_fallback_data(
     ticker: str,
 ) -> tuple[list[dict], float, str, float, float]:
     """Generate deterministic demo stock data from the ticker string.
 
     Returns ``(weekly_prices, current_price, name, market_cap, pbr)``.
-    The numbers are seeded by the ticker so the same code always produces
-    the same chart, giving a realistic look without requiring network access.
+    Uses known stock reference data when available for realistic market caps,
+    otherwise falls back to seed-based generation.
     """
     import random as _random
 
     seed = int(hashlib.md5(ticker.encode()).hexdigest()[:8], 16)
     rng = _random.Random(seed)
 
-    # Base price between 500 and 8000
-    base_price = 500 + (seed % 7500)
+    known = _KNOWN_STOCKS.get(ticker)
+
+    if known:
+        ref_name, ref_price, shares_out, ref_pbr = known
+        base_price = ref_price
+        name = ref_name
+    else:
+        base_price = 500 + (seed % 7500)
+        shares_out = rng.randint(50_000_000, 2_000_000_000)
+        ref_pbr = round(rng.uniform(0.4, 4.0), 2)
+        name = f"銘柄 {ticker}"
 
     today = date.today()
     weeks = 52
@@ -130,8 +176,7 @@ def _generate_fallback_data(
 
     for i in range(weeks):
         d = today - timedelta(weeks=weeks - i)
-        # Random walk with slight upward drift
-        change_pct = rng.gauss(0.002, 0.035)
+        change_pct = rng.gauss(0.002, 0.025)
         price *= 1 + change_pct
         price = max(price, 100)
 
@@ -153,9 +198,8 @@ def _generate_fallback_data(
         )
 
     current_price = prices[-1]["close"]
-    name = f"銘柄 {ticker}"
-    market_cap = current_price * rng.randint(10_000_000, 500_000_000)
-    pbr = round(rng.uniform(0.4, 4.0), 2)
+    market_cap = current_price * shares_out
+    pbr = ref_pbr
 
     return prices, current_price, name, market_cap, pbr
 
