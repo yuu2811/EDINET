@@ -463,8 +463,10 @@ function preloadStockData() {
             codes.add(normalized);
         }
     }
-    // Fetch up to 15 unique codes in background (staggered)
-    const maxFetch = state.viewMode === 'table' ? 15 : 5;
+    // Fetch unique codes in background (staggered)
+    const isTable = state.viewMode === 'table';
+    const maxFetch = isTable ? 20 : 5;
+    const staggerMs = isTable ? 500 : 2000;
     const promises = [];
     let delay = 0;
     let count = 0;
@@ -474,10 +476,10 @@ function preloadStockData() {
         promises.push(new Promise(resolve => {
             setTimeout(() => fetchStockData(code).then(resolve, resolve), delay);
         }));
-        delay += 2000; // 2s between each to avoid hammering
+        delay += staggerMs;
         count++;
     }
-    // Re-render feed once all preloads finish so cards show market data
+    // Re-render feed once all preloads finish so table/cards show market data
     if (promises.length > 0) {
         Promise.all(promises).then(() => renderFeed());
     }
@@ -696,9 +698,10 @@ function renderFeedTable(container, filings) {
         const code = secCode ? (secCode.length === 5 ? secCode.slice(0, 4) : secCode) : '';
         const cached = code ? stockCache[code] : null;
         const sd = cached && cached.data ? cached.data : null;
-        const mcap = sd && sd.market_cap_display ? sd.market_cap_display : '<span class="text-dim">-</span>';
-        const pbr = sd && sd.pbr != null ? Number(sd.pbr).toFixed(2) + '倍' : '-';
-        const price = sd && sd.current_price != null ? '\u00a5' + Math.round(sd.current_price).toLocaleString() : '-';
+        const loadingHint = code && !cached ? '<span class="text-dim tbl-loading">...</span>' : '<span class="text-dim">-</span>';
+        const mcap = sd && sd.market_cap_display ? sd.market_cap_display : loadingHint;
+        const pbr = sd && sd.pbr != null ? Number(sd.pbr).toFixed(2) + '倍' : (code && !cached ? '...' : '-');
+        const price = sd && sd.current_price != null ? '\u00a5' + Math.round(sd.current_price).toLocaleString() : (code && !cached ? '...' : '-');
 
         // Links
         let links = '';
