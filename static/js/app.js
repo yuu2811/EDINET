@@ -68,7 +68,7 @@ async function fetchStockData(secCode) {
  */
 function extractTargetFromDescription(desc) {
     if (!desc) return null;
-    const m = desc.match(/[（(](.+?)(?:株式|株券)[）)]/);
+    const m = desc.match(/[（(]([^）)]+?)(?:株式|株券)[）)]/);
     return m ? m[1] : null;
 }
 
@@ -1840,8 +1840,8 @@ function openModal(filing) {
         ['提出日時', filing.submit_date_time || '-'],
         ['提出者', filing.filer_name || '-'],
         ['EDINET コード', filing.edinet_code || '-'],
-        ['対象会社', filing.target_company_name || '-'],
-        ['対象証券コード', filing.target_sec_code || '-'],
+        ['対象会社', filing.target_company_name || extractTargetFromDescription(filing.doc_description) || '-'],
+        ['対象証券コード', filing.target_sec_code || filing.sec_code || '-'],
     ];
 
     // Visual ratio gauge section
