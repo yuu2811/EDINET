@@ -1004,7 +1004,16 @@ function renderStockChart(canvas, prices, options = {}) {
     const W = rect.width;
     const H = options.height || 250;
 
-    if (W <= 0) return; // container not visible yet
+    // Container not laid out yet -- defer with retry (up to 3 attempts)
+    if (W <= 0) {
+        const attempt = (options._retryCount || 0) + 1;
+        if (attempt <= 3) {
+            requestAnimationFrame(() => {
+                renderStockChart(canvas, prices, { ...options, _retryCount: attempt });
+            });
+        }
+        return;
+    }
 
     canvas.width = W * dpr;
     canvas.height = H * dpr;
@@ -1231,7 +1240,14 @@ function openModal(filing) {
 
             const chartCanvas = document.getElementById('stock-chart-canvas');
             if (chartCanvas && stockData.weekly_prices && stockData.weekly_prices.length > 0) {
-                renderStockChart(chartCanvas, stockData.weekly_prices);
+                // Defer rendering: double-rAF ensures the browser has fully
+                // reflowed the DOM after innerHTML and completed any CSS
+                // animations (e.g. modal scale-in) before we measure width.
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        renderStockChart(chartCanvas, stockData.weekly_prices);
+                    });
+                });
             }
         });
     }
