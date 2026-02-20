@@ -464,9 +464,11 @@ function preloadStockData() {
         }
     }
     // Fetch unique codes in background (staggered)
+    // On mobile card view, fetch more aggressively since market cap is prominently shown
     const isTable = state.viewMode === 'table';
-    const maxFetch = isTable ? 20 : 5;
-    const staggerMs = isTable ? 500 : 2000;
+    const mobile = isMobile();
+    const maxFetch = isTable ? 20 : (mobile ? 15 : 5);
+    const staggerMs = isTable ? 500 : (mobile ? 300 : 2000);
     const promises = [];
     let delay = 0;
     let count = 0;
@@ -637,12 +639,13 @@ function isWatchlistMatch(f) {
 
 function renderFeedTable(container, filings) {
     const mobile = window.innerWidth <= 768;
+    const phone = window.innerWidth <= 480;
     let html = `<div class="feed-table-wrapper"><table class="feed-table">
         <thead><tr>
-            <th class="col-type">種別</th>
+            ${phone ? '' : '<th class="col-type">種別</th>'}
             <th class="col-filer">提出者</th>
-            <th class="col-target">対象企業</th>
-            <th class="col-ratio">保有割合</th>
+            <th class="col-target">対象</th>
+            <th class="col-ratio">割合</th>
             <th class="col-change">変動</th>
             <th class="col-mcap">時価総額</th>
             ${mobile ? '' : '<th class="col-prev">前回</th>'}
@@ -716,7 +719,7 @@ function renderFeedTable(container, filings) {
         if (isWatchlistMatch(f)) rowClass += ' row-watch';
 
         html += `<tr class="${rowClass}" data-doc-id="${escapeHtml(f.doc_id)}">
-            <td class="col-type">${typeBadge}</td>
+            ${phone ? '' : `<td class="col-type">${typeBadge}</td>`}
             <td class="col-filer" title="${filer}">${filer}</td>
             <td class="col-target" title="${target}">${target}${codeDisplay ? ' ' + codeDisplay : ''}</td>
             <td class="col-ratio">${ratioHtml}</td>
@@ -826,18 +829,55 @@ function createFeedCard(f) {
     // Market data from cache
     const secCode = f.target_sec_code || f.sec_code;
     let marketDataHtml = '';
-    if (secCode) {
-        const code = secCode.length === 5 ? secCode.slice(0, 4) : secCode;
-        const cached = stockCache[code];
-        if (cached && cached.data) {
-            const sd = cached.data;
-            const parts = [];
-            if (sd.market_cap_display) parts.push(`時価:${sd.market_cap_display}`);
-            if (sd.pbr != null) parts.push(`PBR:${Number(sd.pbr).toFixed(2)}倍`);
-            if (sd.current_price != null) parts.push(`\u00a5${Math.round(sd.current_price).toLocaleString()}`);
-            if (parts.length > 0) {
-                marketDataHtml = `<div class="card-market-data">${parts.map(p => `<span>${p}</span>`).join('')}</div>`;
+    let mobileMetricsHtml = '';
+    const code = secCode ? (secCode.length === 5 ? secCode.slice(0, 4) : secCode) : '';
+    const cached = code ? stockCache[code] : null;
+    const sd = cached && cached.data ? cached.data : null;
+
+    if (sd) {
+        const parts = [];
+        if (sd.market_cap_display) parts.push(`時価:${sd.market_cap_display}`);
+        if (sd.pbr != null) parts.push(`PBR:${Number(sd.pbr).toFixed(2)}倍`);
+        if (sd.current_price != null) parts.push(`\u00a5${Math.round(sd.current_price).toLocaleString()}`);
+        if (parts.length > 0) {
+            marketDataHtml = `<div class="card-market-data">${parts.map(p => `<span>${p}</span>`).join('')}</div>`;
+        }
+    }
+
+    // Mobile-specific metrics strip: ratio + change + market cap in one glanceable row
+    {
+        const mobile = isMobile();
+        if (mobile) {
+            const ratioClass = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : 'neutral';
+            let ratioVal = f.holding_ratio != null ? `${f.holding_ratio.toFixed(2)}%` : '-';
+            let changeEl = '';
+            if (f.ratio_change != null && f.ratio_change !== 0) {
+                const arrow = f.ratio_change > 0 ? '▲' : '▼';
+                const sign = f.ratio_change > 0 ? '+' : '';
+                changeEl = `<span class="card-mobile-change ${ratioClass}">${arrow}${sign}${f.ratio_change.toFixed(2)}%</span>`;
             }
+            let prevEl = '';
+            if (f.previous_holding_ratio != null) {
+                prevEl = `<span class="card-mobile-prev">${f.previous_holding_ratio.toFixed(2)}%</span>`;
+            }
+            let mcapEl = '';
+            if (sd && sd.market_cap_display) {
+                mcapEl = `<span class="card-mobile-mcap">${sd.market_cap_display}</span>`;
+            }
+            let priceEl = '';
+            if (sd && sd.current_price != null) {
+                priceEl = `<span class="card-mobile-price">\u00a5${Math.round(sd.current_price).toLocaleString()}</span>`;
+            }
+            const sep = (mcapEl || priceEl) ? '<span class="card-mobile-separator"></span>' : '';
+            mobileMetricsHtml = `<div class="card-mobile-metrics">
+                <span class="card-mobile-ratio">
+                    <span class="card-mobile-ratio-value ${ratioClass}">${ratioVal}</span>
+                    ${changeEl}
+                </span>
+                ${sep}${mcapEl}${priceEl}${prevEl}
+            </div>`;
+            // Mobile links
+            mobileMetricsHtml += `<div class="card-links-mobile">${links}</div>`;
         }
     }
 
@@ -854,6 +894,7 @@ function createFeedCard(f) {
                 <div class="card-desc">${escapeHtml(f.doc_description || '')}</div>
                 ${marketDataHtml}
             </div>
+            ${mobileMetricsHtml}
             <div class="card-bottom">
                 ${ratioHtml}
                 <div class="card-links">${links}</div>
@@ -865,9 +906,11 @@ function createFeedCard(f) {
 function renderStats() {
     const s = state.stats;
     document.getElementById('stat-total').textContent = s.today_total ?? '-';
-    // Update header filing count badge
+    // Update header filing count badges (desktop + mobile)
     const badge = document.getElementById('filing-count-badge');
     if (badge) badge.textContent = s.today_total ?? '0';
+    const badgeMobile = document.getElementById('filing-count-badge-mobile');
+    if (badgeMobile) badgeMobile.textContent = s.today_total ?? '0';
     document.getElementById('stat-new').textContent = s.today_new_reports ?? '-';
     document.getElementById('stat-amendments').textContent = s.today_amendments ?? '-';
     document.getElementById('stat-clients').textContent = s.connected_clients ?? '-';
