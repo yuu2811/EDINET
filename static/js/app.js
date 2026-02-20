@@ -274,6 +274,12 @@ function initEventListeners() {
         document.getElementById('watch-name').focus();
     });
 
+    // Watchlist panel stock chart button
+    const watchlistStockBtn = document.getElementById('btn-watchlist-stock');
+    if (watchlistStockBtn) {
+        watchlistStockBtn.addEventListener('click', () => showStockView());
+    }
+
     document.getElementById('btn-cancel-watch').addEventListener('click', () => {
         document.getElementById('watchlist-form').classList.add('hidden');
     });
@@ -1378,6 +1384,31 @@ function initStockView() {
     searchInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') doSearch();
     });
+
+    // Header stock view toggle button
+    const stockViewBtn = document.getElementById('btn-stock-view');
+    if (stockViewBtn) {
+        stockViewBtn.addEventListener('click', () => {
+            const stockView = document.getElementById('stock-view');
+            if (stockView && !stockView.classList.contains('hidden')) {
+                hideStockView();
+            } else {
+                showStockView();
+            }
+        });
+    }
+
+    // Back button in stock view
+    const backBtn = document.getElementById('stock-view-back');
+    if (backBtn) {
+        backBtn.addEventListener('click', () => {
+            hideStockView();
+            // Reset mobile nav active state
+            document.querySelectorAll('.mobile-bottom-nav .nav-item').forEach(n => {
+                n.classList.toggle('active', n.dataset.panel === 'feed');
+            });
+        });
+    }
 }
 
 function updateStockQuickList() {
@@ -1489,6 +1520,8 @@ function showStockView() {
         mainLayout.classList.add('hidden');
         stockView.classList.remove('hidden');
         updateStockQuickList();
+        const btn = document.getElementById('btn-stock-view');
+        if (btn) btn.classList.add('active');
     }
 }
 
@@ -1498,6 +1531,8 @@ function hideStockView() {
     if (stockView && mainLayout) {
         stockView.classList.add('hidden');
         mainLayout.classList.remove('hidden');
+        const btn = document.getElementById('btn-stock-view');
+        if (btn) btn.classList.remove('active');
     }
 }
 
