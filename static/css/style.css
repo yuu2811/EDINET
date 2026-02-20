@@ -575,7 +575,8 @@ body {
 }
 
 /* New filing flash animation (improved: longer, more visible) */
-.feed-card.flash {
+.feed-card.flash,
+.m-card.flash {
     animation: card-flash 2.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
@@ -697,9 +698,8 @@ body {
     margin-top: 2px;
 }
 
-/* Mobile metrics strip - hidden on desktop */
-.card-mobile-metrics,
-.card-links-mobile {
+/* Mobile card (.m-card) - hidden on desktop */
+.m-card {
     display: none;
 }
 
@@ -1416,87 +1416,23 @@ body {
 
 @media (max-width: 480px) {
 
-    /* --- Safe Areas --- */
+    /* === ELIMINATE ALL NON-ESSENTIAL CHROME === */
+    #header { display: none !important; }
+    #ticker-bar { display: none !important; }
+    #sidebar { display: none !important; }
+
     body {
-        padding-top: env(safe-area-inset-top);
+        padding-top: 0;
         padding-bottom: env(safe-area-inset-bottom);
     }
 
-    /* --- Header: Ultra-compact single line --- */
-    #header {
-        height: 32px;
-        min-height: 32px;
-        padding: 0 10px;
-        padding-top: env(safe-area-inset-top);
-        flex-wrap: nowrap;
-        gap: 0;
-    }
-
-    .header-left {
-        gap: 6px;
-        flex: 1;
-        min-width: 0;
-    }
-
-    .logo {
-        font-size: 11px;
-        letter-spacing: 1.5px;
-    }
-
-    .logo-sub {
-        display: none;
-    }
-
-    .header-center {
-        display: none;
-    }
-
-    /* Mobile: show filing count inline next to logo */
-    .header-left .filing-count-badge-mobile {
-        display: inline-flex;
-    }
-
-    .header-right {
-        gap: 2px;
-        flex-shrink: 0;
-    }
-
-    /* Hide buttons that are accessible via bottom nav/settings overlay */
-    .header-right .btn-icon {
-        display: none;
-    }
-
-    /* Only show connection dot, not text */
-    .connection-status {
-        font-size: 0;
-        padding: 0;
-        gap: 0;
-        background: none;
-        border: none;
-    }
-
-    .connection-status .status-text {
-        display: none;
-    }
-
-    .status-dot {
-        width: 7px;
-        height: 7px;
-    }
-
-    /* --- Ticker Bar: hidden on mobile (feed replaces it) --- */
-    #ticker-bar {
-        display: none;
-    }
-
-    /* --- Main Layout --- */
+    /* === MAIN LAYOUT === */
     #main-layout {
         flex-direction: column;
         flex: 1;
         overflow: hidden;
     }
 
-    /* --- Feed Panel --- */
     #feed-panel {
         flex: 1;
         width: 100%;
@@ -1504,32 +1440,37 @@ body {
         overflow: hidden;
     }
 
-    /* --- Feed Panel Header: compact single-row --- */
+    /* === FEED PANEL HEADER → becomes the top status bar === */
+    #feed-panel .panel-header {
+        flex-direction: row;
+        align-items: center;
+        padding: 6px 10px;
+        padding-top: calc(6px + env(safe-area-inset-top));
+        gap: 6px;
+        background: linear-gradient(180deg, rgba(14, 14, 26, 0.98) 0%, rgba(14, 14, 26, 0.9) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-bottom: 1px solid var(--border-primary);
+    }
+
+    .panel-title {
+        font-size: 10px;
+        letter-spacing: 1px;
+        flex-shrink: 0;
+    }
+
     .panel-header {
         padding: 4px 8px;
         flex-wrap: wrap;
         gap: 4px;
     }
 
-    #feed-panel .panel-header {
-        flex-direction: row;
-        align-items: center;
-        padding: 4px 8px;
-        gap: 6px;
-    }
-
-    .panel-title {
-        font-size: 9px;
-        letter-spacing: 0.5px;
-        flex-shrink: 0;
-    }
-
-    /* --- Feed Controls: compact inline --- */
+    /* === FEED CONTROLS: single compact row === */
     .feed-controls {
+        flex: 1;
         flex-direction: row;
         flex-wrap: nowrap;
         gap: 4px;
-        flex: 1;
         min-width: 0;
         align-items: center;
     }
@@ -1537,296 +1478,255 @@ body {
     .search-input {
         flex: 1;
         min-width: 0;
-        height: 30px;
-        font-size: var(--font-size-xs);
-        padding: 4px 8px;
+        height: 28px;
+        font-size: 10px;
+        padding: 2px 8px;
     }
 
     .filter-select {
+        height: 28px;
+        font-size: 9px;
+        padding: 0 4px;
+        min-width: 48px;
+        max-width: 72px;
         width: auto;
         flex-shrink: 1;
-        min-width: 0;
-        height: 30px;
-        font-size: 9px;
-        padding: 2px 4px;
-        max-width: 80px;
     }
 
-    /* --- View Toggle on mobile --- */
-    .view-toggle {
-        flex-shrink: 0;
-    }
+    /* Hide view toggle on mobile - cards only */
+    .view-toggle { display: none !important; }
 
-    .view-toggle-btn {
-        min-width: 28px;
-        min-height: 28px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 11px;
-    }
-
-    /* --- Date Nav: compact --- */
+    /* === DATE NAV: ultra-compact scrollable === */
     .date-nav {
-        gap: 3px;
-        padding: 3px 8px;
+        padding: 3px 10px;
+        gap: 4px;
         flex-wrap: nowrap;
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
         scrollbar-width: none;
+        min-height: 0;
+        border-bottom-color: rgba(30, 30, 52, 0.3);
     }
 
-    .date-nav::-webkit-scrollbar {
-        display: none;
-    }
+    .date-nav::-webkit-scrollbar { display: none; }
 
     .date-nav-btn {
-        min-height: 28px;
+        min-height: 26px;
         padding: 2px 8px;
         font-size: 9px;
         flex-shrink: 0;
     }
 
     .date-picker {
-        flex: 0 1 auto;
-        min-height: 28px;
-        min-width: 100px;
-        font-size: 10px;
+        min-height: 26px;
+        min-width: 90px;
+        font-size: 9px;
     }
 
-    /* --- Feed List --- */
+    /* === FEED LIST === */
     .feed-list {
         flex: 1;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
-        scroll-behavior: smooth;
-        padding: 4px;
+        padding: 3px;
     }
 
-    .feed-list::-webkit-scrollbar {
-        display: none;
-    }
+    .feed-list::-webkit-scrollbar { display: none; }
 
     .feed-empty {
-        padding: 32px 16px;
+        padding: 40px 16px;
     }
 
-    /* --- Feed Table mobile --- */
-    .feed-table {
-        font-size: 10px;
-    }
+    /* === HIDE DESKTOP CARD STRUCTURE on mobile === */
+    .feed-card { display: none !important; }
 
-    .feed-table th,
-    .feed-table td {
-        padding: 5px 4px;
-    }
-
-    .feed-table .col-filer,
-    .feed-table .col-target {
-        max-width: 100px;
-    }
-
-    .feed-table .col-links {
-        width: 36px;
-    }
-
-    /* --- Feed Cards: Mobile-optimized layout --- */
-    .feed-card {
-        padding: 10px;
-        margin-bottom: 4px;
-        border-radius: var(--radius-md);
-        min-height: 0;
-        border-left-width: 3px;
-    }
-
-    .card-top {
-        margin-bottom: 4px;
-    }
-
-    .card-time {
-        font-size: 9px;
-    }
-
-    .card-badge {
-        font-size: 8px;
-        padding: 1px 5px;
-    }
-
-    .card-main {
-        margin-bottom: 2px;
-    }
-
-    .card-filer {
-        font-size: var(--font-size-md);
-    }
-
-    .card-arrow {
-        font-size: 10px;
-        margin: 0 2px;
-    }
-
-    .card-target {
-        font-size: var(--font-size-md);
-    }
-
-    .card-desc {
-        font-size: 9px;
-        margin-top: 2px;
-        line-height: 1.4;
-    }
-
-    /* --- Mobile metrics strip (new) --- */
-    .card-mobile-metrics {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        margin-top: 6px;
-        padding: 6px 8px;
-        background: rgba(8, 8, 16, 0.5);
+    /* === MOBILE CARD (.m-card) === */
+    .m-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-primary);
+        border-left: 3px solid var(--cyan);
+        margin-bottom: 3px;
+        padding: 8px 10px;
         border-radius: var(--radius-sm);
-        border: 1px solid rgba(30, 30, 52, 0.3);
-        flex-wrap: wrap;
+        cursor: pointer;
+        transition: background 0.15s ease;
+        -webkit-tap-highlight-color: transparent;
     }
 
-    .card-mobile-ratio {
+    .m-card:active {
+        background: var(--bg-card-hover);
+    }
+
+    .m-card.new-report { border-left-color: var(--green); }
+    .m-card.change-report { border-left-color: var(--amber); }
+    .m-card.amendment { border-left-color: var(--purple); }
+    .m-card.ratio-up {
+        background: linear-gradient(90deg, rgba(0, 230, 118, 0.05) 0%, var(--bg-card) 40%);
+    }
+    .m-card.ratio-down {
+        background: linear-gradient(90deg, rgba(255, 23, 68, 0.05) 0%, var(--bg-card) 40%);
+    }
+
+    /* Row 1: badge + target company + code + time */
+    .m-card-head {
         display: flex;
         align-items: center;
-        gap: 5px;
+        gap: 4px;
+        margin-bottom: 5px;
+    }
+
+    .m-badge {
+        font-size: 8px;
+        font-weight: 700;
+        padding: 1px 5px;
+        border-radius: 2px;
+        letter-spacing: 0.5px;
+        flex-shrink: 0;
+        color: #fff;
+    }
+
+    .m-badge-new { background: var(--green-dim); }
+    .m-badge-change { background: var(--amber-dim); }
+    .m-badge-amend { background: #8855dd; }
+    .m-badge-watch { background: var(--purple); margin-left: 1px; }
+
+    .m-target {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text-primary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .m-code {
+        font-size: 9px;
+        color: var(--cyan-dim);
         flex-shrink: 0;
     }
 
-    .card-mobile-ratio-value {
-        font-size: 16px;
+    .m-time {
+        font-size: 9px;
+        color: var(--text-dim);
+        font-variant-numeric: tabular-nums;
+        flex-shrink: 0;
+        margin-left: auto;
+    }
+
+    /* Row 2: THE HERO - ratio + change + market cap + price */
+    .m-card-data {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 8px;
+        background: rgba(8, 8, 16, 0.6);
+        border-radius: 3px;
+        border: 1px solid rgba(30, 30, 52, 0.4);
+        margin-bottom: 5px;
+    }
+
+    .m-ratio {
+        font-size: 18px;
         font-weight: 800;
         font-variant-numeric: tabular-nums;
         line-height: 1;
+        flex-shrink: 0;
     }
 
-    .card-mobile-ratio-value.positive { color: var(--green); }
-    .card-mobile-ratio-value.negative { color: var(--red); }
-    .card-mobile-ratio-value.neutral { color: var(--text-secondary); }
+    .m-ratio.positive { color: var(--green); }
+    .m-ratio.negative { color: var(--red); }
+    .m-ratio.neutral { color: var(--text-secondary); }
 
-    .card-mobile-change {
+    .m-change {
         font-size: 11px;
         font-weight: 700;
         padding: 2px 6px;
         border-radius: 3px;
-        line-height: 1;
         white-space: nowrap;
+        flex-shrink: 0;
     }
 
-    .card-mobile-change.positive {
+    .m-change.positive {
         background: rgba(0, 230, 118, 0.15);
         color: var(--green);
     }
 
-    .card-mobile-change.negative {
+    .m-change.negative {
         background: rgba(255, 23, 68, 0.15);
         color: var(--red);
     }
 
-    .card-mobile-separator {
+    .m-sep {
         width: 1px;
         height: 16px;
         background: var(--border-accent);
         flex-shrink: 0;
     }
 
-    .card-mobile-mcap {
-        font-size: 10px;
+    .m-mcap {
+        font-size: 11px;
         color: var(--amber);
-        font-weight: 600;
+        font-weight: 700;
         white-space: nowrap;
     }
 
-    .card-mobile-price {
+    .m-price {
         font-size: 10px;
         color: var(--text-dim);
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
-    }
-
-    .card-mobile-prev {
-        font-size: 9px;
-        color: var(--text-dim);
         margin-left: auto;
-        white-space: nowrap;
     }
 
-    /* Hide the default card-bottom on mobile - replaced by mobile metrics */
-    .feed-card .card-bottom {
-        display: none;
-    }
-
-    /* Hide default card-market-data on mobile - integrated into mobile metrics */
-    .feed-card .card-market-data {
-        display: none;
-    }
-
-    .card-links-mobile {
+    /* Row 3: filer + prev ratio + PDF */
+    .m-card-foot {
         display: flex;
-        gap: 6px;
-        margin-top: 4px;
-    }
-
-    .card-links-mobile .card-link {
-        font-size: 10px;
-        padding: 4px 10px;
-        min-height: 28px;
-        display: inline-flex;
         align-items: center;
+        gap: 6px;
+        font-size: 10px;
     }
 
-    /* --- Sidebar → Bottom Tab / Panels --- */
-    #sidebar {
-        width: 100%;
-        flex-direction: row;
+    .m-filer {
+        color: var(--text-secondary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .m-prev {
+        color: var(--text-dim);
+        font-size: 9px;
+        white-space: nowrap;
         flex-shrink: 0;
-        overflow-x: auto;
-        overflow-y: hidden;
-        max-height: none;
-        order: 1;
-        gap: 0;
-        border-top: 1px solid var(--border-primary);
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
     }
 
-    #sidebar::-webkit-scrollbar {
-        display: none;
+    .m-link {
+        color: var(--cyan-dim);
+        text-decoration: none;
+        font-size: 9px;
+        padding: 2px 8px;
+        border: 1px solid var(--border-primary);
+        border-radius: 3px;
+        flex-shrink: 0;
+        transition: all 0.15s ease;
     }
 
-    #sidebar .panel {
-        flex: 1 0 100%;
-        min-width: 100%;
-        max-height: 50vh;
-        overflow-y: auto;
+    .m-link:active {
+        color: var(--cyan);
+        border-color: var(--cyan-dim);
     }
 
-    /* --- Stats Panel (mobile compact) --- */
-    .stats-grid {
-        grid-template-columns: repeat(4, 1fr);
-        gap: 1px;
-    }
+    /* === FEED TABLE on mobile === */
+    .feed-table { font-size: 10px; }
+    .feed-table th, .feed-table td { padding: 5px 4px; }
+    .feed-table .col-filer, .feed-table .col-target { max-width: 100px; }
+    .feed-table .col-links { width: 36px; }
 
-    .stat-item {
-        padding: 6px 4px;
-    }
-
-    .stat-value {
-        font-size: var(--font-size-lg);
-    }
-
-    .stat-label {
-        font-size: 8px;
-        letter-spacing: 0.5px;
-        margin-top: 2px;
-    }
-
-    /* --- Top Filers: hidden on mobile --- */
-    #sidebar .panel:last-child {
-        display: none;
-    }
+    /* === SIDEBAR (hidden, but style mobile overlays) === */
 
     /* --- Watchlist Form --- */
     .watchlist-form {
@@ -1858,13 +1758,8 @@ body {
         min-height: 44px;
     }
 
-    .watch-name {
-        font-size: var(--font-size-md);
-    }
-
-    .watch-code {
-        font-size: var(--font-size-sm);
-    }
+    .watch-name { font-size: var(--font-size-md); }
+    .watch-code { font-size: var(--font-size-sm); }
 
     .watch-delete {
         min-width: 44px;
@@ -1875,7 +1770,7 @@ body {
         font-size: var(--font-size-lg);
     }
 
-    /* --- Modal (Detail View) → Full Screen on Mobile --- */
+    /* === MODAL: Full Screen on Mobile === */
     .modal {
         align-items: stretch;
         justify-content: stretch;
@@ -1902,9 +1797,7 @@ body {
         padding-top: calc(10px + env(safe-area-inset-top));
     }
 
-    .modal-title {
-        font-size: var(--font-size-md);
-    }
+    .modal-title { font-size: var(--font-size-md); }
 
     .modal-close {
         min-width: 44px;
@@ -1934,28 +1827,18 @@ body {
         margin-bottom: 2px;
     }
 
-    .detail-value {
-        font-size: var(--font-size-md);
-    }
+    .detail-value { font-size: var(--font-size-md); }
+    .detail-value.large { font-size: var(--font-size-lg); }
 
-    .detail-value.large {
-        font-size: var(--font-size-lg);
-    }
-
-    /* --- Confirm Dialog → Wider on Mobile --- */
+    /* --- Confirm Dialog --- */
     .dialog {
         max-width: 90vw;
         width: 90vw;
         padding: 16px;
     }
 
-    .dialog-title {
-        font-size: var(--font-size-lg);
-    }
-
-    .dialog-message {
-        font-size: var(--font-size-md);
-    }
+    .dialog-title { font-size: var(--font-size-lg); }
+    .dialog-message { font-size: var(--font-size-md); }
 
     .dialog-actions {
         flex-direction: column;
