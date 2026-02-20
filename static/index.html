@@ -165,6 +165,32 @@
                     <div class="filers-empty">-</div>
                 </div>
             </div>
+
+            <!-- Analytics Rankings Panel -->
+            <div id="rankings-panel" class="panel" role="region" aria-label="ランキング">
+                <div class="panel-header">
+                    <span class="panel-title">RANKINGS</span>
+                    <select id="rankings-period" class="filter-select filter-select-sm" aria-label="期間">
+                        <option value="7d">7日</option>
+                        <option value="30d" selected>30日</option>
+                        <option value="90d">90日</option>
+                        <option value="all">全期間</option>
+                    </select>
+                </div>
+                <div id="rankings-content" class="rankings-content">
+                    <div class="summary-empty">読み込み中...</div>
+                </div>
+            </div>
+
+            <!-- Sector Panel -->
+            <div id="sector-panel" class="panel" role="region" aria-label="セクター分布">
+                <div class="panel-header">
+                    <span class="panel-title">SECTORS</span>
+                </div>
+                <div id="sector-content" class="sector-content">
+                    <div class="summary-empty">読み込み中...</div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -278,6 +304,26 @@
         </div>
     </div>
 
+    <!-- Mobile Analytics Overlay Panel -->
+    <div id="mobile-analytics-panel" class="sidebar-overlay hidden">
+        <div class="overlay-backdrop"></div>
+        <div class="overlay-sheet">
+            <div class="overlay-handle"></div>
+            <div class="overlay-header">
+                <span class="panel-title">ANALYTICS</span>
+                <button class="overlay-close" aria-label="閉じる">&times;</button>
+            </div>
+            <div class="overlay-body" id="mobile-analytics-body">
+                <div id="mobile-rankings-content" class="rankings-content">
+                    <div class="summary-empty">読み込み中...</div>
+                </div>
+                <div id="mobile-sector-content" class="sector-content" style="margin-top:12px">
+                    <div class="summary-empty">読み込み中...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Mobile Bottom Navigation -->
     <nav id="mobile-nav" class="mobile-bottom-nav" aria-label="モバイルナビゲーション">
         <button class="nav-item active" data-panel="feed" aria-label="フィード">
@@ -287,6 +333,10 @@
         <button class="nav-item" data-panel="stats" aria-label="統計">
             <span class="nav-icon">&#128202;</span>
             <span class="nav-label">統計</span>
+        </button>
+        <button class="nav-item" data-panel="analytics" aria-label="分析">
+            <span class="nav-icon">&#128201;</span>
+            <span class="nav-label">分析</span>
         </button>
         <button class="nav-item" data-panel="watchlist" aria-label="ウォッチ">
             <span class="nav-icon">&#9733;</span>

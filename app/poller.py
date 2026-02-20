@@ -316,35 +316,74 @@ async def _enrich_from_xbrl(filing: Filing):
         logger.error("Failed to enrich filing %s from XBRL: %s", filing.doc_id, e)
 
 
+_retry_offset = 0  # rotating offset for fair retry selection
+
+
 async def _retry_xbrl_enrichment():
     """Retry XBRL enrichment for filings that haven't been parsed yet.
 
-    This handles the case where filings were stored without XBRL data
-    (e.g. network issues, missing API key) and should be retried.
-    Runs at most once per poll cycle; processes up to 5 filings.
+    Uses a rotating offset so different filings are attempted each cycle,
+    preventing permanently-unparseable records from starving older ones.
+    Each enrichment is bounded to 10s and the total batch to 30s to
+    avoid stretching the polling interval.
     """
+    global _retry_offset
+
     async with async_session() as session:
+        total_unparsed_result = await session.execute(
+            select(func.count()).select_from(
+                select(Filing.id)
+                .where(Filing.xbrl_flag.is_(True), Filing.xbrl_parsed.is_(False))
+                .subquery()
+            )
+        )
+        total_unparsed = total_unparsed_result.scalar() or 0
+        if total_unparsed == 0:
+            _retry_offset = 0
+            return
+
+        if _retry_offset >= total_unparsed:
+            _retry_offset = 0
+
         result = await session.execute(
             select(Filing)
             .where(Filing.xbrl_flag.is_(True), Filing.xbrl_parsed.is_(False))
-            .order_by(Filing.id.desc())
+            .order_by(Filing.id.asc())
+            .offset(_retry_offset)
             .limit(5)
         )
         filings = result.scalars().all()
         if not filings:
+            _retry_offset = 0
             return
 
-        logger.info("Retrying XBRL enrichment for %d filings", len(filings))
-        for filing in filings:
-            await _enrich_from_xbrl(filing)
+        _retry_offset += len(filings)
 
-            # Also apply doc_description enrichment if still missing
+        logger.info(
+            "Retrying XBRL enrichment for %d filings (offset=%d, unparsed=%d)",
+            len(filings), _retry_offset - len(filings), total_unparsed,
+        )
+
+        async def _enrich_one(filing: Filing):
+            try:
+                await asyncio.wait_for(_enrich_from_xbrl(filing), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning("XBRL retry timed out for %s", filing.doc_id)
+
             if not filing.target_company_name and filing.doc_description:
                 m = re.search(r"[（(]([^）)]+?)(?:株式|株券)[）)]", filing.doc_description)
                 if m:
                     filing.target_company_name = m.group(1)
             if filing.sec_code and not filing.target_sec_code:
                 filing.target_sec_code = filing.sec_code
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*[_enrich_one(f) for f in filings]),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("XBRL retry batch timed out after 30s")
 
         await session.commit()
 
