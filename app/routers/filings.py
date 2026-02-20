@@ -1,14 +1,20 @@
-"""Filing list and detail endpoints."""
+"""Filing list and detail endpoints, including EDINET document proxy."""
 
+import logging
 from datetime import date
 
 from fastapi import APIRouter, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import desc, func, or_, select
 
 from app.models import Filing
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/filings", tags=["Filings"])
+
+# Separate router for document proxy (mounted at /api/documents)
+documents_router = APIRouter(prefix="/api/documents", tags=["Documents"])
 
 
 def _get_async_session():
@@ -89,3 +95,37 @@ async def get_filing(doc_id: str) -> dict:
         if not filing:
             return JSONResponse({"error": "Filing not found"}, status_code=404)
         return filing.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# Document proxy — EDINET API v2 requires Subscription-Key which must not
+# be exposed to browser clients.  These endpoints act as a server-side proxy.
+# ---------------------------------------------------------------------------
+
+@documents_router.get("/{doc_id}/pdf")
+async def proxy_document_pdf(doc_id: str) -> Response:
+    """Proxy EDINET PDF download (type=2).
+
+    Per EDINET API v2 spec, browser-based JavaScript cannot call the
+    EDINET API directly, and the Subscription-Key must stay server-side.
+    """
+    from app.edinet import edinet_client
+
+    # Sanitise doc_id to prevent path traversal
+    if not doc_id.isalnum():
+        return JSONResponse({"error": "Invalid document ID"}, status_code=400)
+
+    content = await edinet_client.download_pdf(doc_id)
+    if content is None:
+        return JSONResponse(
+            {"error": "PDF not available or EDINET API unreachable"},
+            status_code=502,
+        )
+
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{doc_id}.pdf"',
+        },
+    )
