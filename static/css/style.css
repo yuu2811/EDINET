@@ -1544,12 +1544,20 @@ body {
     /* --- Feed Table mobile --- */
     .feed-table {
         font-size: 10px;
-        min-width: 700px;
     }
 
     .feed-table th,
     .feed-table td {
         padding: 5px 4px;
+    }
+
+    .feed-table .col-filer,
+    .feed-table .col-target {
+        max-width: 100px;
+    }
+
+    .feed-table .col-links {
+        width: 36px;
     }
 
     /* --- Feed Cards --- */
@@ -2588,7 +2596,6 @@ body {
     border-collapse: collapse;
     font-size: var(--font-size-sm);
     white-space: nowrap;
-    min-width: 900px;
 }
 
 .feed-table thead {
@@ -2661,20 +2668,24 @@ body {
 }
 
 .feed-table .col-filer {
-    max-width: 160px;
+    max-width: 180px;
     font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .feed-table .col-target {
-    max-width: 160px;
+    max-width: 180px;
     color: var(--cyan);
     font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-.feed-table .col-code {
-    font-variant-numeric: tabular-nums;
-    width: 55px;
+.tbl-code {
+    font-size: 9px;
     color: var(--text-dim);
+    margin-left: 2px;
 }
 
 .feed-table .col-ratio {
@@ -2718,7 +2729,7 @@ body {
 }
 
 .feed-table .col-links {
-    width: 80px;
+    width: 40px;
 }
 
 .tbl-badge {

@@ -634,20 +634,20 @@ function isWatchlistMatch(f) {
 }
 
 function renderFeedTable(container, filings) {
+    const mobile = window.innerWidth <= 768;
     let html = `<div class="feed-table-wrapper"><table class="feed-table">
         <thead><tr>
-            <th class="col-time">時刻</th>
             <th class="col-type">種別</th>
             <th class="col-filer">提出者</th>
             <th class="col-target">対象企業</th>
-            <th class="col-code">コード</th>
             <th class="col-ratio">保有割合</th>
             <th class="col-change">変動</th>
-            <th class="col-prev">前回</th>
             <th class="col-mcap">時価総額</th>
-            <th class="col-pbr">PBR</th>
-            <th class="col-price">株価</th>
-            <th class="col-links">リンク</th>
+            ${mobile ? '' : '<th class="col-prev">前回</th>'}
+            ${mobile ? '' : '<th class="col-pbr">PBR</th>'}
+            ${mobile ? '' : '<th class="col-price">株価</th>'}
+            ${mobile ? '' : '<th class="col-time">時刻</th>'}
+            <th class="col-links"></th>
         </tr></thead><tbody>`;
 
     for (const f of filings) {
@@ -671,12 +671,17 @@ function renderFeedTable(container, filings) {
         const filer = escapeHtml(f.holder_name || f.filer_name || '(不明)');
         const target = escapeHtml(f.target_company_name || '(対象不明)');
         const secCode = f.target_sec_code || f.sec_code || '';
+        const codeDisplay = secCode ? `<span class="tbl-code">${escapeHtml(secCode)}</span>` : '';
 
         // Ratio
-        const ratio = f.holding_ratio != null ? f.holding_ratio.toFixed(2) + '%' : '-';
+        let ratioHtml = '<span class="text-dim">-</span>';
+        if (f.holding_ratio != null) {
+            const cls = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : '';
+            ratioHtml = `<span class="${cls}">${f.holding_ratio.toFixed(2)}%</span>`;
+        }
 
         // Change
-        let changeHtml = '-';
+        let changeHtml = '<span class="text-dim">-</span>';
         if (f.ratio_change != null && f.ratio_change !== 0) {
             const cls = f.ratio_change > 0 ? 'positive' : 'negative';
             const arrow = f.ratio_change > 0 ? '▲' : '▼';
@@ -691,17 +696,14 @@ function renderFeedTable(container, filings) {
         const code = secCode ? (secCode.length === 5 ? secCode.slice(0, 4) : secCode) : '';
         const cached = code ? stockCache[code] : null;
         const sd = cached && cached.data ? cached.data : null;
-        const mcap = sd && sd.market_cap_display ? sd.market_cap_display : '-';
+        const mcap = sd && sd.market_cap_display ? sd.market_cap_display : '<span class="text-dim">-</span>';
         const pbr = sd && sd.pbr != null ? Number(sd.pbr).toFixed(2) + '倍' : '-';
         const price = sd && sd.current_price != null ? '\u00a5' + Math.round(sd.current_price).toLocaleString() : '-';
 
         // Links
         let links = '';
         if (f.pdf_url) {
-            links += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="tbl-link">PDF</a>`;
-        }
-        if (f.edinet_url) {
-            links += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="tbl-link">EDINET</a>`;
+            links += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="tbl-link" onclick="event.stopPropagation()">PDF</a>`;
         }
 
         // Row class
@@ -711,17 +713,16 @@ function renderFeedTable(container, filings) {
         if (isWatchlistMatch(f)) rowClass += ' row-watch';
 
         html += `<tr class="${rowClass}" data-doc-id="${escapeHtml(f.doc_id)}">
-            <td class="col-time">${escapeHtml(time)}</td>
             <td class="col-type">${typeBadge}</td>
             <td class="col-filer" title="${filer}">${filer}</td>
-            <td class="col-target" title="${target}">${target}</td>
-            <td class="col-code">${escapeHtml(secCode)}</td>
-            <td class="col-ratio">${ratio}</td>
+            <td class="col-target" title="${target}">${target}${codeDisplay ? ' ' + codeDisplay : ''}</td>
+            <td class="col-ratio">${ratioHtml}</td>
             <td class="col-change">${changeHtml}</td>
-            <td class="col-prev">${prev}</td>
             <td class="col-mcap">${mcap}</td>
-            <td class="col-pbr">${pbr}</td>
-            <td class="col-price">${price}</td>
+            ${mobile ? '' : `<td class="col-prev">${prev}</td>`}
+            ${mobile ? '' : `<td class="col-pbr">${pbr}</td>`}
+            ${mobile ? '' : `<td class="col-price">${price}</td>`}
+            ${mobile ? '' : `<td class="col-time">${escapeHtml(time)}</td>`}
             <td class="col-links">${links}</td>
         </tr>`;
     }
