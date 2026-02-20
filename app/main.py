@@ -14,7 +14,7 @@ from app.database import async_session, init_db  # noqa: F401 – routers resolv
 from app.edinet import edinet_client
 from app.errors import register_error_handlers
 from app.poller import run_poller
-from app.routers import filings, poll, stats, stock, stream, watchlist
+from app.routers import analytics, filings, poll, stats, stock, stream, watchlist
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 register_error_handlers(app)
-for r in (stream.router, filings.router, stats.router, watchlist.router, poll.router, stock.router):
+for r in (stream.router, filings.router, stats.router, watchlist.router, poll.router, stock.router, analytics.router):
     app.include_router(r)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

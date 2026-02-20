@@ -3252,3 +3252,109 @@ body {
         touch-action: pan-y;
     }
 }
+
+/* ====================================================================
+   Analytics & Rankings Panels
+   ==================================================================== */
+
+.filter-select-sm {
+    font-size: 11px;
+    padding: 2px 6px;
+    background: var(--bg-card, #12121a);
+    color: var(--text-secondary, #999);
+    border: 1px solid #333;
+    border-radius: 3px;
+}
+
+.rankings-direction {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 4px;
+    border-left: 3px solid var(--accent-amber, #ffa500);
+}
+
+.rankings-dir-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--text-dim, #666);
+    letter-spacing: 0.5px;
+}
+
+.rankings-dir-value {
+    font-size: 13px;
+    font-weight: 700;
+    font-family: var(--font-mono, monospace);
+}
+
+.rankings-dir-value.positive { color: var(--green, #00e676); }
+.rankings-dir-value.negative { color: var(--red, #ff5252); }
+.rankings-dir-value.neutral { color: var(--text-secondary, #999); }
+
+.rankings-dir-detail {
+    font-size: 11px;
+    margin-left: auto;
+    font-family: var(--font-mono, monospace);
+}
+
+.rankings-section {
+    margin-bottom: 10px;
+}
+
+.rankings-section-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--accent-amber, #ffa500);
+    padding: 4px 0 2px;
+    border-bottom: 1px solid rgba(255,165,0,0.15);
+    margin-bottom: 4px;
+}
+
+/* Sector panel */
+.sector-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.sector-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.sector-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+
+.sector-name {
+    font-size: 12px;
+    color: var(--text-primary, #eee);
+    font-weight: 500;
+}
+
+.sector-stats {
+    font-size: 10px;
+    color: var(--text-dim, #666);
+    font-family: var(--font-mono, monospace);
+}
+
+.sector-bar-bg {
+    height: 4px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.sector-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-amber, #ffa500), var(--green, #00e676));
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}

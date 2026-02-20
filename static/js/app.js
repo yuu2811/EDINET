@@ -343,6 +343,12 @@ function initEventListeners() {
         if (e.key === 'Enter') saveWatchItem();
     });
 
+    // Rankings period selector
+    const rankingsPeriod = document.getElementById('rankings-period');
+    if (rankingsPeriod) {
+        rankingsPeriod.addEventListener('change', () => loadAnalytics());
+    }
+
     // Modal close
     document.querySelector('#detail-modal .modal-close').addEventListener('click', closeModal);
     document.querySelector('#detail-modal .modal-overlay').addEventListener('click', closeModal);
@@ -447,7 +453,7 @@ function setConnectionStatus(status) {
 // ---------------------------------------------------------------------------
 
 async function loadInitialData() {
-    await Promise.all([loadFilings(), loadStats(), loadWatchlist()]);
+    await Promise.all([loadFilings(), loadStats(), loadWatchlist(), loadAnalytics()]);
 }
 
 async function loadFilings() {
@@ -2270,6 +2276,11 @@ function initMobileNav() {
                 closeAllMobileOverlays();
                 hideStockView();
                 openMobileOverlay('mobile-watchlist-panel');
+            } else if (panel === 'analytics') {
+                closeAllMobileOverlays();
+                hideStockView();
+                loadAnalytics();
+                openMobileOverlay('mobile-analytics-panel');
             } else if (panel === 'stock') {
                 closeAllMobileOverlays();
                 showStockView();
@@ -2564,6 +2575,144 @@ function exportFilingsCSV() {
     a.download = `edinet_filings_${state.selectedDate}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+}
+
+// ---------------------------------------------------------------------------
+// Analytics
+// ---------------------------------------------------------------------------
+
+let _analyticsLoaded = false;
+
+async function loadAnalytics() {
+    const period = document.getElementById('rankings-period')?.value || '30d';
+    try {
+        const [rankingsResp, sectorsResp, movementsResp] = await Promise.all([
+            fetch(`/api/analytics/rankings?period=${period}`),
+            fetch('/api/analytics/sectors'),
+            fetch(`/api/analytics/movements?date=${state.selectedDate}`),
+        ]);
+        const rankings = await rankingsResp.json();
+        const sectors = await sectorsResp.json();
+        const movements = await movementsResp.json();
+
+        renderRankings(rankings, movements);
+        renderSectors(sectors);
+        _analyticsLoaded = true;
+    } catch (e) {
+        console.warn('Analytics load failed:', e);
+    }
+}
+
+function renderRankings(rankings, movements) {
+    const targets = ['rankings-content', 'mobile-rankings-content'];
+    for (const targetId of targets) {
+        const container = document.getElementById(targetId);
+        if (!container) continue;
+
+        let html = '';
+
+        // Market direction indicator
+        if (movements && movements.total_filings > 0) {
+            const dir = movements.net_direction;
+            const dirLabel = dir === 'bullish' ? '買い優勢' : dir === 'bearish' ? '売り優勢' : '中立';
+            const dirClass = dir === 'bullish' ? 'positive' : dir === 'bearish' ? 'negative' : 'neutral';
+            html += `<div class="rankings-direction">
+                <span class="rankings-dir-label">方向性</span>
+                <span class="rankings-dir-value ${dirClass}">${dirLabel}</span>
+                <span class="rankings-dir-detail">
+                    <span class="positive">+${movements.increases}</span> /
+                    <span class="negative">-${movements.decreases}</span>
+                </span>
+            </div>`;
+        }
+
+        // Most active filers
+        if (rankings.most_active_filers && rankings.most_active_filers.length > 0) {
+            html += '<div class="rankings-section"><div class="rankings-section-title">活発な提出者</div>';
+            for (const f of rankings.most_active_filers.slice(0, 5)) {
+                const name = f.filer_name || '(不明)';
+                html += `<div class="filer-row" data-edinet="${escapeHtml(f.edinet_code || '')}">
+                    <span class="filer-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                    <span class="filer-count">${f.filing_count}</span>
+                </div>`;
+            }
+            html += '</div>';
+        }
+
+        // Most targeted companies
+        if (rankings.most_targeted_companies && rankings.most_targeted_companies.length > 0) {
+            html += '<div class="rankings-section"><div class="rankings-section-title">注目銘柄</div>';
+            for (const c of rankings.most_targeted_companies.slice(0, 5)) {
+                const name = c.company_name || '(不明)';
+                const code = c.sec_code ? `[${c.sec_code}]` : '';
+                html += `<div class="filer-row">
+                    <span class="filer-name" title="${escapeHtml(name)}">${escapeHtml(name)} ${escapeHtml(code)}</span>
+                    <span class="filer-count">${c.filing_count}</span>
+                </div>`;
+            }
+            html += '</div>';
+        }
+
+        // Largest increases
+        if (rankings.largest_increases && rankings.largest_increases.length > 0) {
+            html += '<div class="rankings-section"><div class="rankings-section-title">最大増加</div>';
+            for (const f of rankings.largest_increases.slice(0, 3)) {
+                const name = f.target_company_name || f.filer_name || '?';
+                const change = f.ratio_change != null ? `+${f.ratio_change.toFixed(2)}%` : '';
+                html += `<div class="filer-row">
+                    <span class="filer-name positive" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                    <span class="filer-count positive">${change}</span>
+                </div>`;
+            }
+            html += '</div>';
+        }
+
+        // Largest decreases
+        if (rankings.largest_decreases && rankings.largest_decreases.length > 0) {
+            html += '<div class="rankings-section"><div class="rankings-section-title">最大減少</div>';
+            for (const f of rankings.largest_decreases.slice(0, 3)) {
+                const name = f.target_company_name || f.filer_name || '?';
+                const change = f.ratio_change != null ? `${f.ratio_change.toFixed(2)}%` : '';
+                html += `<div class="filer-row">
+                    <span class="filer-name negative" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                    <span class="filer-count negative">${change}</span>
+                </div>`;
+            }
+            html += '</div>';
+        }
+
+        container.innerHTML = html || '<div class="summary-empty">データなし</div>';
+    }
+}
+
+function renderSectors(data) {
+    const targets = ['sector-content', 'mobile-sector-content'];
+    for (const targetId of targets) {
+        const container = document.getElementById(targetId);
+        if (!container) continue;
+
+        if (!data.sectors || data.sectors.length === 0) {
+            container.innerHTML = '<div class="summary-empty">データなし</div>';
+            return;
+        }
+
+        const maxCount = Math.max(...data.sectors.map(s => s.filing_count));
+
+        let html = '<div class="sector-list">';
+        for (const s of data.sectors.slice(0, 10)) {
+            const barWidth = maxCount > 0 ? Math.round((s.filing_count / maxCount) * 100) : 0;
+            const avgRatio = s.avg_ratio != null ? `${s.avg_ratio.toFixed(1)}%` : '-';
+            html += `<div class="sector-row">
+                <div class="sector-info">
+                    <span class="sector-name">${escapeHtml(s.sector)}</span>
+                    <span class="sector-stats">${s.filing_count}件 / ${s.company_count}社 / avg ${avgRatio}</span>
+                </div>
+                <div class="sector-bar-bg"><div class="sector-bar" style="width:${barWidth}%"></div></div>
+            </div>`;
+        }
+        html += '</div>';
+        container.innerHTML = html;
+    }
 }
 
 // ---------------------------------------------------------------------------
