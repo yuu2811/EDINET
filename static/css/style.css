@@ -306,6 +306,12 @@ body {
     background: var(--amber-glow);
 }
 
+#btn-stock-view.active {
+    color: var(--cyan);
+    border-color: var(--cyan-dim);
+    background: rgba(24, 208, 232, 0.08);
+}
+
 /* ==========================================================================
    Ticker Bar
    ========================================================================== */
@@ -795,6 +801,12 @@ body {
 /* ==========================================================================
    Watchlist Panel
    ========================================================================== */
+
+.panel-header-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
 
 .watchlist-form {
     padding: 6px 10px;
