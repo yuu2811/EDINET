@@ -1,9 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#0a0a0f"/>
-  <rect x="40" y="40" width="432" height="432" rx="64" fill="#161620" stroke="#2a2a3e" stroke-width="4"/>
-  <text x="256" y="220" text-anchor="middle" font-family="monospace" font-size="120" font-weight="bold" fill="#ff9800">E</text>
-  <text x="256" y="340" text-anchor="middle" font-family="monospace" font-size="48" fill="#00e676">MONITOR</text>
-  <circle cx="420" cy="92" r="24" fill="#00e676">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0e0e1a"/>
+      <stop offset="100%" stop-color="#080810"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#c67c00"/>
+      <stop offset="100%" stop-color="#ffab00"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="108" fill="url(#bg)"/>
+  <rect x="36" y="36" width="440" height="440" rx="72" fill="#121220" stroke="#1e1e34" stroke-width="3"/>
+  <text x="256" y="228" text-anchor="middle" font-family="monospace" font-size="128" font-weight="800" fill="url(#amber)" filter="url(#glow)">E</text>
+  <text x="256" y="345" text-anchor="middle" font-family="sans-serif" font-size="44" font-weight="700" fill="#00e676" letter-spacing="8">MONITOR</text>
+  <circle cx="420" cy="92" r="20" fill="#00e676" filter="url(#glow)">
     <animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite"/>
   </circle>
 </svg>
