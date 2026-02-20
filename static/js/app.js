@@ -17,6 +17,7 @@ const state = {
     searchQuery: '',
     filterMode: 'all', // all | new | change | amendment
     sortMode: 'time-desc',
+    viewMode: 'cards', // cards | table
     selectedDate: new Date().toISOString().slice(0, 10), // YYYY-MM-DD
 };
 
@@ -78,6 +79,7 @@ function savePreferences() {
             searchQuery: state.searchQuery,
             soundEnabled: state.soundEnabled,
             notificationsEnabled: state.notificationsEnabled,
+            viewMode: state.viewMode,
             watchlistPanelOpen: !document.getElementById('watchlist-panel').classList.contains('panel-collapsed'),
         };
         localStorage.setItem(PREFS_PREFIX + 'preferences', JSON.stringify(prefs));
@@ -129,6 +131,19 @@ function loadPreferences() {
                 btn.setAttribute('aria-pressed', state.notificationsEnabled);
                 btn.setAttribute('aria-label',
                     state.notificationsEnabled ? 'デスクトップ通知: 有効' : 'デスクトップ通知: 無効');
+            }
+        }
+
+        // Restore view mode
+        if (prefs.viewMode === 'table' || prefs.viewMode === 'cards') {
+            state.viewMode = prefs.viewMode;
+            const cardsBtn = document.getElementById('view-cards');
+            const tableBtn = document.getElementById('view-table');
+            if (cardsBtn && tableBtn) {
+                cardsBtn.classList.toggle('active', state.viewMode === 'cards');
+                cardsBtn.setAttribute('aria-pressed', state.viewMode === 'cards');
+                tableBtn.classList.toggle('active', state.viewMode === 'table');
+                tableBtn.setAttribute('aria-pressed', state.viewMode === 'table');
             }
         }
 
@@ -266,6 +281,26 @@ function initEventListeners() {
     document.getElementById('feed-sort').addEventListener('change', (e) => {
         state.sortMode = e.target.value;
         renderFeed();
+    });
+
+    // View toggle (cards / table)
+    document.getElementById('view-cards').addEventListener('click', () => {
+        state.viewMode = 'cards';
+        document.getElementById('view-cards').classList.add('active');
+        document.getElementById('view-cards').setAttribute('aria-pressed', 'true');
+        document.getElementById('view-table').classList.remove('active');
+        document.getElementById('view-table').setAttribute('aria-pressed', 'false');
+        renderFeed();
+        savePreferences();
+    });
+    document.getElementById('view-table').addEventListener('click', () => {
+        state.viewMode = 'table';
+        document.getElementById('view-table').classList.add('active');
+        document.getElementById('view-table').setAttribute('aria-pressed', 'true');
+        document.getElementById('view-cards').classList.remove('active');
+        document.getElementById('view-cards').setAttribute('aria-pressed', 'false');
+        renderFeed();
+        savePreferences();
     });
 
     // Watchlist add
@@ -428,12 +463,13 @@ function preloadStockData() {
             codes.add(normalized);
         }
     }
-    // Fetch up to 5 unique codes in background (staggered)
+    // Fetch up to 15 unique codes in background (staggered)
+    const maxFetch = state.viewMode === 'table' ? 15 : 5;
     const promises = [];
     let delay = 0;
     let count = 0;
     for (const code of codes) {
-        if (count >= 5) break;
+        if (count >= maxFetch) break;
         if (stockCache[code]) continue;
         promises.push(new Promise(resolve => {
             setTimeout(() => fetchStockData(code).then(resolve, resolve), delay);
@@ -565,18 +601,22 @@ function renderFeed() {
         return;
     }
 
-    container.innerHTML = filtered.map(f => createFeedCard(f)).join('');
+    if (state.viewMode === 'table') {
+        renderFeedTable(container, filtered);
+    } else {
+        container.innerHTML = filtered.map(f => createFeedCard(f)).join('');
 
-    // Add click handlers
-    container.querySelectorAll('.feed-card').forEach(card => {
-        card.addEventListener('click', (e) => {
-            // Don't open modal if clicking a link
-            if (e.target.tagName === 'A') return;
-            const docId = card.dataset.docId;
-            const filing = state.filings.find(f => f.doc_id === docId);
-            if (filing) openModal(filing);
+        // Add click handlers
+        container.querySelectorAll('.feed-card').forEach(card => {
+            card.addEventListener('click', (e) => {
+                // Don't open modal if clicking a link
+                if (e.target.tagName === 'A') return;
+                const docId = card.dataset.docId;
+                const filing = state.filings.find(f => f.doc_id === docId);
+                if (filing) openModal(filing);
+            });
         });
-    });
+    }
 
     renderSummary();
 }
@@ -591,6 +631,113 @@ function isWatchlistMatch(f) {
         )) return true;
     }
     return false;
+}
+
+function renderFeedTable(container, filings) {
+    let html = `<div class="feed-table-wrapper"><table class="feed-table">
+        <thead><tr>
+            <th class="col-time">時刻</th>
+            <th class="col-type">種別</th>
+            <th class="col-filer">提出者</th>
+            <th class="col-target">対象企業</th>
+            <th class="col-code">コード</th>
+            <th class="col-ratio">保有割合</th>
+            <th class="col-change">変動</th>
+            <th class="col-prev">前回</th>
+            <th class="col-mcap">時価総額</th>
+            <th class="col-pbr">PBR</th>
+            <th class="col-price">株価</th>
+            <th class="col-links">リンク</th>
+        </tr></thead><tbody>`;
+
+    for (const f of filings) {
+        const time = f.submit_date_time
+            ? f.submit_date_time.split(' ').pop() || f.submit_date_time
+            : '-';
+
+        // Type badge
+        let typeBadge;
+        if (f.is_amendment) {
+            typeBadge = '<span class="badge-amendment tbl-badge">訂正</span>';
+        } else if (f.doc_description && f.doc_description.includes('変更')) {
+            typeBadge = '<span class="badge-change tbl-badge">変更</span>';
+        } else {
+            typeBadge = '<span class="badge-new tbl-badge">新規</span>';
+        }
+        if (f.is_special_exemption) {
+            typeBadge += ' <span class="badge-special tbl-badge">特例</span>';
+        }
+
+        const filer = escapeHtml(f.holder_name || f.filer_name || '(不明)');
+        const target = escapeHtml(f.target_company_name || '(対象不明)');
+        const secCode = f.target_sec_code || f.sec_code || '';
+
+        // Ratio
+        const ratio = f.holding_ratio != null ? f.holding_ratio.toFixed(2) + '%' : '-';
+
+        // Change
+        let changeHtml = '-';
+        if (f.ratio_change != null && f.ratio_change !== 0) {
+            const cls = f.ratio_change > 0 ? 'positive' : 'negative';
+            const arrow = f.ratio_change > 0 ? '▲' : '▼';
+            const sign = f.ratio_change > 0 ? '+' : '';
+            changeHtml = `<span class="tbl-change ${cls}">${arrow}${sign}${f.ratio_change.toFixed(2)}%</span>`;
+        }
+
+        // Previous ratio
+        const prev = f.previous_holding_ratio != null ? f.previous_holding_ratio.toFixed(2) + '%' : '-';
+
+        // Market data from stock cache
+        const code = secCode ? (secCode.length === 5 ? secCode.slice(0, 4) : secCode) : '';
+        const cached = code ? stockCache[code] : null;
+        const sd = cached && cached.data ? cached.data : null;
+        const mcap = sd && sd.market_cap_display ? sd.market_cap_display : '-';
+        const pbr = sd && sd.pbr != null ? Number(sd.pbr).toFixed(2) + '倍' : '-';
+        const price = sd && sd.current_price != null ? '\u00a5' + Math.round(sd.current_price).toLocaleString() : '-';
+
+        // Links
+        let links = '';
+        if (f.pdf_url) {
+            links += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="tbl-link">PDF</a>`;
+        }
+        if (f.edinet_url) {
+            links += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="tbl-link">EDINET</a>`;
+        }
+
+        // Row class
+        let rowClass = '';
+        if (f.ratio_change > 0) rowClass = 'row-up';
+        else if (f.ratio_change < 0) rowClass = 'row-down';
+        if (isWatchlistMatch(f)) rowClass += ' row-watch';
+
+        html += `<tr class="${rowClass}" data-doc-id="${escapeHtml(f.doc_id)}">
+            <td class="col-time">${escapeHtml(time)}</td>
+            <td class="col-type">${typeBadge}</td>
+            <td class="col-filer" title="${filer}">${filer}</td>
+            <td class="col-target" title="${target}">${target}</td>
+            <td class="col-code">${escapeHtml(secCode)}</td>
+            <td class="col-ratio">${ratio}</td>
+            <td class="col-change">${changeHtml}</td>
+            <td class="col-prev">${prev}</td>
+            <td class="col-mcap">${mcap}</td>
+            <td class="col-pbr">${pbr}</td>
+            <td class="col-price">${price}</td>
+            <td class="col-links">${links}</td>
+        </tr>`;
+    }
+
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+
+    // Row click handler
+    container.querySelectorAll('.feed-table tbody tr').forEach(row => {
+        row.addEventListener('click', (e) => {
+            if (e.target.tagName === 'A') return;
+            const docId = row.dataset.docId;
+            const filing = state.filings.find(f => f.doc_id === docId);
+            if (filing) openModal(filing);
+        });
+    });
 }
 
 function createFeedCard(f) {
