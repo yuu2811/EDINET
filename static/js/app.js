@@ -523,9 +523,9 @@ function handleNewFiling(filing) {
     updateTicker();
     loadStats(); // Refresh stats
 
-    // Flash the new card
+    // Flash the new card (works for both desktop .feed-card and mobile .m-card)
     setTimeout(() => {
-        const firstCard = document.querySelector('.feed-card');
+        const firstCard = document.querySelector('.feed-card, .m-card');
         if (firstCard) {
             firstCard.classList.add('flash');
             firstCard.addEventListener('animationend', () => {
@@ -605,8 +605,22 @@ function renderFeed() {
         return;
     }
 
-    if (state.viewMode === 'table') {
+    const mobile = isMobile();
+
+    if (!mobile && state.viewMode === 'table') {
         renderFeedTable(container, filtered);
+    } else if (mobile) {
+        // Mobile: use dedicated mobile card layout
+        container.innerHTML = filtered.map(f => createMobileFeedCard(f)).join('');
+
+        container.querySelectorAll('.m-card').forEach(card => {
+            card.addEventListener('click', (e) => {
+                if (e.target.tagName === 'A') return;
+                const docId = card.dataset.docId;
+                const filing = state.filings.find(f => f.doc_id === docId);
+                if (filing) openModal(filing);
+            });
+        });
     } else {
         container.innerHTML = filtered.map(f => createFeedCard(f)).join('');
 
@@ -826,58 +840,21 @@ function createFeedCard(f) {
         links += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="card-link" onclick="event.stopPropagation()">EDINET</a>`;
     }
 
-    // Market data from cache
+    // Market data from cache (desktop only)
     const secCode = f.target_sec_code || f.sec_code;
     let marketDataHtml = '';
-    let mobileMetricsHtml = '';
-    const code = secCode ? (secCode.length === 5 ? secCode.slice(0, 4) : secCode) : '';
-    const cached = code ? stockCache[code] : null;
-    const sd = cached && cached.data ? cached.data : null;
-
-    if (sd) {
-        const parts = [];
-        if (sd.market_cap_display) parts.push(`時価:${sd.market_cap_display}`);
-        if (sd.pbr != null) parts.push(`PBR:${Number(sd.pbr).toFixed(2)}倍`);
-        if (sd.current_price != null) parts.push(`\u00a5${Math.round(sd.current_price).toLocaleString()}`);
-        if (parts.length > 0) {
-            marketDataHtml = `<div class="card-market-data">${parts.map(p => `<span>${p}</span>`).join('')}</div>`;
-        }
-    }
-
-    // Mobile-specific metrics strip: ratio + change + market cap in one glanceable row
-    {
-        const mobile = isMobile();
-        if (mobile) {
-            const ratioClass = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : 'neutral';
-            let ratioVal = f.holding_ratio != null ? `${f.holding_ratio.toFixed(2)}%` : '-';
-            let changeEl = '';
-            if (f.ratio_change != null && f.ratio_change !== 0) {
-                const arrow = f.ratio_change > 0 ? '▲' : '▼';
-                const sign = f.ratio_change > 0 ? '+' : '';
-                changeEl = `<span class="card-mobile-change ${ratioClass}">${arrow}${sign}${f.ratio_change.toFixed(2)}%</span>`;
+    if (secCode) {
+        const code = secCode.length === 5 ? secCode.slice(0, 4) : secCode;
+        const cached = stockCache[code];
+        if (cached && cached.data) {
+            const sd = cached.data;
+            const parts = [];
+            if (sd.market_cap_display) parts.push(`時価:${sd.market_cap_display}`);
+            if (sd.pbr != null) parts.push(`PBR:${Number(sd.pbr).toFixed(2)}倍`);
+            if (sd.current_price != null) parts.push(`\u00a5${Math.round(sd.current_price).toLocaleString()}`);
+            if (parts.length > 0) {
+                marketDataHtml = `<div class="card-market-data">${parts.map(p => `<span>${p}</span>`).join('')}</div>`;
             }
-            let prevEl = '';
-            if (f.previous_holding_ratio != null) {
-                prevEl = `<span class="card-mobile-prev">${f.previous_holding_ratio.toFixed(2)}%</span>`;
-            }
-            let mcapEl = '';
-            if (sd && sd.market_cap_display) {
-                mcapEl = `<span class="card-mobile-mcap">${sd.market_cap_display}</span>`;
-            }
-            let priceEl = '';
-            if (sd && sd.current_price != null) {
-                priceEl = `<span class="card-mobile-price">\u00a5${Math.round(sd.current_price).toLocaleString()}</span>`;
-            }
-            const sep = (mcapEl || priceEl) ? '<span class="card-mobile-separator"></span>' : '';
-            mobileMetricsHtml = `<div class="card-mobile-metrics">
-                <span class="card-mobile-ratio">
-                    <span class="card-mobile-ratio-value ${ratioClass}">${ratioVal}</span>
-                    ${changeEl}
-                </span>
-                ${sep}${mcapEl}${priceEl}${prevEl}
-            </div>`;
-            // Mobile links
-            mobileMetricsHtml += `<div class="card-links-mobile">${links}</div>`;
         }
     }
 
@@ -894,13 +871,108 @@ function createFeedCard(f) {
                 <div class="card-desc">${escapeHtml(f.doc_description || '')}</div>
                 ${marketDataHtml}
             </div>
-            ${mobileMetricsHtml}
             <div class="card-bottom">
                 ${ratioHtml}
                 <div class="card-links">${links}</div>
             </div>
         </div>
     `;
+}
+
+// ---------------------------------------------------------------------------
+// Mobile Feed Card - completely different layout optimized for phone screens
+// Target company as headline, ratio+market cap as hero metrics
+// ---------------------------------------------------------------------------
+
+function createMobileFeedCard(f) {
+    const isChange = f.doc_description && f.doc_description.includes('変更');
+    let cardClass = f.is_amendment ? 'amendment' : isChange ? 'change-report' : 'new-report';
+    if (f.ratio_change > 0) cardClass += ' ratio-up';
+    else if (f.ratio_change < 0) cardClass += ' ratio-down';
+
+    // Badge
+    let badge = '';
+    if (f.is_amendment) {
+        badge = '<span class="m-badge m-badge-amend">訂正</span>';
+    } else if (isChange) {
+        badge = '<span class="m-badge m-badge-change">変更</span>';
+    } else {
+        badge = '<span class="m-badge m-badge-new">新規</span>';
+    }
+    if (isWatchlistMatch(f)) {
+        badge += '<span class="m-badge m-badge-watch">&#9733;</span>';
+    }
+
+    // Time
+    const time = f.submit_date_time
+        ? f.submit_date_time.split(' ').pop() || f.submit_date_time
+        : '';
+
+    // Target company = headline (most important on mobile)
+    const target = f.target_company_name || '(対象不明)';
+    const targetCode = f.target_sec_code ? `[${f.target_sec_code}]` : '';
+    // Filer = secondary
+    const filer = f.holder_name || f.filer_name || '(不明)';
+
+    // Ratio metrics
+    const ratioClass = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : 'neutral';
+    const ratioVal = f.holding_ratio != null ? `${f.holding_ratio.toFixed(2)}%` : '-';
+
+    let changeHtml = '';
+    if (f.ratio_change != null && f.ratio_change !== 0) {
+        const arrow = f.ratio_change > 0 ? '▲' : '▼';
+        const sign = f.ratio_change > 0 ? '+' : '';
+        changeHtml = `<span class="m-change ${ratioClass}">${arrow}${sign}${f.ratio_change.toFixed(2)}%</span>`;
+    }
+
+    let prevHtml = '';
+    if (f.previous_holding_ratio != null) {
+        prevHtml = `<span class="m-prev">前回 ${f.previous_holding_ratio.toFixed(2)}%</span>`;
+    }
+
+    // Market data from stock cache
+    const secCode = f.target_sec_code || f.sec_code;
+    const code = secCode ? (secCode.length === 5 ? secCode.slice(0, 4) : secCode) : '';
+    const cached = code ? stockCache[code] : null;
+    const sd = cached && cached.data ? cached.data : null;
+
+    let mcapHtml = '';
+    if (sd && sd.market_cap_display) {
+        mcapHtml = `<span class="m-mcap">${sd.market_cap_display}</span>`;
+    }
+
+    let priceHtml = '';
+    if (sd && sd.current_price != null) {
+        priceHtml = `<span class="m-price">\u00a5${Math.round(sd.current_price).toLocaleString()}</span>`;
+    }
+
+    const hasMktData = mcapHtml || priceHtml;
+    const sep = hasMktData ? '<span class="m-sep"></span>' : '';
+
+    // PDF link
+    let linkHtml = '';
+    if (f.pdf_url) {
+        linkHtml = `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="m-link" onclick="event.stopPropagation()">PDF</a>`;
+    }
+
+    return `<div class="m-card ${cardClass}" data-doc-id="${escapeHtml(f.doc_id)}">
+    <div class="m-card-head">
+        ${badge}
+        <span class="m-target">${escapeHtml(target)}</span>
+        <span class="m-code">${escapeHtml(targetCode)}</span>
+        <span class="m-time">${escapeHtml(time)}</span>
+    </div>
+    <div class="m-card-data">
+        <span class="m-ratio ${ratioClass}">${ratioVal}</span>
+        ${changeHtml}
+        ${sep}${mcapHtml}${priceHtml}
+    </div>
+    <div class="m-card-foot">
+        <span class="m-filer">${escapeHtml(filer)}</span>
+        ${prevHtml}
+        ${linkHtml}
+    </div>
+</div>`;
 }
 
 function renderStats() {
