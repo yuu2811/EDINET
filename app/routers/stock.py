@@ -67,6 +67,14 @@ async def _load_edinet_code_list() -> None:
     The EDINET v2 API provides a ZIP with a CSV mapping every registered
     entity to its EDINET code, securities code, and official company name.
     This is the most authoritative source from 金融庁.
+
+    CSV format per API v2 spec (ESE140206):
+      - Encoding: cp932 (Windows-31J)
+      - Row 1: metadata line (download date, version) — MUST be skipped
+      - Row 2: header row (13 columns)
+      - Row 3+: data rows
+      - Column 7: 提出者名 (submitter name, Japanese)
+      - Column 12: 証券コード (securities code, 5-digit with check digit)
     """
     global _edinet_code_list_loaded
     if _edinet_code_list_loaded:
@@ -79,7 +87,9 @@ async def _load_edinet_code_list() -> None:
         _edinet_code_list_loaded = True
         return
 
-    url = f"{settings.EDINET_API_BASE}/EdinetcodeDlInfo.json"
+    # EDINET API v2 spec: GET /api/v2/EdinetcodeDlInfo
+    # Response: ZIP containing EdinetcodeDlInfo.csv
+    url = f"{settings.EDINET_API_BASE}/EdinetcodeDlInfo"
     params = {"Subscription-Key": settings.EDINET_API_KEY}
 
     try:
@@ -91,7 +101,7 @@ async def _load_edinet_code_list() -> None:
         _edinet_code_list_loaded = True
         return
 
-    # The response is a ZIP containing a CSV file
+    # The response is a ZIP containing EdinetcodeDlInfo.csv
     try:
         import zipfile as _zipfile
 
@@ -103,8 +113,9 @@ async def _load_edinet_code_list() -> None:
                 return
 
             raw = zf.read(csv_files[0])
-            # Try UTF-8 first, fall back to cp932 (Shift-JIS variant)
-            for enc in ("utf-8-sig", "utf-8", "cp932"):
+            # Per API v2 spec: encoding is cp932 (Windows-31J).
+            # Try cp932 first, then UTF-8 variants as fallback.
+            for enc in ("cp932", "utf-8-sig", "utf-8"):
                 try:
                     text = raw.decode(enc)
                     break
@@ -114,28 +125,45 @@ async def _load_edinet_code_list() -> None:
                 text = raw.decode("utf-8", errors="replace")
 
             reader = csv.reader(io.StringIO(text))
+
+            # Per API v2 spec: Row 1 is metadata (download date etc.) — skip it.
+            _metadata_row = next(reader, None)
+
+            # Row 2 is the actual header row with 13 columns.
             header = next(reader, None)
             if header is None:
                 _edinet_code_list_loaded = True
                 return
 
-            # Find column indices — the CSV header names vary but typically:
-            # "ＥＤＩＮＥＴコード", "提出者種別", "上場区分", "証券コード",
-            # "提出者名", "提出者名（英字）", ...
+            # Find column indices by matching header names.
+            # Per spec the 13 columns are (0-indexed):
+            #   0: ＥＤＩＮＥＴコード  1: 提出者種別  2: 上場区分
+            #   3: 連結の有無  4: 資本金  5: 決算日  6: 提出者名
+            #   7: 提出者名（英字）  8: 提出者名（ヨミ）  9: 所在地
+            #  10: 提出者業種  11: 証券コード  12: 提出者法人番号
+            # Note: header uses full-width characters (ＥＤＩＮＥＴコード).
             sec_code_idx = None
             name_idx = None
             for i, col in enumerate(header):
-                col_lower = col.strip().lower()
-                if "証券コード" in col or "securitiescode" in col_lower:
+                col_stripped = col.strip()
+                # Match securities code column (full-width or half-width)
+                if col_stripped in ("証券コード", "証券ｺｰﾄﾞ") or "証券コード" in col_stripped:
                     sec_code_idx = i
-                if ("提出者名" in col or "submittername" in col_lower) and name_idx is None:
-                    # Take the first "提出者名" column (Japanese name)
+                # Match submitter name column — take the FIRST "提出者名"
+                # (column 6, Japanese name), not "提出者名（英字）" (column 7)
+                if col_stripped == "提出者名":
                     name_idx = i
+
+            # Fallback: try positional mapping per spec if header matching fails
+            if sec_code_idx is None and len(header) >= 12:
+                sec_code_idx = 11  # column 12 (0-indexed: 11)
+            if name_idx is None and len(header) >= 7:
+                name_idx = 6  # column 7 (0-indexed: 6)
 
             if sec_code_idx is None or name_idx is None:
                 logger.warning(
                     "Could not find required columns in EDINET code list CSV "
-                    "(header: %s)", header[:10]
+                    "(header: %s)", header[:13]
                 )
                 _edinet_code_list_loaded = True
                 return
@@ -148,7 +176,7 @@ async def _load_edinet_code_list() -> None:
                 name = row[name_idx].strip()
                 if not raw_code or not name:
                     continue
-                # Normalise to 4-digit ticker
+                # Normalise to 4-digit ticker (strip check digit)
                 if len(raw_code) == 5 and raw_code[:4].isdigit():
                     ticker = raw_code[:4]
                 elif len(raw_code) == 4 and raw_code.isdigit():

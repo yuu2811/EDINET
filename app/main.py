@@ -53,7 +53,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 register_error_handlers(app)
-for r in (stream.router, filings.router, stats.router, watchlist.router, poll.router, stock.router, analytics.router):
+for r in (stream.router, filings.router, filings.documents_router, stats.router, watchlist.router, poll.router, stock.router, analytics.router):
     app.include_router(r)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

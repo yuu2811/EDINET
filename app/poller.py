@@ -182,8 +182,18 @@ async def poll_edinet(target_date=None):
                 submit_date_time=doc.get("submitDateTime"),
                 period_start=doc.get("periodStart"),
                 period_end=doc.get("periodEnd"),
+                # API v2: parentDocID (field #19)
+                parent_doc_id=doc.get("parentDocID"),
+                # API v2: status fields (string "0"/"1"/"2")
+                withdrawal_status=doc.get("withdrawalStatus"),
+                disclosure_status=doc.get("disclosureStatus"),
+                doc_info_edit_status=doc.get("docInfoEditStatus"),
+                # API v2: all flag fields are string "0"/"1"
                 xbrl_flag=doc.get("xbrlFlag") == "1",
                 pdf_flag=doc.get("pdfFlag") == "1",
+                csv_flag=doc.get("csvFlag") == "1",  # API v2 new
+                attach_doc_flag=doc.get("attachDocFlag") == "1",
+                english_doc_flag=doc.get("englishDocFlag") == "1",
                 is_amendment=is_amendment,
                 is_special_exemption=is_special,
             )
@@ -205,10 +215,12 @@ async def poll_edinet(target_date=None):
                 session.add(filing)
                 await session.flush()
 
-                # Try to parse XBRL for additional data (holding ratio, etc.)
-                # Attempt even without API key — the key may not be required
-                # for all EDINET document types.
-                if filing.xbrl_flag:
+                # Try to enrich from XBRL/CSV for additional data
+                if filing.xbrl_flag or filing.csv_flag:
+                    # Per EDINET API v2 spec: several seconds delay between
+                    # document downloads is recommended to avoid rate limiting.
+                    if new_count > 0:
+                        await asyncio.sleep(3.0)
                     await _enrich_from_xbrl(filing)
 
                 await session.commit()
@@ -287,33 +299,69 @@ _XBRL_FIELDS = (
 
 
 async def _enrich_from_xbrl(filing: Filing):
-    """Download and parse XBRL to enrich filing data."""
+    """Download and parse XBRL/CSV to enrich filing data.
+
+    Per EDINET API v2 spec, a delay of several seconds between document
+    downloads is recommended to avoid rate limiting.  The caller is
+    responsible for the inter-request delay; this function handles a
+    single download.
+
+    Strategy:
+      1. Try XBRL (type=1) first — most detailed data
+      2. If XBRL fails and CSV is available (csv_flag), try CSV (type=5)
+    """
+    data = None
+
+    # --- Try XBRL (type=1) ---
     try:
         zip_content = await asyncio.wait_for(
             edinet_client.download_xbrl(filing.doc_id),
             timeout=30.0,
         )
-        if not zip_content:
-            return
-
-        data = edinet_client.parse_xbrl_for_holding_data(zip_content)
-
-        for field in _XBRL_FIELDS:
-            value = data[field]
-            if value is not None:
-                setattr(filing, field, value)
-
-        filing.xbrl_parsed = True
-        logger.info(
-            "XBRL enriched %s: ratio=%.2f%%, target=%s",
-            filing.doc_id,
-            filing.holding_ratio or 0,
-            filing.target_company_name or "N/A",
-        )
+        if zip_content:
+            data = edinet_client.parse_xbrl_for_holding_data(zip_content)
     except asyncio.TimeoutError:
         logger.warning("XBRL download timed out for %s", filing.doc_id)
     except Exception as e:
-        logger.error("Failed to enrich filing %s from XBRL: %s", filing.doc_id, e)
+        logger.error("XBRL download failed for %s: %s", filing.doc_id, e)
+
+    # --- Fallback: try CSV (type=5, API v2 new feature) ---
+    if data is None or data.get("holding_ratio") is None:
+        if getattr(filing, "csv_flag", False):
+            try:
+                csv_content = await asyncio.wait_for(
+                    edinet_client.download_csv(filing.doc_id),
+                    timeout=30.0,
+                )
+                if csv_content:
+                    csv_data = edinet_client.parse_csv_for_holding_data(csv_content)
+                    # Merge: CSV fills in gaps that XBRL missed
+                    if data is None:
+                        data = csv_data
+                    else:
+                        for field in _XBRL_FIELDS:
+                            if data.get(field) is None and csv_data.get(field) is not None:
+                                data[field] = csv_data[field]
+            except asyncio.TimeoutError:
+                logger.warning("CSV download timed out for %s", filing.doc_id)
+            except Exception as e:
+                logger.debug("CSV download failed for %s: %s", filing.doc_id, e)
+
+    if data is None:
+        return
+
+    for field in _XBRL_FIELDS:
+        value = data.get(field)
+        if value is not None:
+            setattr(filing, field, value)
+
+    filing.xbrl_parsed = True
+    logger.info(
+        "XBRL enriched %s: ratio=%.2f%%, target=%s",
+        filing.doc_id,
+        filing.holding_ratio or 0,
+        filing.target_company_name or "N/A",
+    )
 
 
 _retry_offset = 0  # rotating offset for fair retry selection
@@ -377,13 +425,15 @@ async def _retry_xbrl_enrichment():
             if filing.sec_code and not filing.target_sec_code:
                 filing.target_sec_code = filing.sec_code
 
+        # Process sequentially with delay per EDINET API v2 spec recommendation
+        # (several seconds between document downloads to avoid rate limiting)
         try:
-            await asyncio.wait_for(
-                asyncio.gather(*[_enrich_one(f) for f in filings]),
-                timeout=30.0,
-            )
+            for i, f in enumerate(filings):
+                if i > 0:
+                    await asyncio.sleep(3.0)
+                await asyncio.wait_for(_enrich_one(f), timeout=15.0)
         except asyncio.TimeoutError:
-            logger.warning("XBRL retry batch timed out after 30s")
+            logger.warning("XBRL retry batch timed out")
 
         await session.commit()
 

@@ -56,9 +56,26 @@ class Filing(Base):
     period_start: Mapped[str | None] = mapped_column(String(16), nullable=True)
     period_end: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
-    # Flags
+    # Parent document (API v2 field #19: parentDocID)
+    parent_doc_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # API v2 status fields (string "0"/"1"/"2" in API, stored as string)
+    withdrawal_status: Mapped[str | None] = mapped_column(
+        String(2), nullable=True
+    )  # "0"=none, "1"=withdrawn, "2"=withdrawal of withdrawal
+    disclosure_status: Mapped[str | None] = mapped_column(
+        String(2), nullable=True
+    )  # "0"=disclosed, "1"=not disclosed, "2"=non-disclosure notification
+    doc_info_edit_status: Mapped[str | None] = mapped_column(
+        String(2), nullable=True
+    )  # "0"=no edit, "1"=edited, "2"=edit notification
+
+    # Flags (API v2: all are string "0"/"1", stored as bool)
     xbrl_flag: Mapped[bool] = mapped_column(Boolean, default=False)
     pdf_flag: Mapped[bool] = mapped_column(Boolean, default=False)
+    csv_flag: Mapped[bool] = mapped_column(Boolean, default=False)  # API v2 new
+    attach_doc_flag: Mapped[bool] = mapped_column(Boolean, default=False)
+    english_doc_flag: Mapped[bool] = mapped_column(Boolean, default=False)
     is_amendment: Mapped[bool] = mapped_column(Boolean, default=False)
     is_special_exemption: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -102,10 +119,14 @@ class Filing(Base):
             "is_special_exemption": self.is_special_exemption,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "xbrl_parsed": self.xbrl_parsed,
+            # EDINET disclosure portal (public, no API key required)
+            # doc_id is already a full ID like "S100TDUA"
             "edinet_url": f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{self.doc_id}"
             if self.doc_id
             else None,
-            "pdf_url": f"https://api.edinet-fsa.go.jp/api/v2/documents/{self.doc_id}?type=2"
+            # Server-side proxy for PDF — EDINET API v2 requires
+            # Subscription-Key, which must not be exposed to the browser.
+            "pdf_url": f"/api/documents/{self.doc_id}/pdf"
             if self.doc_id and self.pdf_flag
             else None,
         }
