@@ -59,6 +59,20 @@ async function fetchStockData(secCode) {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract target company name from doc_description when target_company_name is null.
+ * Typical format: "変更報告書（トヨタ自動車株式）" or "大量保有報告書（ソニーグループ株式）"
+ */
+function extractTargetFromDescription(desc) {
+    if (!desc) return null;
+    const m = desc.match(/[（(](.+?)(?:株式|株券)[）)]/);
+    return m ? m[1] : null;
+}
+
+// ---------------------------------------------------------------------------
 // Mobile Detection
 // ---------------------------------------------------------------------------
 
@@ -685,7 +699,7 @@ function renderFeedTable(container, filings) {
         }
 
         const filer = escapeHtml(f.holder_name || f.filer_name || '(不明)');
-        const target = escapeHtml(f.target_company_name || '(対象不明)');
+        const target = escapeHtml(f.target_company_name || extractTargetFromDescription(f.doc_description) || '(対象不明)');
         const secCode = f.target_sec_code || f.sec_code || '';
         const codeDisplay = secCode ? `<span class="tbl-code">${escapeHtml(secCode)}</span>` : '';
 
@@ -790,8 +804,8 @@ function createFeedCard(f) {
 
     // Filer / Target
     const filer = f.holder_name || f.filer_name || '(不明)';
-    const target = f.target_company_name || '(対象不明)';
-    const targetCode = f.target_sec_code ? `[${f.target_sec_code}]` : '';
+    const target = f.target_company_name || extractTargetFromDescription(f.doc_description) || '(対象不明)';
+    const targetCode = (f.target_sec_code || f.sec_code) ? `[${f.target_sec_code || f.sec_code}]` : '';
 
     // Ratio with change indicator (improved visibility)
     let ratioHtml = '';
@@ -906,14 +920,18 @@ function createMobileFeedCard(f) {
         : '';
 
     // Target company = headline (most important on mobile)
-    const target = f.target_company_name || '(対象不明)';
-    const targetCode = f.target_sec_code ? `[${f.target_sec_code}]` : '';
+    // Fall back to extracting from doc_description when XBRL wasn't parsed
+    const target = f.target_company_name
+        || extractTargetFromDescription(f.doc_description)
+        || '(対象不明)';
+    const secCode = f.target_sec_code || f.sec_code;
+    const targetCode = secCode ? `[${secCode}]` : '';
     // Filer = secondary
     const filer = f.holder_name || f.filer_name || '(不明)';
 
     // Ratio metrics
     const ratioClass = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : 'neutral';
-    const ratioVal = f.holding_ratio != null ? `${f.holding_ratio.toFixed(2)}%` : '-';
+    const ratioVal = f.holding_ratio != null ? `${f.holding_ratio.toFixed(2)}%` : '<span class="text-dim" style="font-size:11px">割合未取得</span>';
 
     let changeHtml = '';
     if (f.ratio_change != null && f.ratio_change !== 0) {
@@ -927,20 +945,24 @@ function createMobileFeedCard(f) {
         prevHtml = `<span class="m-prev">前回 ${f.previous_holding_ratio.toFixed(2)}%</span>`;
     }
 
-    // Market data from stock cache
-    const secCode = f.target_sec_code || f.sec_code;
+    // Market data from stock cache (secCode already defined above)
     const code = secCode ? (secCode.length === 5 ? secCode.slice(0, 4) : secCode) : '';
     const cached = code ? stockCache[code] : null;
     const sd = cached && cached.data ? cached.data : null;
 
+    const stockLoading = code && !cached;
     let mcapHtml = '';
     if (sd && sd.market_cap_display) {
         mcapHtml = `<span class="m-mcap">${sd.market_cap_display}</span>`;
+    } else if (stockLoading) {
+        mcapHtml = '<span class="m-mcap m-loading">時価総額...</span>';
     }
 
     let priceHtml = '';
     if (sd && sd.current_price != null) {
         priceHtml = `<span class="m-price">\u00a5${Math.round(sd.current_price).toLocaleString()}</span>`;
+    } else if (stockLoading) {
+        priceHtml = '<span class="m-price m-loading">...</span>';
     }
 
     let pbrHtml = '';
