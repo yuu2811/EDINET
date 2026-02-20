@@ -7,30 +7,32 @@ EDINETから大量保有報告書・変更報告書をリアルタイムに検�
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                    Web Dashboard (Browser)                        │
-│  ┌────────────────┬──────────────┬───────────────────────────┐   │
-│  │  Live Feed      │  Watchlist    │  Stats / Summary          │   │
-│  │  (SSE)          │  (CRUD)      │  Top Filers / CSV Export  │   │
-│  │  Date Nav       │              │  Market Summary           │   │
-│  │  Sort / Filter  │              │  Poll Countdown           │   │
-│  └──────┬─────────┴──────┬───────┴──────────┬────────────────┘   │
-│         │ Desktop Notification │  Web Audio Alert Sound           │
-│         │ Ticker Bar           │  Keyboard Navigation             │
-└─────────┼──────────────────────┼─────────────────────────────────┘
-          │ HTTP REST / SSE      │
-┌─────────┴──────────────────────┴─────────────────────────────────┐
+│  ┌──────────────┬───────────────┬─────────────────────────────┐  │
+│  │ Live Feed    │ Stock Data    │ Stats / Summary              │  │
+│  │ (SSE)        │ 時価総額/PBR  │ Top Filers / CSV Export      │  │
+│  │ Date Nav     │ 52週チャート   │ Market Summary               │  │
+│  │ Sort/Filter  │ Watchlist     │ Poll Countdown               │  │
+│  ├──────────────┴───────────────┴─────────────────────────────┤  │
+│  │ PC: テーブル/カード表示  │  Mobile: 専用3行カードレイアウト  │  │
+│  └──────────┬──────────────┴──────────────────────────────────┘  │
+└─────────────┼───────────────────────────────────────────────────┘
+              │ HTTP REST / SSE
+┌─────────────┴───────────────────────────────────────────────────┐
 │                      FastAPI Backend                              │
-│  ┌───────────────┬────────────────┬────────────────────────────┐ │
-│  │  REST API     │  SSE Stream    │  Background Poller          │ │
-│  │  10 endpoints │  /api/stream   │  (configurable interval)    │ │
-│  └───────────────┴────────────────┴────────────────────────────┘ │
-│  ┌───────────────┬───────────────────────────────────────────┐   │
-│  │  SQLite DB    │  EDINET API Client + XBRL Parser (lxml)   │   │
-│  │  (aiosqlite)  │  XBRL ZIP → 保有割合・保有者・対象会社     │   │
-│  └───────────────┴──────────────┬────────────────────────────┘   │
-└──────────────────────────────────┼───────────────────────────────┘
-                                   │ HTTPS
-                            EDINET API v2
-                   (api.edinet-fsa.go.jp/api/v2)
+│  ┌──────────────┬────────────┬──────────────┬─────────────────┐ │
+│  │ REST API     │ SSE Stream │ Stock API    │ Background      │ │
+│  │ 11 endpoints │ /api/stream│ stooq/Yahoo  │ Poller + XBRL   │ │
+│  └──────────────┴────────────┴──────────────┴─────────────────┘ │
+│  ┌──────────────┬─────────────────────────────────────────────┐ │
+│  │ SQLite DB    │ EDINET Client + XBRL Parser + Demo Data     │ │
+│  │ (aiosqlite)  │ XBRL ZIP → 保有割合・保有者・対象会社        │ │
+│  └──────────────┴─────────────┬───────────────────────────────┘ │
+└────────────────────────────────┼────────────────────────────────┘
+                                 │ HTTPS
+              ┌──────────────────┼──────────────────┐
+              │                  │                  │
+       EDINET API v2      stooq.com         Yahoo Finance
+     (報告書/XBRL)       (株価履歴)        (時価総額/PBR)
 ```
 
 ## 機能一覧
@@ -48,6 +50,9 @@ EDINETから大量保有報告書・変更報告書をリアルタイムに検�
 - **保有割合変動の自動計算**: 前回比の変動幅を算出し、増加(緑)/減少(赤)を色分け表示
 - **報告書分類**: 新規報告(350)/訂正報告(360)/特例対象の自動判定
 - **マーケットサマリー**: 当日の増加/減少件数、平均変動幅、最大変動銘柄を自動集計・表示
+- **株価・時価総額表示**: stooq / Yahoo Finance から株価・時価総額・PBR を取得し、カードおよび詳細モーダルに表示。52週チャート付き
+- **doc_description からの企業名抽出**: XBRL未解析時でも `変更報告書（トヨタ自動車株式）` から対象企業名を自動抽出
+- **XBRL再解析リトライ**: 未解析のfilingをポーリング毎に最大5件自動リトライ
 
 ### 日付ナビゲーション
 - **日付ピッカー**: カレンダーUIで任意の日付を選択
@@ -82,7 +87,8 @@ EDINETから大量保有報告書・変更報告書をリアルタイムに検�
 - **詳細モーダル**: 報告書の全フィールドを表示、EDINET原本・PDFへのリンク、保有割合ゲージ（前回比の視覚的比較）
 - **キーボードナビゲーション**: モーダル表示中に左右矢印キーで前後の報告書を閲覧
 - **マーケットサマリーパネル**: 増加/減少件数、平均変動、最大変動銘柄をサイドバーに表示
-- **レスポンシブ対応**: モバイル用ボトムナビゲーション、オーバーレイパネル対応
+- **モバイル専用UI**: ヘッダー/ティッカー/サイドバーを非表示にし、専用の3行カードレイアウトで表示。保有割合・時価総額・PBR を一覧で確認可能
+- **レスポンシブ対応**: PC（テーブル/カード表示）とモバイル（専用カード表示）を完全分離設計
 - **PWA対応**: manifest.json によるホーム画面への追加対応
 
 ## セットアップ
@@ -305,6 +311,43 @@ Server-Sent Events ストリーム。接続すると以下のイベントが配�
 
 ウォッチリストに登録された銘柄に関連する報告書を最大50件取得。証券コード・EDINETコード・会社名でマッチングします。
 
+### 株価データ
+
+#### `GET /api/stock/{sec_code}`
+
+指定した証券コードの株価・時価総額・PBR・52週チャートデータを取得。
+
+**パラメータ:**
+
+| パラメータ | 型 | 説明 |
+|-----------|------|------|
+| `sec_code` | string (path) | 4桁または5桁の証券コード（例: `7203`, `72030`） |
+
+**レスポンス:**
+
+```json
+{
+  "sec_code": "7203",
+  "ticker": "7203.T",
+  "name": "トヨタ自動車",
+  "current_price": 2821.0,
+  "market_cap": 44386200000000,
+  "market_cap_display": "44兆3862億",
+  "pbr": 1.2,
+  "weekly_prices": [
+    {"date": "2025-02-21", "open": 2800, "high": 2850, "low": 2780, "close": 2821, "volume": 5000000}
+  ]
+}
+```
+
+**データソース（優先順位）:**
+
+1. stooq.com — 株価履歴・現在値
+2. Yahoo Finance — 時価総額・PBR・企業名
+3. フォールバック — 主要30銘柄の発行済株式数に基づく推定値（全API接続不可時）
+
+**キャッシュ:** サーバー側30分 / クライアント側30分
+
 ### 手動ポーリング
 
 #### `POST /api/poll`
@@ -360,11 +403,14 @@ EDINET から取得した XBRL ZIP ファイルを解析し、大量保有報告
 2. **ポーリング**: `POLL_INTERVAL` 秒ごとに EDINET API v2 の `/documents.json` を呼び出し
 3. **フィルタリング**: `docTypeCode` が `350`（大量保有報告書/変更報告書）または `360`（訂正報告書）の書類のみ抽出
 4. **重複排除**: `doc_id` の一意制約で既存報告書をスキップ
-5. **XBRL enrichment**: `xbrl_flag=true` かつ API キーが設定されている場合、XBRL をダウンロード・解析して追加データを付与
-6. **リトライ**: EDINET API 呼び出し失敗時は指数バックオフ（2秒→4秒→最大30秒）で最大3回リトライ
-7. **エラーハンドリング**: 個別の報告書ごとに try/except で処理。失敗時は `session.rollback()` して次へ
-8. **SSE配信**: 新規報告書ごとに `new_filing` イベントを配信。ポーリング完了時に `stats_update` を配信
-9. **シャットダウン**: `CancelledError` を捕捉して正常終了
+5. **Document list enrichment**: `secCode`（発行体＝対象企業の証券コード）を `target_sec_code` にコピー。`doc_description` から対象企業名を正規表現で抽出
+6. **XBRL enrichment**: `xbrl_flag=true` の場合、XBRL をダウンロード・解析して保有割合・保有目的等を付与
+7. **XBRL再解析リトライ**: `xbrl_parsed=false` のfilingを毎ポーリング時に最大5件リトライ（一時的なネットワーク障害やAPI key後追加設定に対応）
+8. **デモデータ自動生成**: EDINET API接続不可かつDB空の場合、25件のリアルなデモデータを自動投入
+9. **リトライ**: EDINET API 呼び出し失敗時は指数バックオフ（2秒→4秒→最大30秒）で最大3回リトライ
+10. **エラーハンドリング**: 個別の報告書ごとに try/except で処理。失敗時は `session.rollback()` して次へ
+11. **SSE配信**: 新規報告書ごとに `new_filing` イベントを配信。ポーリング完了時に `stats_update` を配信
+12. **シャットダウン**: `CancelledError` を捕捉して正常終了
 
 ## プロジェクト構造
 
@@ -374,18 +420,20 @@ EDINET/
 │   ├── __init__.py
 │   ├── config.py            # 環境変数ベースの設定管理
 │   ├── database.py          # SQLAlchemy async エンジン・セッション・DB初期化
+│   ├── demo_data.py         # デモデータ生成（API接続不可時のフォールバック）
 │   ├── edinet.py            # EDINET API v2 クライアント + XBRL パーサー
 │   ├── errors.py            # グローバルエラーハンドラ登録
 │   ├── logging_config.py    # ロギング設定
 │   ├── main.py              # FastAPI アプリ (REST API + SSE + lifespan)
 │   ├── models.py            # Filing / Watchlist ORM モデル
 │   ├── schemas.py           # Pydantic スキーマ
-│   ├── poller.py            # バックグラウンドポーラー + SSEBroadcaster
+│   ├── poller.py            # バックグラウンドポーラー + SSEBroadcaster + XBRLリトライ
 │   └── routers/
 │       ├── __init__.py
 │       ├── filings.py       # 報告書一覧・詳細 API
 │       ├── poll.py          # 手動ポーリング API（日付指定対応）
 │       ├── stats.py         # 統計情報 API（日付指定対応）
+│       ├── stock.py         # 株価・時価総額・PBR API（stooq/Yahoo/フォールバック）
 │       ├── stream.py        # SSE ストリーム
 │       └── watchlist.py     # ウォッチリスト CRUD API
 ├── static/
@@ -442,7 +490,9 @@ pytest tests/test_poller.py
 | Database | SQLite (aiosqlite) |
 | Real-time | Server-Sent Events (SSE) |
 | XBRL Parser | lxml (XPath) |
+| 株価データ | stooq.com / Yahoo Finance（フォールバック: 発行済株式数ベースの推定） |
 | Frontend | Vanilla HTML / CSS / JavaScript (フレームワーク不使用) |
+| UI Design | Bloomberg端末風ダークテーマ / モバイル専用カードレイアウト |
 | Scheduler | asyncio ベースのポーリングループ |
 | Testing | pytest / pytest-asyncio |
 | Deploy | Render (Docker) |
@@ -463,6 +513,66 @@ pytest tests/test_poller.py
 - **書類一覧取得**: `GET /api/v2/documents.json?date=YYYY-MM-DD&type=2&Subscription-Key=...`
 - **XBRL ダウンロード**: `GET /api/v2/documents/{docID}?type=1&Subscription-Key=...`
 - **PDF ダウンロード**: `GET /api/v2/documents/{docID}?type=2&Subscription-Key=...`
+
+## トラブルシューティング
+
+### 外部APIに接続できない（403 Forbidden）
+
+**原因**: 実行環境のネットワーク制限（プロキシ、ファイアウォール等）によりHTTPS通信がブロックされています。
+
+**影響を受けるAPI:**
+
+| API | 用途 | 必要なホスト |
+|-----|------|-------------|
+| EDINET API v2 | 報告書一覧・XBRL取得 | `api.edinet-fsa.go.jp` |
+| stooq | 株価履歴・現在値 | `stooq.com` |
+| Yahoo Finance | 時価総額・PBR | `query1.finance.yahoo.com`, `query2.finance.yahoo.com` |
+
+**確認方法:**
+
+```bash
+# EDINET API接続テスト
+curl -s -o /dev/null -w "%{http_code}" "https://api.edinet-fsa.go.jp/api/v2/documents.json?date=2026-02-19&type=2&Subscription-Key=YOUR_KEY"
+
+# プロキシ設定の確認
+env | grep -i proxy
+```
+
+**対処法:**
+
+| 環境 | 対処 |
+|------|------|
+| **Claude Code（サンドボックス）** | 外部APIはホワイトリスト制で、金融APIは許可されていません。**mainにマージして本番環境（Render等）にデプロイ**すれば全て動作します |
+| **社内ネットワーク** | プロキシ設定（`HTTP_PROXY` / `HTTPS_PROXY` 環境変数）を確認。必要に応じてIT部門に上記ホストの許可を依頼 |
+| **Render / VPS / EC2** | 通常は制限なし。そのまま動作します |
+| **Docker** | ネットワークモードを確認（`--network host` またはDNS設定） |
+
+**フォールバック動作（API接続不可時）:**
+
+- EDINET API接続不可 + DB空 → 25件のデモデータを自動生成
+- 株価API全て接続不可 → 主要30銘柄の発行済株式数に基づく推定データを生成（2回目以降は即座にフォールバック）
+- XBRL取得失敗 → `doc_description` から対象企業名を抽出、`secCode` を `target_sec_code` にコピー
+
+### EDINET APIキーが正しいか確認したい
+
+```bash
+# APIキーの疫通テスト
+curl -s "https://api.edinet-fsa.go.jp/api/v2/documents.json?date=$(date +%Y-%m-%d)&type=2&Subscription-Key=YOUR_KEY" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['metadata'])"
+```
+
+正常時: `{'status': '200', 'message': 'OK', ...}`
+
+### 保有割合が「割合未取得」と表示される
+
+**原因**: XBRL解析が完了していない。以下を確認:
+
+1. **EDINET APIキーが設定されているか**: `.env` に `EDINET_API_KEY` が設定されているか確認
+2. **ネットワーク接続**: XBRL ZIPダウンロード（`api.edinet-fsa.go.jp`）に接続できるか確認
+3. **自動リトライ**: ポーラーが毎サイクル（デフォルト60秒）で未解析filingを最大5件リトライします。ネットワーク復旧後、自動的にデータが補完されます
+
+### 時価総額が表示されない
+
+**原因**: 株価APIへの接続が必要。stooq.com または Yahoo Finance への接続を確認してください。接続不可時は主要銘柄のみ推定値を表示します。
 
 ## ライセンス
 

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 import time
 from datetime import date
 
@@ -187,12 +188,27 @@ async def poll_edinet(target_date=None):
                 is_special_exemption=is_special,
             )
 
+            # --- Pre-enrichment from document list fields ---
+            # secCode from the EDINET document list is the ISSUER's code
+            # (= target company), so copy it to target_sec_code as well.
+            if filing.sec_code and not filing.target_sec_code:
+                filing.target_sec_code = filing.sec_code
+
+            # Extract target company name from doc_description if available.
+            # Typical format: "変更報告書（トヨタ自動車株式）"
+            if not filing.target_company_name and doc_description:
+                m = re.search(r"[（(]([^）)]+?)(?:株式|株券)[）)]", doc_description)
+                if m:
+                    filing.target_company_name = m.group(1)
+
             try:
                 session.add(filing)
                 await session.flush()
 
-                # Try to parse XBRL for additional data
-                if filing.xbrl_flag and settings.EDINET_API_KEY:
+                # Try to parse XBRL for additional data (holding ratio, etc.)
+                # Attempt even without API key — the key may not be required
+                # for all EDINET document types.
+                if filing.xbrl_flag:
                     await _enrich_from_xbrl(filing)
 
                 await session.commit()
@@ -300,6 +316,39 @@ async def _enrich_from_xbrl(filing: Filing):
         logger.error("Failed to enrich filing %s from XBRL: %s", filing.doc_id, e)
 
 
+async def _retry_xbrl_enrichment():
+    """Retry XBRL enrichment for filings that haven't been parsed yet.
+
+    This handles the case where filings were stored without XBRL data
+    (e.g. network issues, missing API key) and should be retried.
+    Runs at most once per poll cycle; processes up to 5 filings.
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            select(Filing)
+            .where(Filing.xbrl_flag.is_(True), Filing.xbrl_parsed.is_(False))
+            .order_by(Filing.id.desc())
+            .limit(5)
+        )
+        filings = result.scalars().all()
+        if not filings:
+            return
+
+        logger.info("Retrying XBRL enrichment for %d filings", len(filings))
+        for filing in filings:
+            await _enrich_from_xbrl(filing)
+
+            # Also apply doc_description enrichment if still missing
+            if not filing.target_company_name and filing.doc_description:
+                m = re.search(r"[（(]([^）)]+?)(?:株式|株券)[）)]", filing.doc_description)
+                if m:
+                    filing.target_company_name = m.group(1)
+            if filing.sec_code and not filing.target_sec_code:
+                filing.target_sec_code = filing.sec_code
+
+        await session.commit()
+
+
 async def run_poller():
     """Run the polling loop."""
     logger.info(
@@ -308,6 +357,8 @@ async def run_poller():
     while True:
         try:
             await poll_edinet()
+            # Also retry enrichment for previously failed XBRL parses
+            await _retry_xbrl_enrichment()
         except asyncio.CancelledError:
             logger.info("Poller cancelled")
             raise
