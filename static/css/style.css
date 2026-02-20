@@ -1542,6 +1542,7 @@ body {
 
     /* === MOBILE CARD (.m-card) === */
     .m-card {
+        display: block;
         background: var(--bg-card);
         border: 1px solid var(--border-primary);
         border-left: 3px solid var(--cyan);
