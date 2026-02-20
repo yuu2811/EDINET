@@ -164,6 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadInitialData();
     initMobileNav();
     initPullToRefresh();
+    initStockView();
 });
 
 function initClock() {
@@ -815,17 +816,24 @@ function renderWatchlist() {
         return;
     }
 
-    container.innerHTML = state.watchlist.map(w =>
-        `<div class="watch-item">
+    container.innerHTML = state.watchlist.map(w => {
+        const code = w.sec_code ? (w.sec_code.length === 5 ? w.sec_code.slice(0, 4) : w.sec_code) : '';
+        const cached = code ? stockCache[code] : null;
+        let priceHtml = '';
+        if (cached && cached.data && cached.data.current_price != null) {
+            priceHtml = `<span class="watch-price">&yen;${Math.round(cached.data.current_price).toLocaleString()}</span>`;
+        }
+        return `<div class="watch-item" data-sec-code="${escapeHtml(code)}">
             <div class="watch-info">
                 <span class="watch-name">${escapeHtml(w.company_name)}</span>
-                <span class="watch-code">${escapeHtml(w.sec_code || '')}</span>
+                <span class="watch-code">${escapeHtml(w.sec_code || '')} ${priceHtml}</span>
             </div>
+            <canvas class="watch-sparkline" data-code="${escapeHtml(code)}" width="60" height="24"></canvas>
             <button class="watch-delete" data-id="${w.id}"
                     aria-label="削除: ${escapeHtml(w.company_name)}"
                     title="削除">&times;</button>
-        </div>`
-    ).join('');
+        </div>`;
+    }).join('');
 
     // Delete handlers (with confirm dialog)
     container.querySelectorAll('.watch-delete').forEach(btn => {
@@ -839,8 +847,54 @@ function renderWatchlist() {
         });
     });
 
+    // Click on watchlist item opens stock view
+    container.querySelectorAll('.watch-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+            if (e.target.closest('.watch-delete')) return;
+            const code = item.dataset.secCode;
+            if (code) {
+                document.getElementById('stock-search-input').value = code;
+                showStockView();
+                loadStockView(code);
+                // Activate stock nav on mobile
+                document.querySelectorAll('.mobile-bottom-nav .nav-item').forEach(n => {
+                    n.classList.toggle('active', n.dataset.panel === 'stock');
+                });
+            }
+        });
+    });
+
+    // Render sparkline mini-charts for watchlist items
+    renderWatchlistSparklines();
+
     // Re-render feed to update watchlist badges
     renderFeed();
+}
+
+function renderWatchlistSparklines() {
+    document.querySelectorAll('.watch-sparkline').forEach(canvas => {
+        const code = canvas.dataset.code;
+        if (!code) return;
+        const cached = stockCache[code];
+        if (cached && cached.data && cached.data.weekly_prices) {
+            renderSparkline(canvas, cached.data.weekly_prices, 60, 24);
+        } else {
+            // Fetch data if not cached yet
+            fetchStockData(code).then(data => {
+                if (data && data.weekly_prices) {
+                    renderSparkline(canvas, data.weekly_prices, 60, 24);
+                    // Update the price display too
+                    const watchItem = canvas.closest('.watch-item');
+                    if (watchItem && data.current_price != null) {
+                        const codeEl = watchItem.querySelector('.watch-code');
+                        if (codeEl && !codeEl.querySelector('.watch-price')) {
+                            codeEl.innerHTML += ` <span class="watch-price">&yen;${Math.round(data.current_price).toLocaleString()}</span>`;
+                        }
+                    }
+                }
+            });
+        }
+    });
 }
 
 function updateTicker() {
@@ -986,8 +1040,27 @@ function closeConfirmDialog() {
 }
 
 // ---------------------------------------------------------------------------
-// Stock Chart Renderer (Canvas-based Candlestick)
+// Stock Chart Renderer (Canvas-based Candlestick + SMA + Tooltip)
 // ---------------------------------------------------------------------------
+
+/**
+ * Compute simple moving average for an array of close prices.
+ */
+function computeSMA(prices, period) {
+    const result = [];
+    for (let i = 0; i < prices.length; i++) {
+        if (i < period - 1) {
+            result.push(null);
+        } else {
+            let sum = 0;
+            for (let j = i - period + 1; j <= i; j++) {
+                sum += prices[j].close;
+            }
+            result.push(sum / period);
+        }
+    }
+    return result;
+}
 
 function renderStockChart(canvas, prices, options = {}) {
     if (!prices || prices.length === 0) return;
@@ -1104,6 +1177,33 @@ function renderStockChart(canvas, prices, options = {}) {
         }
     }
 
+    // --- Moving Averages ---
+    if (options.showSMA !== false && prices.length >= 5) {
+        const sma25 = computeSMA(prices, Math.min(25, prices.length));
+        const sma50 = computeSMA(prices, Math.min(50, prices.length));
+
+        const drawSMA = (smaData, color) => {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            let started = false;
+            for (let i = 0; i < smaData.length; i++) {
+                if (smaData[i] == null) continue;
+                const x = padding.left + i * gap + gap / 2;
+                const y = padding.top + (1 - (smaData[i] - minPrice) / (maxPrice - minPrice)) * priceH;
+                if (!started) { ctx.moveTo(x, y); started = true; }
+                else { ctx.lineTo(x, y); }
+            }
+            ctx.stroke();
+        };
+
+        drawSMA(sma25, 'rgba(255, 171, 0, 0.7)');  // Amber for SMA25
+        if (prices.length >= 50) {
+            drawSMA(sma50, 'rgba(179, 136, 255, 0.7)');  // Purple for SMA50
+        }
+    }
+
     // Date labels (show every ~3 months)
     ctx.fillStyle = '#707088';
     ctx.font = '9px monospace';
@@ -1116,6 +1216,288 @@ function renderStockChart(canvas, prices, options = {}) {
             const x = padding.left + i * gap + gap / 2;
             ctx.fillText(month, x, H - padding.bottom + 15);
         }
+    }
+
+    // --- SMA Legend ---
+    if (options.showSMA !== false && prices.length >= 5) {
+        const legendY = padding.top + 4;
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = 'rgba(255, 171, 0, 0.8)';
+        ctx.fillText('SMA25', padding.left + 4, legendY + 8);
+        if (prices.length >= 50) {
+            ctx.fillStyle = 'rgba(179, 136, 255, 0.8)';
+            ctx.fillText('SMA50', padding.left + 50, legendY + 8);
+        }
+    }
+
+    // --- Tooltip support (store chart metadata on canvas for mousemove) ---
+    canvas._chartMeta = {
+        prices, padding, gap, minPrice, maxPrice, priceH, volumeH, W, H,
+        chartW, candleW,
+    };
+}
+
+/**
+ * Attach hover tooltip to a chart canvas (call once after first render).
+ */
+function attachChartTooltip(canvas, tooltipEl) {
+    if (canvas._tooltipAttached) return;
+    canvas._tooltipAttached = true;
+
+    canvas.addEventListener('mousemove', (e) => {
+        const meta = canvas._chartMeta;
+        if (!meta) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+
+        const { prices, padding, gap, minPrice, maxPrice, priceH } = meta;
+        const idx = Math.floor((mx - padding.left) / gap);
+
+        if (idx < 0 || idx >= prices.length) {
+            tooltipEl.style.display = 'none';
+            return;
+        }
+
+        const p = prices[idx];
+        const isUp = p.close >= p.open;
+        const changeFromOpen = ((p.close - p.open) / p.open * 100).toFixed(2);
+        const sign = p.close >= p.open ? '+' : '';
+
+        tooltipEl.innerHTML = `
+            <div class="chart-tooltip-date">${p.date}</div>
+            <div class="chart-tooltip-row">始 <span>${p.open.toLocaleString()}</span></div>
+            <div class="chart-tooltip-row">高 <span style="color:#00e676">${p.high.toLocaleString()}</span></div>
+            <div class="chart-tooltip-row">安 <span style="color:#ff1744">${p.low.toLocaleString()}</span></div>
+            <div class="chart-tooltip-row">終 <span style="color:${isUp ? '#00e676' : '#ff1744'}">${p.close.toLocaleString()} (${sign}${changeFromOpen}%)</span></div>
+            ${p.volume ? `<div class="chart-tooltip-row">出来高 <span>${p.volume.toLocaleString()}</span></div>` : ''}
+        `;
+
+        tooltipEl.style.display = 'block';
+
+        // Position tooltip near cursor but keep within bounds
+        const tooltipW = tooltipEl.offsetWidth;
+        const tooltipH = tooltipEl.offsetHeight;
+        const containerRect = canvas.parentElement.getBoundingClientRect();
+        let left = e.clientX - containerRect.left + 12;
+        let top = e.clientY - containerRect.top - tooltipH / 2;
+
+        if (left + tooltipW > containerRect.width - 5) {
+            left = e.clientX - containerRect.left - tooltipW - 12;
+        }
+        top = Math.max(4, Math.min(top, containerRect.height - tooltipH - 4));
+
+        tooltipEl.style.left = left + 'px';
+        tooltipEl.style.top = top + 'px';
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+        tooltipEl.style.display = 'none';
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Mini Sparkline Chart (for watchlist)
+// ---------------------------------------------------------------------------
+
+function renderSparkline(canvas, prices, width, height) {
+    if (!prices || prices.length < 2) return;
+
+    const closes = prices.filter(p => p.close != null).map(p => p.close);
+    if (closes.length < 2) return;
+
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+    ctx.scale(dpr, dpr);
+
+    const minV = Math.min(...closes);
+    const maxV = Math.max(...closes);
+    const range = maxV - minV || 1;
+    const pad = 2;
+    const chartH = height - pad * 2;
+    const chartW = width - pad * 2;
+    const step = chartW / (closes.length - 1);
+
+    // Determine color from overall trend
+    const isUp = closes[closes.length - 1] >= closes[0];
+    const lineColor = isUp ? '#00e676' : '#ff1744';
+    const fillColor = isUp ? 'rgba(0, 230, 118, 0.08)' : 'rgba(255, 23, 68, 0.08)';
+
+    // Draw filled area
+    ctx.beginPath();
+    ctx.moveTo(pad, height - pad);
+    for (let i = 0; i < closes.length; i++) {
+        const x = pad + i * step;
+        const y = pad + (1 - (closes[i] - minV) / range) * chartH;
+        ctx.lineTo(x, y);
+    }
+    ctx.lineTo(pad + (closes.length - 1) * step, height - pad);
+    ctx.closePath();
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+
+    // Draw line
+    ctx.beginPath();
+    for (let i = 0; i < closes.length; i++) {
+        const x = pad + i * step;
+        const y = pad + (1 - (closes[i] - minV) / range) * chartH;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+}
+
+// ---------------------------------------------------------------------------
+// Dedicated Stock Chart View
+// ---------------------------------------------------------------------------
+
+let currentStockView = null; // tracks which stock is displayed in stock view
+
+function initStockView() {
+    const searchInput = document.getElementById('stock-search-input');
+    const searchBtn = document.getElementById('stock-search-btn');
+    if (!searchInput || !searchBtn) return;
+
+    const doSearch = () => {
+        const code = searchInput.value.trim();
+        if (code.length >= 4) {
+            loadStockView(code);
+        }
+    };
+
+    searchBtn.addEventListener('click', doSearch);
+    searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') doSearch();
+    });
+}
+
+function updateStockQuickList() {
+    const container = document.getElementById('stock-quick-list');
+    if (!container) return;
+
+    if (state.watchlist.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    container.innerHTML = state.watchlist
+        .filter(w => w.sec_code)
+        .map(w => `<button class="stock-quick-btn" data-code="${escapeHtml(w.sec_code)}" title="${escapeHtml(w.company_name)}">${escapeHtml(w.sec_code)} ${escapeHtml(w.company_name)}</button>`)
+        .join('');
+
+    container.querySelectorAll('.stock-quick-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const code = btn.dataset.code;
+            document.getElementById('stock-search-input').value = code;
+            loadStockView(code);
+        });
+    });
+}
+
+async function loadStockView(secCode) {
+    const body = document.getElementById('stock-view-body');
+    if (!body) return;
+
+    const code = secCode.length === 5 ? secCode.slice(0, 4) : secCode;
+    currentStockView = code;
+
+    body.innerHTML = '<div class="stock-loading">株価データ読み込み中...</div>';
+
+    const stockData = await fetchStockData(code);
+
+    // Check if user switched to another stock while loading
+    if (currentStockView !== code) return;
+
+    if (!stockData) {
+        body.innerHTML = '<div class="stock-no-data">株価データを取得できませんでした</div>';
+        return;
+    }
+
+    // Build the full stock view
+    let html = '';
+
+    // Company header
+    html += '<div class="stock-view-company-header">';
+    html += `<div class="stock-view-ticker">${escapeHtml(stockData.ticker || code)}</div>`;
+    if (stockData.name) {
+        html += `<div class="stock-view-name">${escapeHtml(stockData.name)}</div>`;
+    }
+    html += '</div>';
+
+    // Price info bar
+    html += '<div class="stock-view-metrics">';
+    if (stockData.current_price != null) {
+        const lastPrice = stockData.weekly_prices && stockData.weekly_prices.length >= 2
+            ? stockData.weekly_prices[stockData.weekly_prices.length - 2].close : null;
+        let changeHtml = '';
+        if (lastPrice != null && lastPrice > 0) {
+            const diff = stockData.current_price - lastPrice;
+            const pct = (diff / lastPrice * 100).toFixed(2);
+            const sign = diff >= 0 ? '+' : '';
+            const cls = diff >= 0 ? 'positive' : 'negative';
+            changeHtml = `<span class="stock-view-change ${cls}">${sign}${diff.toFixed(1)} (${sign}${pct}%)</span>`;
+        }
+        html += `<div class="stock-view-price-block">
+            <span class="stock-view-current-price">&yen;${Math.round(stockData.current_price).toLocaleString()}</span>
+            ${changeHtml}
+        </div>`;
+    }
+
+    const metricItems = [];
+    if (stockData.market_cap_display) metricItems.push(`<div class="stock-view-metric"><span class="metric-label">時価総額</span><span class="metric-value">${stockData.market_cap_display}</span></div>`);
+    if (stockData.pbr != null) metricItems.push(`<div class="stock-view-metric"><span class="metric-label">PBR</span><span class="metric-value">${Number(stockData.pbr).toFixed(2)}倍</span></div>`);
+    if (stockData.weekly_prices && stockData.weekly_prices.length > 0) {
+        const highs = stockData.weekly_prices.map(p => p.high).filter(v => v != null);
+        const lows = stockData.weekly_prices.map(p => p.low).filter(v => v != null);
+        if (highs.length > 0) metricItems.push(`<div class="stock-view-metric"><span class="metric-label">52W高値</span><span class="metric-value text-green">&yen;${Math.round(Math.max(...highs)).toLocaleString()}</span></div>`);
+        if (lows.length > 0) metricItems.push(`<div class="stock-view-metric"><span class="metric-label">52W安値</span><span class="metric-value text-red">&yen;${Math.round(Math.min(...lows)).toLocaleString()}</span></div>`);
+    }
+    html += `<div class="stock-view-metric-grid">${metricItems.join('')}</div>`;
+    html += '</div>';
+
+    // Chart container (large)
+    html += '<div class="stock-view-chart-wrapper"><div class="stock-chart-container stock-chart-large"><canvas id="stock-view-canvas"></canvas><div id="stock-view-tooltip" class="chart-tooltip"></div></div></div>';
+
+    body.innerHTML = html;
+
+    // Render chart
+    const chartCanvas = document.getElementById('stock-view-canvas');
+    if (chartCanvas && stockData.weekly_prices && stockData.weekly_prices.length > 0) {
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                renderStockChart(chartCanvas, stockData.weekly_prices, { height: 400, showSMA: true });
+                const tooltip = document.getElementById('stock-view-tooltip');
+                if (tooltip) attachChartTooltip(chartCanvas, tooltip);
+            });
+        });
+    }
+}
+
+function showStockView() {
+    const stockView = document.getElementById('stock-view');
+    const mainLayout = document.getElementById('main-layout');
+    if (stockView && mainLayout) {
+        mainLayout.classList.add('hidden');
+        stockView.classList.remove('hidden');
+        updateStockQuickList();
+    }
+}
+
+function hideStockView() {
+    const stockView = document.getElementById('stock-view');
+    const mainLayout = document.getElementById('main-layout');
+    if (stockView && mainLayout) {
+        stockView.classList.add('hidden');
+        mainLayout.classList.remove('hidden');
     }
 }
 
@@ -1236,7 +1618,7 @@ function openModal(filing) {
             }
             infoHtml += '</div>';
 
-            stockSection.innerHTML = infoHtml + '<div class="stock-chart-container"><canvas id="stock-chart-canvas"></canvas></div>';
+            stockSection.innerHTML = infoHtml + '<div class="stock-chart-container"><canvas id="stock-chart-canvas"></canvas><div id="modal-chart-tooltip" class="chart-tooltip"></div></div>';
 
             const chartCanvas = document.getElementById('stock-chart-canvas');
             if (chartCanvas && stockData.weekly_prices && stockData.weekly_prices.length > 0) {
@@ -1245,7 +1627,9 @@ function openModal(filing) {
                 // animations (e.g. modal scale-in) before we measure width.
                 requestAnimationFrame(() => {
                     requestAnimationFrame(() => {
-                        renderStockChart(chartCanvas, stockData.weekly_prices);
+                        renderStockChart(chartCanvas, stockData.weekly_prices, { showSMA: true });
+                        const tooltip = document.getElementById('modal-chart-tooltip');
+                        if (tooltip) attachChartTooltip(chartCanvas, tooltip);
                     });
                 });
             }
@@ -1552,14 +1936,21 @@ function initMobileNav() {
             if (panel === 'feed') {
                 // Hide overlays, show feed (default view)
                 closeAllMobileOverlays();
+                hideStockView();
             } else if (panel === 'stats') {
                 closeAllMobileOverlays();
+                hideStockView();
                 openMobileOverlay('mobile-stats-panel');
             } else if (panel === 'watchlist') {
                 closeAllMobileOverlays();
+                hideStockView();
                 openMobileOverlay('mobile-watchlist-panel');
+            } else if (panel === 'stock') {
+                closeAllMobileOverlays();
+                showStockView();
             } else if (panel === 'settings') {
                 closeAllMobileOverlays();
+                hideStockView();
                 openMobileOverlay('mobile-settings-panel');
             }
         });

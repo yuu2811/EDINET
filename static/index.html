@@ -159,6 +159,26 @@
         </div>
     </div>
 
+    <!-- Stock Chart View (dedicated page) -->
+    <div id="stock-view" class="stock-view hidden">
+        <div class="stock-view-header">
+            <div class="stock-search-bar">
+                <label for="stock-search-input" class="visually-hidden">証券コード検索</label>
+                <input type="text" id="stock-search-input" placeholder="証券コードを入力 (例: 7203)" class="stock-search-input" maxlength="5" inputmode="numeric">
+                <button id="stock-search-btn" class="btn-small btn-accent">検索</button>
+            </div>
+            <div id="stock-quick-list" class="stock-quick-list">
+                <!-- Watchlist items as quick buttons -->
+            </div>
+        </div>
+        <div id="stock-view-body" class="stock-view-body">
+            <div class="stock-view-empty">
+                <div class="empty-icon">&#128200;</div>
+                <div class="empty-text">証券コードを入力して株価チャートを表示</div>
+            </div>
+        </div>
+    </div>
+
     <!-- Detail Modal -->
     <div id="detail-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title-text">
         <div class="modal-overlay"></div>
@@ -261,6 +281,10 @@
         <button class="nav-item" data-panel="watchlist" aria-label="ウォッチ">
             <span class="nav-icon">&#9733;</span>
             <span class="nav-label">ウォッチ</span>
+        </button>
+        <button class="nav-item" data-panel="stock" aria-label="株価">
+            <span class="nav-icon">&#128200;</span>
+            <span class="nav-label">株価</span>
         </button>
         <button class="nav-item" data-panel="settings" aria-label="設定">
             <span class="nav-icon">&#9881;</span>
