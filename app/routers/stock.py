@@ -1,4 +1,11 @@
-"""Stock price data endpoint using external free APIs."""
+"""Stock price data endpoint using external free APIs.
+
+Data priority for company names:
+  1. EDINET Filing DB (金融庁 data – authoritative)
+  2. EDINET code list (金融庁 code master – fetched at startup)
+  3. External APIs (stooq, Yahoo Finance – live market data)
+  4. _KNOWN_STOCKS fallback (hardcoded, used only when all else fails)
+"""
 
 import asyncio
 import csv
@@ -11,6 +18,10 @@ from datetime import date, timedelta
 
 import httpx
 from fastapi import APIRouter, HTTPException
+from sqlalchemy import func as sa_func, select
+
+from app.database import async_session
+from app.models import Filing
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +49,162 @@ def _cache_get(key: str) -> dict | None:
 
 def _cache_set(key: str, value: dict) -> None:
     _cache[key] = (time.monotonic(), value)
+
+
+# ---------------------------------------------------------------------------
+# EDINET (金融庁) data lookups  –  authoritative company info
+# ---------------------------------------------------------------------------
+
+# In-memory code list cache:  {4-digit ticker: company_name}
+# Populated from EDINET code list ZIP on first startup.
+_edinet_code_list: dict[str, str] = {}
+_edinet_code_list_loaded = False
+
+
+async def _load_edinet_code_list() -> None:
+    """Fetch the EDINET code list (EdinetcodeDlInfo) and populate the cache.
+
+    The EDINET v2 API provides a ZIP with a CSV mapping every registered
+    entity to its EDINET code, securities code, and official company name.
+    This is the most authoritative source from 金融庁.
+    """
+    global _edinet_code_list_loaded
+    if _edinet_code_list_loaded:
+        return
+
+    from app.config import settings
+
+    if not settings.EDINET_API_KEY:
+        logger.debug("No EDINET_API_KEY; skipping code list fetch")
+        _edinet_code_list_loaded = True
+        return
+
+    url = f"{settings.EDINET_API_BASE}/EdinetcodeDlInfo.json"
+    params = {"Subscription-Key": settings.EDINET_API_KEY}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+    except Exception as exc:
+        logger.warning("Failed to fetch EDINET code list: %s", exc)
+        _edinet_code_list_loaded = True
+        return
+
+    # The response is a ZIP containing a CSV file
+    try:
+        import zipfile as _zipfile
+
+        with _zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+            csv_files = [f for f in zf.namelist() if f.endswith(".csv")]
+            if not csv_files:
+                logger.warning("EDINET code list ZIP contains no CSV")
+                _edinet_code_list_loaded = True
+                return
+
+            raw = zf.read(csv_files[0])
+            # Try UTF-8 first, fall back to cp932 (Shift-JIS variant)
+            for enc in ("utf-8-sig", "utf-8", "cp932"):
+                try:
+                    text = raw.decode(enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                text = raw.decode("utf-8", errors="replace")
+
+            reader = csv.reader(io.StringIO(text))
+            header = next(reader, None)
+            if header is None:
+                _edinet_code_list_loaded = True
+                return
+
+            # Find column indices — the CSV header names vary but typically:
+            # "ＥＤＩＮＥＴコード", "提出者種別", "上場区分", "証券コード",
+            # "提出者名", "提出者名（英字）", ...
+            sec_code_idx = None
+            name_idx = None
+            for i, col in enumerate(header):
+                col_lower = col.strip().lower()
+                if "証券コード" in col or "securitiescode" in col_lower:
+                    sec_code_idx = i
+                if ("提出者名" in col or "submittername" in col_lower) and name_idx is None:
+                    # Take the first "提出者名" column (Japanese name)
+                    name_idx = i
+
+            if sec_code_idx is None or name_idx is None:
+                logger.warning(
+                    "Could not find required columns in EDINET code list CSV "
+                    "(header: %s)", header[:10]
+                )
+                _edinet_code_list_loaded = True
+                return
+
+            count = 0
+            for row in reader:
+                if len(row) <= max(sec_code_idx, name_idx):
+                    continue
+                raw_code = row[sec_code_idx].strip()
+                name = row[name_idx].strip()
+                if not raw_code or not name:
+                    continue
+                # Normalise to 4-digit ticker
+                if len(raw_code) == 5 and raw_code[:4].isdigit():
+                    ticker = raw_code[:4]
+                elif len(raw_code) == 4 and raw_code.isdigit():
+                    ticker = raw_code
+                else:
+                    continue
+                _edinet_code_list[ticker] = name
+                count += 1
+
+            logger.info(
+                "Loaded %d companies from EDINET code list (金融庁)", count
+            )
+    except Exception as exc:
+        logger.warning("Error parsing EDINET code list: %s", exc)
+
+    _edinet_code_list_loaded = True
+
+
+async def _lookup_company_from_filings(ticker: str) -> str | None:
+    """Look up company name from Filing table (EDINET data = 金融庁 data).
+
+    Queries the most recent filing where the target company has the given
+    securities code and returns its name.  This is authoritative because
+    the name comes from the official XBRL filing submitted to 金融庁.
+    """
+    four_digit = ticker
+    five_digit = ticker + "0"
+
+    try:
+        async with async_session() as session:
+            stmt = (
+                select(Filing.target_company_name)
+                .where(
+                    Filing.target_company_name.isnot(None),
+                    Filing.target_company_name != "",
+                    (Filing.target_sec_code == four_digit)
+                    | (Filing.target_sec_code == five_digit)
+                    | (Filing.sec_code == four_digit)
+                    | (Filing.sec_code == five_digit),
+                )
+                .order_by(Filing.submit_date_time.desc())
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            row = result.scalar_one_or_none()
+            if row:
+                logger.debug("EDINET Filing lookup for %s: %s", ticker, row)
+            return row
+    except Exception as exc:
+        logger.debug("Filing lookup failed for %s: %s", ticker, exc)
+        return None
+
+
+def _lookup_edinet_code_list(ticker: str) -> str | None:
+    """Look up company name from the EDINET code list cache."""
+    return _edinet_code_list.get(ticker)
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +569,12 @@ async def get_stock_data(sec_code: str) -> dict:
 
     Accepts EDINET-style 5-digit codes (e.g. ``39320``) or plain 4-digit
     TSE codes (e.g. ``3932``).
+
+    Company name priority (金融庁データ優先):
+      1. EDINET Filing DB (大量保有報告書のXBRLから抽出)
+      2. EDINET code list (金融庁コードマスター)
+      3. External APIs (stooq / Yahoo Finance)
+      4. _KNOWN_STOCKS fallback (ハードコード, 最終手段)
     """
     global _external_apis_failed
     ticker = _normalise_sec_code(sec_code)
@@ -411,12 +584,20 @@ async def get_stock_data(sec_code: str) -> dict:
     if cached is not None:
         return cached
 
+    # --- Step 1: Look up authoritative company name from 金融庁 data ---
+    # These run concurrently: DB lookup + EDINET code list (already in memory)
+    await _load_edinet_code_list()  # no-op if already loaded
+    edinet_name = await _lookup_company_from_filings(ticker)
+    if not edinet_name:
+        edinet_name = _lookup_edinet_code_list(ticker)
+
     weekly_prices: list[dict] = []
     current_price = None
-    name = None
+    api_name = None  # name from external APIs (lower priority)
     market_cap = None
     pbr = None
 
+    # --- Step 2: Fetch live market data from external APIs ---
     # If external APIs previously failed for ALL sources, skip straight to
     # fallback to avoid 10-second timeouts on every request.
     if not _external_apis_failed:
@@ -437,7 +618,7 @@ async def get_stock_data(sec_code: str) -> dict:
         if current_price is None:
             current_price = yahoo_meta.get("current_price")
 
-        name = (
+        api_name = (
             yahoo_summary.get("name")
             or yahoo_meta.get("name")
             or quote.get("name")
@@ -452,11 +633,16 @@ async def get_stock_data(sec_code: str) -> dict:
             _external_apis_failed = True
             logger.info("All external APIs unreachable; switching to fallback mode")
 
-    # Generate deterministic fallback data when no real data is available
+    # --- Step 3: Fallback when no live data available ---
     if not weekly_prices and current_price is None:
-        weekly_prices, current_price, name, market_cap, pbr = (
+        weekly_prices, current_price, fallback_name, market_cap, pbr = (
             _generate_fallback_data(ticker)
         )
+        if not api_name:
+            api_name = fallback_name
+
+    # --- Step 4: Apply name priority (金融庁 > API > fallback) ---
+    name = edinet_name or api_name
 
     result: dict = {
         "sec_code": ticker,
