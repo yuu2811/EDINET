@@ -4,12 +4,10 @@ Data priority for company names:
   1. EDINET Filing DB (金融庁 data – authoritative)
   2. EDINET code list (金融庁 code master – fetched at startup)
   3. External APIs (Google Finance, stooq, Yahoo Finance, Kabutan – live market data)
-  4. _KNOWN_STOCKS fallback (hardcoded, used only when all else fails)
 """
 
 import asyncio
 import csv
-import hashlib
 import io
 import logging
 import math
@@ -19,7 +17,7 @@ from datetime import date, timedelta
 
 import httpx
 from fastapi import APIRouter
-from sqlalchemy import func as sa_func, select
+from sqlalchemy import select
 
 from app.database import async_session
 from app.deps import validate_sec_code
@@ -296,116 +294,6 @@ def _parse_int(v: str | None) -> int | None:
     return int(f)
 
 
-# Realistic reference data for major Japanese stocks.
-# {ticker: (name, approx_price_yen, shares_outstanding, pbr)}
-#
-# IMPORTANT: shares_outstanding (発行済株式数) is the most stable number
-# and critical for market cap estimation.  It only changes on stock splits,
-# share buybacks, or new issuance (quarterly at most).  Price and PBR are
-# approximate snapshots — in production, live data is fetched from stooq
-# and Yahoo Finance.  This table is used ONLY when all external APIs are
-# unreachable (e.g. sandboxed environments).
-#
-# Last verified: 2026-02 from Yahoo Finance Japan / Nikkei / IR Bank
-_KNOWN_STOCKS: dict[str, tuple[str, int, int, float]] = {
-    # --- Mega-cap ---
-    "7203": ("トヨタ自動車", 3635, 15_794_987_460, 1.26),
-    "6758": ("ソニーグループ", 3475, 6_149_810_645, 2.54),
-    "6861": ("キーエンス", 59880, 243_207_684, 4.06),
-    "8306": ("三菱UFJフィナンシャル・グループ", 3009, 11_867_710_920, 1.55),
-    "9984": ("ソフトバンクグループ", 4462, 1_428_000_000, 2.83),
-    "8035": ("東京エレクトロン", 43960, 471_632_733, 9.95),
-    "6501": ("日立製作所", 4930, 4_581_560_985, 3.50),
-    "7974": ("任天堂", 8587, 1_298_690_000, 3.36),
-    # --- Large-cap ---
-    "6098": ("リクルートホールディングス", 10950, 1_614_281_000, 7.20),
-    "4063": ("信越化学工業", 5745, 1_984_995_865, 2.36),
-    "6367": ("ダイキン工業", 18550, 293_113_973, 1.83),
-    "7741": ("HOYA", 27545, 338_414_320, 9.02),
-    "6981": ("村田製作所", 3610, 1_963_001_843, 2.55),
-    "8001": ("伊藤忠商事", 2267, 7_924_447_520, 2.37),  # 1:5 split 2026-01
-    "8316": ("三井住友フィナンシャルグループ", 5963, 3_857_407_640, 1.49),
-    "9983": ("ファーストリテイリング", 67410, 318_220_968, 8.31),
-    "9433": ("KDDI", 2616, 4_187_847_474, 2.06),
-    # --- 半導体 ---
-    "6857": ("アドバンテスト", 26000, 732_000_000, 27.43),
-    "6146": ("ディスコ", 58570, 108_447_000, 11.39),
-    "6920": ("レーザーテック", 30300, 94_286_400, 12.49),
-    # --- Mid/Growth ---
-    "4385": ("メルカリ", 3495, 164_970_111, 4.85),
-    "3994": ("マネーフォワード", 4800, 55_930_000, 12.0),
-    "3697": ("SHIFT", 657, 267_500_670, 3.95),  # 株式分割後
-    "4443": ("Sansan", 1132, 126_659_468, 16.29),
-    "4478": ("フリー", 3200, 103_930_000, 10.0),
-    "4384": ("ラクスル", 1700, 54_740_000, 5.0),
-    "4169": ("ENECHANGE", 298, 42_780_192, 2.58),
-    "4165": ("プレイド", 522, 41_260_663, 4.26),
-    # --- 上場廃止銘柄（デモデータ用に保持） ---
-    "9613": ("NTTデータグループ", 4000, 1_402_500_000, 3.04),  # 2025-09 上場廃止
-}
-
-
-def _generate_fallback_data(
-    ticker: str,
-) -> tuple[list[dict], float, str, float, float]:
-    """Generate deterministic demo stock data from the ticker string.
-
-    Returns ``(weekly_prices, current_price, name, market_cap, pbr)``.
-    Uses known stock reference data when available for realistic market caps,
-    otherwise falls back to seed-based generation.
-    """
-    import random as _random
-
-    seed = int(hashlib.md5(ticker.encode()).hexdigest()[:8], 16)
-    rng = _random.Random(seed)
-
-    known = _KNOWN_STOCKS.get(ticker)
-
-    if known:
-        ref_name, ref_price, shares_out, ref_pbr = known
-        base_price = ref_price
-        name = ref_name
-    else:
-        base_price = 500 + (seed % 7500)
-        shares_out = rng.randint(50_000_000, 2_000_000_000)
-        ref_pbr = round(rng.uniform(0.4, 4.0), 2)
-        name = f"銘柄 {ticker}"
-
-    today = date.today()
-    weeks = 52
-    prices: list[dict] = []
-    price = float(base_price)
-
-    for i in range(weeks):
-        d = today - timedelta(weeks=weeks - i)
-        change_pct = rng.gauss(0.002, 0.025)
-        price *= 1 + change_pct
-        price = max(price, 100)
-
-        o = round(price * (1 + rng.gauss(0, 0.008)), 1)
-        c = round(price, 1)
-        h = round(max(o, c) * (1 + abs(rng.gauss(0, 0.012))), 1)
-        low = round(min(o, c) * (1 - abs(rng.gauss(0, 0.012))), 1)
-        vol = rng.randint(500_000, 20_000_000)
-
-        prices.append(
-            {
-                "date": d.isoformat(),
-                "open": o,
-                "high": h,
-                "low": low,
-                "close": c,
-                "volume": vol,
-            }
-        )
-
-    current_price = prices[-1]["close"]
-    market_cap = current_price * shares_out
-    pbr = ref_pbr
-
-    return prices, current_price, name, market_cap, pbr
-
-
 # ---------------------------------------------------------------------------
 # External API fetchers
 # ---------------------------------------------------------------------------
@@ -674,11 +562,11 @@ async def _fetch_google_finance(
     client: httpx.AsyncClient,
     ticker: str,
 ) -> dict:
-    """Scrape current stock price from Google Finance page.
+    """Scrape current stock price and market cap from Google Finance page.
 
     Google Finance has no public REST API, but stock data is embedded in
     the HTML page.  This scraper uses multiple regex strategies to extract
-    the current price — from most to least reliable.
+    the current price and market cap — from most to least reliable.
 
     URL format: https://www.google.com/finance/quote/{TICKER}:TYO
     """
@@ -751,9 +639,39 @@ async def _fetch_google_finance(
             except ValueError:
                 continue
 
+    # --- Market cap extraction ---
+    # Google Finance shows 時価総額 (Market cap) in the stats section.
+    # Patterns: "時価総額" followed by a value with unit (兆/億), or
+    # "Market cap" followed by a numeric value with T/B suffix.
+    _oku = 100_000_000  # 億
+    _cho = 1_000_000_000_000  # 兆
+    for mc_pattern in [
+        # Japanese: "X.XX兆 JPY" or "X,XXX億 JPY"
+        r'時価総額[^<]*?([\d,]+(?:\.\d+)?)\s*兆',
+        r'時価総額[^<]*?([\d,]+(?:\.\d+)?)\s*億',
+        # English: "XX.XXT JPY" (T=trillion) or "XX.XXB JPY" (B=billion)
+        r'Market cap[^<]*?([\d,.]+)\s*T\b',
+        r'Market cap[^<]*?([\d,.]+)\s*B\b',
+    ]:
+        mc_match = re.search(mc_pattern, html, re.IGNORECASE)
+        if mc_match:
+            try:
+                mc_val = float(mc_match.group(1).replace(",", ""))
+                if "兆" in mc_pattern or "T\\b" in mc_pattern:
+                    result["market_cap"] = mc_val * _cho
+                elif "億" in mc_pattern:
+                    result["market_cap"] = mc_val * _oku
+                else:
+                    # B = billion = 10億
+                    result["market_cap"] = mc_val * 1_000_000_000
+                break
+            except ValueError:
+                continue
+
     if result.get("current_price"):
         logger.debug(
-            "Google Finance price for %s: %s", ticker, result["current_price"]
+            "Google Finance price for %s: %s (market_cap=%s)",
+            ticker, result["current_price"], result.get("market_cap"),
         )
 
     return result
@@ -894,7 +812,6 @@ async def get_stock_data(sec_code: str) -> dict:
       1. EDINET Filing DB (大量保有報告書のXBRLから抽出)
       2. EDINET code list (金融庁コードマスター)
       3. External APIs (Google Finance / stooq / Yahoo / Kabutan)
-      4. _KNOWN_STOCKS fallback (ハードコード, 最終手段)
     """
     global _external_apis_failed_at
     ticker = validate_sec_code(sec_code)
@@ -999,6 +916,7 @@ async def get_stock_data(sec_code: str) -> dict:
             market_cap = (
                 yahoo_summary.get("market_cap")
                 or yahoo_meta.get("market_cap")
+                or google_data.get("market_cap")
                 or kabutan_data.get("market_cap")
             )
 
@@ -1014,28 +932,19 @@ async def get_stock_data(sec_code: str) -> dict:
         else:
             _external_apis_failed_at = 0.0  # APIs working again
 
-    # --- Step 3: Fallback when no live data available ---
+    # --- Step 3: Collect enriched data from Yahoo Finance ---
     extra: dict = {}
-    if not weekly_prices and current_price is None:
-        weekly_prices, current_price, fallback_name, market_cap, pbr = (
-            _generate_fallback_data(ticker)
-        )
-        price_source = "fallback"
-        if not api_name:
-            api_name = fallback_name
-    else:
-        # Collect enriched data from Yahoo Finance
-        if yahoo_summary:
-            for key in (
-                "per", "dividend_yield", "volume",
-                "week52_high", "week52_low",
-                "price_change", "price_change_pct", "previous_close",
-            ):
-                val = yahoo_summary.get(key)
-                if val is not None:
-                    extra[key] = val
+    if yahoo_summary:
+        for key in (
+            "per", "dividend_yield", "volume",
+            "week52_high", "week52_low",
+            "price_change", "price_change_pct", "previous_close",
+        ):
+            val = yahoo_summary.get(key)
+            if val is not None:
+                extra[key] = val
 
-    # --- Step 4: Apply name priority (金融庁 > API > fallback) ---
+    # --- Step 4: Apply name priority (金融庁 > API) ---
     name = edinet_name or api_name
 
     result: dict = {

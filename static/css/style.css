@@ -1159,6 +1159,27 @@ body {
     color: var(--red);
 }
 
+.detail-section-header {
+    font-size: var(--font-size-sm);
+    font-weight: 700;
+    color: var(--cyan);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+/* XBRL pending indicator */
+.xbrl-pending {
+    color: var(--amber-dim);
+    font-size: var(--font-size-sm);
+    font-style: italic;
+    animation: xbrl-pulse 2s ease-in-out infinite;
+}
+
+@keyframes xbrl-pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+}
+
 /* Modal Ratio Gauge */
 .modal-ratio-section {
     background: linear-gradient(135deg, rgba(22, 22, 40, 0.8) 0%, rgba(26, 26, 42, 0.6) 100%);
@@ -1934,16 +1955,6 @@ body {
 .date-fetch-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-}
-
-.date-export-btn {
-    color: var(--green);
-    border-color: var(--green-dim);
-}
-
-.date-export-btn:hover {
-    background: var(--green-dim);
-    color: #fff;
 }
 
 .date-picker {

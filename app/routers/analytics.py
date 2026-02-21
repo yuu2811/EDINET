@@ -3,8 +3,7 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Query
-from fastapi.responses import JSONResponse
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import desc, func, select
 
 from app.deps import get_async_session, normalize_sec_code
 from app.models import Filing
@@ -54,215 +53,7 @@ def _period_start_date(period: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# 1. Filer Profile
-# ---------------------------------------------------------------------------
-
-@router.get("/filer/{edinet_code}")
-async def filer_profile(edinet_code: str) -> dict:
-    """Return a filer's full history and analytics."""
-    async with get_async_session()() as session:
-        # Total filings for this filer
-        total_result = await session.execute(
-            select(func.count(Filing.id)).where(Filing.edinet_code == edinet_code)
-        )
-        total_filings = total_result.scalar() or 0
-
-        if total_filings == 0:
-            return JSONResponse(
-                {"error": "No filings found for this filer"},
-                status_code=404,
-            )
-
-        # Filer name from most recent filing
-        name_result = await session.execute(
-            select(Filing.filer_name)
-            .where(Filing.edinet_code == edinet_code)
-            .order_by(desc(Filing.submit_date_time))
-            .limit(1)
-        )
-        filer_name = name_result.scalar()
-
-        # Recent 20 filings
-        recent_result = await session.execute(
-            select(Filing)
-            .where(Filing.edinet_code == edinet_code)
-            .order_by(desc(Filing.submit_date_time), desc(Filing.id))
-            .limit(20)
-        )
-        recent_filings = [f.to_dict() for f in recent_result.scalars().all()]
-
-        # Target companies: aggregated by target_sec_code
-        # Use a subquery with row_number to get the latest filing per target
-        target_q = (
-            select(
-                Filing.target_company_name,
-                Filing.target_sec_code,
-                Filing.holding_ratio,
-                func.count(Filing.id).over(
-                    partition_by=func.coalesce(Filing.target_sec_code, Filing.target_company_name)
-                ).label("filing_count"),
-                func.row_number().over(
-                    partition_by=func.coalesce(Filing.target_sec_code, Filing.target_company_name),
-                    order_by=desc(Filing.submit_date_time),
-                ).label("rn"),
-            )
-            .where(Filing.edinet_code == edinet_code)
-            .where(or_(Filing.target_sec_code.isnot(None), Filing.target_company_name.isnot(None)))
-        )
-        target_sub = target_q.subquery()
-        target_result = await session.execute(
-            select(target_sub).where(target_sub.c.rn == 1)
-        )
-        target_companies = []
-        for row in target_result:
-            target_companies.append({
-                "company_name": row.target_company_name,
-                "sec_code": row.target_sec_code,
-                "latest_ratio": row.holding_ratio,
-                "filing_count": row.filing_count,
-            })
-
-        # Activity summary
-        summary_result = await session.execute(
-            select(
-                func.min(Filing.submit_date_time).label("first_filing_date"),
-                func.max(Filing.submit_date_time).label("last_filing_date"),
-                func.avg(Filing.holding_ratio).label("avg_holding_ratio"),
-            ).where(Filing.edinet_code == edinet_code)
-        )
-        summary_row = summary_result.one_or_none()
-        avg_ratio = summary_row.avg_holding_ratio if summary_row else None
-        activity_summary = {
-            "first_filing_date": summary_row.first_filing_date if summary_row else None,
-            "last_filing_date": summary_row.last_filing_date if summary_row else None,
-            "avg_holding_ratio": round(avg_ratio, 2) if avg_ratio is not None else None,
-        }
-
-        return {
-            "filer_name": filer_name,
-            "edinet_code": edinet_code,
-            "total_filings": total_filings,
-            "recent_filings": recent_filings,
-            "target_companies": target_companies,
-            "activity_summary": activity_summary,
-        }
-
-
-# ---------------------------------------------------------------------------
-# 2. Target Company Profile
-# ---------------------------------------------------------------------------
-
-@router.get("/company/{sec_code}")
-async def company_profile(sec_code: str) -> dict:
-    """Return all filing analytics targeting a specific company."""
-    async with get_async_session()() as session:
-        # Match on target_sec_code or sec_code (both the raw value and
-        # common variants with/without trailing 0)
-        code_variants = [sec_code]
-        # 5-digit EDINET codes have a trailing check digit — strip it
-        if len(sec_code) == 5:
-            code_variants.append(sec_code[:4])
-        if len(sec_code) == 4:
-            code_variants.append(sec_code + "0")
-
-        code_filter = or_(
-            Filing.target_sec_code.in_(code_variants),
-            Filing.sec_code.in_(code_variants),
-        )
-
-        # Total filings count
-        total_result = await session.execute(
-            select(func.count(Filing.id)).where(code_filter)
-        )
-        total_filings = total_result.scalar() or 0
-
-        if total_filings == 0:
-            return JSONResponse(
-                {"error": "No filings found for this securities code"},
-                status_code=404,
-            )
-
-        # Company name from latest filing
-        name_result = await session.execute(
-            select(Filing.target_company_name, Filing.target_sec_code)
-            .where(code_filter)
-            .order_by(desc(Filing.submit_date_time))
-            .limit(1)
-        )
-        name_row = name_result.one_or_none()
-        company_name = name_row.target_company_name if name_row else None
-        normalized_sec = (normalize_sec_code(name_row.target_sec_code) if name_row else None) or sec_code
-
-        # Major holders: latest filing per filer
-        holder_q = (
-            select(
-                Filing.filer_name,
-                Filing.edinet_code,
-                Filing.holding_ratio,
-                Filing.submit_date_time,
-                func.row_number().over(
-                    partition_by=Filing.edinet_code,
-                    order_by=desc(Filing.submit_date_time),
-                ).label("rn"),
-            )
-            .where(code_filter)
-            .where(Filing.edinet_code.isnot(None))
-        )
-        holder_sub = holder_q.subquery()
-        holder_result = await session.execute(
-            select(holder_sub)
-            .where(holder_sub.c.rn == 1)
-            .order_by(desc(holder_sub.c.holding_ratio))
-        )
-        major_holders = []
-        for row in holder_result:
-            major_holders.append({
-                "filer_name": row.filer_name,
-                "edinet_code": row.edinet_code,
-                "latest_ratio": row.holding_ratio,
-                "latest_date": row.submit_date_time,
-            })
-
-        # Recent 20 filings
-        recent_result = await session.execute(
-            select(Filing)
-            .where(code_filter)
-            .order_by(desc(Filing.submit_date_time), desc(Filing.id))
-            .limit(20)
-        )
-        recent_filings = [f.to_dict() for f in recent_result.scalars().all()]
-
-        # Holding history: chronological for charting
-        history_result = await session.execute(
-            select(
-                Filing.submit_date_time,
-                Filing.holding_ratio,
-                Filing.filer_name,
-            )
-            .where(code_filter)
-            .where(Filing.holding_ratio.isnot(None))
-            .order_by(Filing.submit_date_time)
-        )
-        holding_history = []
-        for row in history_result:
-            holding_history.append({
-                "date": row.submit_date_time,
-                "ratio": row.holding_ratio,
-                "filer_name": row.filer_name,
-            })
-
-        return {
-            "company_name": company_name,
-            "sec_code": normalized_sec,
-            "total_filings": total_filings,
-            "major_holders": major_holders,
-            "recent_filings": recent_filings,
-            "holding_history": holding_history,
-        }
-
-
-# ---------------------------------------------------------------------------
-# 3. Activity Rankings
+# Activity Rankings
 # ---------------------------------------------------------------------------
 
 @router.get("/rankings")
@@ -373,7 +164,7 @@ async def activity_rankings(
 
 
 # ---------------------------------------------------------------------------
-# 4. Market Movement Summary
+# Market Movement Summary
 # ---------------------------------------------------------------------------
 
 @router.get("/movements")
@@ -532,7 +323,7 @@ async def market_movements(
 
 
 # ---------------------------------------------------------------------------
-# 5. Sector Breakdown
+# Sector Breakdown
 # ---------------------------------------------------------------------------
 
 @router.get("/sectors")

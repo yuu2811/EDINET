@@ -714,6 +714,8 @@ function renderFeedTable(container, filings) {
         if (f.holding_ratio != null) {
             const cls = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : '';
             ratioHtml = `<span class="${cls}">${f.holding_ratio.toFixed(2)}%</span>`;
+        } else if (f.xbrl_flag && !f.xbrl_parsed) {
+            ratioHtml = '<span class="xbrl-pending">取得中...</span>';
         }
 
         // Change
@@ -847,6 +849,8 @@ function createFeedCard(f) {
             ${prevHtml}
             ${barHtml}
         </div>`;
+    } else if (f.xbrl_flag && !f.xbrl_parsed) {
+        ratioHtml = '<div class="ratio-display neutral"><span class="card-ratio xbrl-pending">取得中...</span></div>';
     } else {
         ratioHtml = '<div class="ratio-display neutral"><span class="card-ratio neutral">-</span></div>';
     }
@@ -940,7 +944,11 @@ function createMobileFeedCard(f) {
 
     // Ratio metrics
     const ratioClass = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : 'neutral';
-    const ratioVal = f.holding_ratio != null ? `${f.holding_ratio.toFixed(2)}%` : '<span class="text-dim" style="font-size:11px">割合未取得</span>';
+    const ratioVal = f.holding_ratio != null
+        ? `${f.holding_ratio.toFixed(2)}%`
+        : (f.xbrl_flag && !f.xbrl_parsed)
+            ? '<span class="xbrl-pending" style="font-size:11px">取得中...</span>'
+            : '<span class="text-dim" style="font-size:11px">割合未取得</span>';
 
     let changeHtml = '';
     if (f.ratio_change != null && f.ratio_change !== 0) {
@@ -1851,10 +1859,15 @@ function openModal(filing) {
         ['書類種別', filing.doc_description || '-'],
         ['提出日時', filing.submit_date_time || '-'],
         ['提出者', filing.filer_name || '-'],
+    ];
+    if (filing.holder_name && filing.holder_name !== filing.filer_name) {
+        rows.push(['報告者 (XBRL)', filing.holder_name]);
+    }
+    rows.push(
         ['EDINET コード', filing.edinet_code || '-'],
         ['対象会社', filing.target_company_name || extractTargetFromDescription(filing.doc_description) || '-'],
         ['対象証券コード', filing.target_sec_code || filing.sec_code || '-'],
-    ];
+    );
 
     // Visual ratio gauge section
     let ratioGaugeHtml = '';
@@ -1873,7 +1886,7 @@ function openModal(filing) {
         ratioGaugeHtml = `
             <div class="modal-ratio-section">
                 <div class="modal-ratio-header">
-                    <span class="modal-ratio-value ${ratioClass}">${filing.holding_ratio.toFixed(2)}%</span>
+                    <span class="modal-ratio-value ${ratioClass}">${filing.holding_ratio.toFixed(3)}%</span>
                     ${changeText}
                 </div>
                 <div class="modal-ratio-gauge">
@@ -1881,7 +1894,7 @@ function openModal(filing) {
                     <div class="gauge-bar gauge-curr ${ratioClass}" style="width: ${currWidth}%"></div>
                     <div class="gauge-labels">
                         ${filing.previous_holding_ratio != null ?
-                            `<span class="gauge-label" style="left: ${prevWidth}%">前回 ${filing.previous_holding_ratio.toFixed(2)}%</span>` : ''}
+                            `<span class="gauge-label" style="left: ${prevWidth}%">前回 ${filing.previous_holding_ratio.toFixed(3)}%</span>` : ''}
                     </div>
                 </div>
                 <div class="modal-ratio-footer">
@@ -1891,13 +1904,25 @@ function openModal(filing) {
                 </div>
             </div>
         `;
+    } else if (filing.xbrl_flag && !filing.xbrl_parsed) {
+        ratioGaugeHtml = `
+            <div class="modal-ratio-section">
+                <div class="modal-ratio-header">
+                    <span class="xbrl-pending">XBRL データ取得中...</span>
+                </div>
+            </div>
+        `;
     }
 
-    if (filing.shares_held != null) {
-        rows.push(['保有株数', filing.shares_held.toLocaleString()]);
-    }
-    if (filing.purpose_of_holding) {
-        rows.push(['保有目的', filing.purpose_of_holding]);
+    // XBRL holding detail section
+    if (filing.shares_held != null || filing.purpose_of_holding) {
+        rows.push(['', { html: '<span class="detail-section-header">保有情報 (XBRL)</span>' }]);
+        if (filing.shares_held != null) {
+            rows.push(['保有株数', filing.shares_held.toLocaleString() + ' 株']);
+        }
+        if (filing.purpose_of_holding) {
+            rows.push(['保有目的', filing.purpose_of_holding]);
+        }
     }
 
     // Links
@@ -2544,10 +2569,6 @@ function initDateNav() {
         }
     });
 
-    const exportBtn = document.getElementById('date-export');
-    if (exportBtn) {
-        exportBtn.addEventListener('click', () => exportFilingsCSV());
-    }
 }
 
 function navigateDate(days) {
@@ -2561,52 +2582,6 @@ function navigateDate(days) {
     document.getElementById('date-picker').value = state.selectedDate;
     loadFilings();
     loadStats();
-}
-
-function csvEscape(val) {
-    const s = String(val);
-    if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
-        return '"' + s.replace(/"/g, '""') + '"';
-    }
-    return s;
-}
-
-function exportFilingsCSV() {
-    if (state.filings.length === 0) return;
-
-    const headers = [
-        '提出日時', '提出者', '対象会社', '証券コード',
-        '保有割合(%)', '前回保有割合(%)', '変動(%)',
-        '保有株数', '書類種別', '訂正', 'EDINET URL'
-    ];
-
-    const rows = state.filings.map(f => [
-        f.submit_date_time || '',
-        f.holder_name || f.filer_name || '',
-        f.target_company_name || '',
-        f.target_sec_code || f.sec_code || '',
-        f.holding_ratio != null ? f.holding_ratio.toFixed(2) : '',
-        f.previous_holding_ratio != null ? f.previous_holding_ratio.toFixed(2) : '',
-        f.ratio_change != null ? f.ratio_change.toFixed(2) : '',
-        f.shares_held != null ? String(f.shares_held) : '',
-        f.doc_description || '',
-        f.is_amendment ? 'Yes' : 'No',
-        f.edinet_url || (f.pdf_url ? (location.origin + f.pdf_url) : '')
-    ]);
-
-    const bom = '\uFEFF';
-    const csvContent = bom + [
-        headers.map(csvEscape).join(','),
-        ...rows.map(r => r.map(csvEscape).join(','))
-    ].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `edinet_filings_${state.selectedDate}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
 }
 
 // ---------------------------------------------------------------------------
