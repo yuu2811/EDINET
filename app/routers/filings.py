@@ -108,6 +108,42 @@ def _make_pdf_response(content: bytes, doc_id: str) -> Response:
     )
 
 
+@documents_router.post("/{doc_id}/retry-xbrl")
+async def retry_xbrl_enrichment(doc_id: str) -> dict:
+    """Re-download and re-parse XBRL for a specific filing."""
+    from app.edinet import edinet_client
+    from app.deps import get_async_session
+    from app.models import Filing as FilingModel
+    from sqlalchemy import select as sa_select
+
+    if not doc_id.isalnum():
+        return JSONResponse({"error": "Invalid document ID"}, status_code=400)
+
+    async with get_async_session()() as session:
+        result = await session.execute(
+            sa_select(FilingModel).where(FilingModel.doc_id == doc_id)
+        )
+        filing = result.scalar_one_or_none()
+        if not filing:
+            return {"success": False, "error": "書類が見つかりません"}
+
+        zip_content = await edinet_client.download_xbrl(doc_id)
+        if not zip_content:
+            return {"success": False, "error": "XBRLダウンロード失敗"}
+
+        data = edinet_client.parse_xbrl_for_holding_data(zip_content)
+        if not any(v is not None for v in data.values()):
+            return {"success": False, "error": "XBRLからデータを抽出できません"}
+
+        for field, value in data.items():
+            if value is not None:
+                setattr(filing, field, value)
+        filing.xbrl_parsed = True
+        await session.commit()
+
+        return {"success": True, "data": data}
+
+
 @documents_router.get("/{doc_id}/debug-xbrl")
 async def debug_xbrl(doc_id: str) -> dict:
     """Diagnostic endpoint: download XBRL and show parsing details.

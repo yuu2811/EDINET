@@ -1850,6 +1850,34 @@ function hideStockView() {
 // Modal
 // ---------------------------------------------------------------------------
 
+async function retryXbrl(docId) {
+    const btn = document.querySelector('.btn-retry-xbrl');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '取得中...';
+    }
+    try {
+        const resp = await fetch(`/api/documents/${docId}/retry-xbrl`, { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) {
+            // Refresh filing data and re-open modal
+            const freshResp = await fetch(`/api/filings/${docId}`);
+            if (freshResp.ok) {
+                const freshFiling = await freshResp.json();
+                // Update in state
+                const idx = state.filings.findIndex(f => f.doc_id === docId);
+                if (idx >= 0) state.filings[idx] = freshFiling;
+                openModal(freshFiling);
+            }
+        } else {
+            if (btn) btn.textContent = data.error || '取得失敗';
+        }
+    } catch (e) {
+        console.error('XBRL retry failed:', e);
+        if (btn) btn.textContent = '取得失敗';
+    }
+}
+
 function openModal(filing) {
     currentModalDocId = filing.doc_id;
     const body = document.getElementById('modal-body');
@@ -1908,7 +1936,8 @@ function openModal(filing) {
         ratioGaugeHtml = `
             <div class="modal-ratio-section">
                 <div class="modal-ratio-header">
-                    <span class="xbrl-pending">XBRL データ取得中...</span>
+                    <span class="xbrl-pending-label">XBRL データ未取得</span>
+                    <button class="btn-retry-xbrl" onclick="retryXbrl('${escapeHtml(filing.doc_id)}')">再取得</button>
                 </div>
             </div>
         `;
@@ -1916,7 +1945,6 @@ function openModal(filing) {
 
     // XBRL holding detail section
     if (filing.shares_held != null || filing.purpose_of_holding) {
-        rows.push(['', { html: '<span class="detail-section-header">保有情報 (XBRL)</span>' }]);
         if (filing.shares_held != null) {
             rows.push(['保有株数', filing.shares_held.toLocaleString() + ' 株']);
         }
