@@ -501,6 +501,10 @@ class EdinetClient:
         Inline XBRL embeds structured data in XHTML using ix: namespace
         tags.  Numeric values use <ix:nonFraction name="ns:ElementName">
         and text values use <ix:nonNumeric name="ns:ElementName">.
+
+        Strategy:
+        1. Try XML parser (preserves namespaces) — works for well-formed XHTML
+        2. Fall back to regex extraction — works even when parsers fail
         """
         result = {
             "holding_ratio": None,
@@ -512,52 +516,76 @@ class EdinetClient:
             "purpose_of_holding": None,
         }
 
+        # --- Strategy 1: XML parser (namespace-aware) ---
         try:
-            # Use HTML parser for robustness (inline XBRL is XHTML but may
-            # not be strictly well-formed XML)
-            parser = etree.HTMLParser(encoding="utf-8")
-            tree = etree.fromstring(htm_bytes, parser)
+            tree = etree.fromstring(htm_bytes)
+            result = self._extract_inline_via_xml(tree)
+            if result["holding_ratio"] is not None:
+                logger.debug("Inline XBRL: extracted via XML parser")
+                return result
+        except etree.XMLSyntaxError:
+            logger.debug("Inline XBRL: XML parse failed, trying regex")
         except Exception as e:
-            logger.warning("Inline XBRL parse error: %s", e)
-            return result
+            logger.debug("Inline XBRL: XML parse error: %s", e)
 
-        if tree is None:
-            return result
+        # --- Strategy 2: Regex extraction (robust fallback) ---
+        result2 = self._extract_inline_via_regex(htm_bytes)
+        # Merge: prefer XML results, fill gaps with regex
+        for key in result:
+            if result[key] is None and result2[key] is not None:
+                result[key] = result2[key]
 
-        # Find all ix:nonFraction (numeric) and ix:nonNumeric (text) elements.
-        # HTMLParser lowercases tag names, so look for both casings.
-        # We search by iterating all elements and checking tag/attributes.
-        all_elements = tree.iter()
+        if result["holding_ratio"] is not None:
+            logger.debug("Inline XBRL: extracted via regex")
+        else:
+            logger.warning("Inline XBRL: no holding_ratio found by any method")
 
-        for elem in all_elements:
+        return result
+
+    def _extract_inline_via_xml(self, tree) -> dict:
+        """Extract inline XBRL data using namespace-aware XML tree."""
+        result = {
+            "holding_ratio": None,
+            "previous_holding_ratio": None,
+            "holder_name": None,
+            "target_company_name": None,
+            "target_sec_code": None,
+            "shares_held": None,
+            "purpose_of_holding": None,
+        }
+
+        # Discover the ix namespace URI dynamically from the document
+        nsmap = {}
+        for elem in tree.iter():
+            if hasattr(elem, "nsmap"):
+                nsmap.update(elem.nsmap)
+                break
+
+        ix_uri = nsmap.get("ix", IX_NS)
+
+        # Find ix:nonFraction and ix:nonNumeric elements
+        for elem in tree.iter():
             tag = elem.tag if isinstance(elem.tag, str) else ""
-            # HTMLParser may strip namespaces; check local tag name
-            local_tag = tag.rsplit("}", 1)[-1].lower() if "}" in tag else tag.lower()
 
-            # Match ix:nonfraction / ix:nonnumeric (lowered by HTML parser)
-            is_nonfraction = local_tag in ("nonfraction", "ix:nonfraction")
-            is_nonnumeric = local_tag in ("nonnumeric", "ix:nonnumeric")
+            is_nonfraction = tag == f"{{{ix_uri}}}nonFraction"
+            is_nonnumeric = tag == f"{{{ix_uri}}}nonNumeric"
 
             if not is_nonfraction and not is_nonnumeric:
                 continue
 
             name_attr = elem.get("name", "")
-            context_ref = elem.get("contextref", "") or elem.get("contextRef", "")
-            # Get full text content (including nested spans)
+            context_ref = elem.get("contextRef", "")
             text = "".join(elem.itertext()).strip()
 
             if not name_attr or not text:
                 continue
 
-            # Extract local element name from "prefix:ElementName"
             local_name = name_attr.split(":")[-1] if ":" in name_attr else name_attr
 
-            # --- Holding ratio ---
             if is_nonfraction and _matches_ratio_pattern(local_name):
                 try:
                     val = _parse_ix_number(elem, text)
                     if val is not None:
-                        # Auto-detect decimal vs percentage
                         if 0 < val < 1.0:
                             val = round(val * 100, 4)
                         if "Prior" in context_ref or "Previous" in context_ref:
@@ -569,19 +597,16 @@ class EdinetClient:
                 except (ValueError, AttributeError):
                     continue
 
-            # --- Shares held ---
             elif is_nonfraction and _matches_shares_pattern(local_name):
                 try:
                     val = _parse_ix_number(elem, text)
                     if val is not None:
-                        ival = int(val)
                         if "Prior" not in context_ref and "Previous" not in context_ref:
                             if result["shares_held"] is None:
-                                result["shares_held"] = ival
+                                result["shares_held"] = int(val)
                 except (ValueError, AttributeError):
                     continue
 
-            # --- Text fields (nonNumeric) ---
             elif is_nonnumeric:
                 if _matches_holder_pattern(local_name):
                     if not result["holder_name"]:
@@ -596,8 +621,109 @@ class EdinetClient:
                     if not result["purpose_of_holding"]:
                         result["purpose_of_holding"] = text
 
-        logger.debug("Extracted inline XBRL data: %s", result)
         return result
+
+    def _extract_inline_via_regex(self, htm_bytes: bytes) -> dict:
+        """Extract inline XBRL data using regex (fallback when parsers fail)."""
+        result = {
+            "holding_ratio": None,
+            "previous_holding_ratio": None,
+            "holder_name": None,
+            "target_company_name": None,
+            "target_sec_code": None,
+            "shares_held": None,
+            "purpose_of_holding": None,
+        }
+
+        text = htm_bytes.decode("utf-8", errors="replace")
+
+        # Match ix:nonFraction elements with name and contextRef
+        # Pattern: <ix:nonFraction ... name="prefix:ElementName" ... contextRef="xxx" ...>value</ix:nonFraction>
+        nonfrac_pat = re.compile(
+            r'<[^>]*?:nonFraction[^>]*?'
+            r'name=["\']([^"\']+)["\'][^>]*?'
+            r'contextRef=["\']([^"\']+)["\']'
+            r'[^>]*?>(.*?)</[^>]*?:nonFraction>',
+            re.DOTALL | re.IGNORECASE,
+        )
+        # Also match when contextRef comes before name
+        nonfrac_pat2 = re.compile(
+            r'<[^>]*?:nonFraction[^>]*?'
+            r'contextRef=["\']([^"\']+)["\'][^>]*?'
+            r'name=["\']([^"\']+)["\']'
+            r'[^>]*?>(.*?)</[^>]*?:nonFraction>',
+            re.DOTALL | re.IGNORECASE,
+        )
+
+        for m in nonfrac_pat.finditer(text):
+            name_attr, ctx, val_text = m.group(1), m.group(2), m.group(3)
+            self._apply_nonfraction_regex(result, name_attr, ctx, val_text)
+
+        for m in nonfrac_pat2.finditer(text):
+            ctx, name_attr, val_text = m.group(1), m.group(2), m.group(3)
+            self._apply_nonfraction_regex(result, name_attr, ctx, val_text)
+
+        # Match ix:nonNumeric elements
+        nonnumeric_pat = re.compile(
+            r'<[^>]*?:nonNumeric[^>]*?'
+            r'name=["\']([^"\']+)["\']'
+            r'[^>]*?>(.*?)</[^>]*?:nonNumeric>',
+            re.DOTALL | re.IGNORECASE,
+        )
+
+        for m in nonnumeric_pat.finditer(text):
+            name_attr, val_text = m.group(1), m.group(2)
+            # Strip HTML tags from value
+            clean_val = re.sub(r'<[^>]+>', '', val_text).strip()
+            if not clean_val:
+                continue
+
+            local_name = name_attr.split(":")[-1]
+
+            if _matches_holder_pattern(local_name):
+                if not result["holder_name"]:
+                    result["holder_name"] = clean_val
+            elif _matches_target_pattern(local_name):
+                if not result["target_company_name"]:
+                    result["target_company_name"] = clean_val
+            elif _matches_sec_code_pattern(local_name):
+                if not result["target_sec_code"]:
+                    result["target_sec_code"] = clean_val
+            elif _matches_purpose_pattern(local_name):
+                if not result["purpose_of_holding"]:
+                    result["purpose_of_holding"] = clean_val
+
+        return result
+
+    def _apply_nonfraction_regex(self, result: dict, name_attr: str, ctx: str, val_text: str):
+        """Apply a regex-matched nonFraction value to the result dict."""
+        local_name = name_attr.split(":")[-1]
+        # Strip HTML tags
+        clean_val = re.sub(r'<[^>]+>', '', val_text).strip()
+        # Extract scale from the tag (regex can't easily get attributes, assume no scale)
+        cleaned = re.sub(r'[,、\s　株%％]', '', clean_val)
+        if not cleaned or cleaned in ('-', '―'):
+            return
+
+        try:
+            val = float(cleaned)
+        except ValueError:
+            return
+
+        if _matches_ratio_pattern(local_name):
+            if 0 < val < 1.0:
+                val = round(val * 100, 4)
+            if "Prior" in ctx or "Previous" in ctx:
+                if result["previous_holding_ratio"] is None:
+                    result["previous_holding_ratio"] = val
+            else:
+                if result["holding_ratio"] is None:
+                    result["holding_ratio"] = val
+
+        elif _matches_shares_pattern(local_name):
+            if "Prior" not in ctx and "Previous" not in ctx:
+                if result["shares_held"] is None:
+                    result["shares_held"] = int(val)
 
     def diagnose_xbrl(self, zip_content: bytes) -> dict:
         """Diagnostic: return detailed info about XBRL ZIP contents and parsing.

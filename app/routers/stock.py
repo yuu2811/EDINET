@@ -646,14 +646,14 @@ async def _fetch_google_finance(
     _oku = 100_000_000  # 億
     _cho = 1_000_000_000_000  # 兆
     for mc_pattern in [
-        # Japanese: "X.XX兆 JPY" or "X,XXX億 JPY"
-        r'時価総額[^<]*?([\d,]+(?:\.\d+)?)\s*兆',
-        r'時価総額[^<]*?([\d,]+(?:\.\d+)?)\s*億',
+        # Japanese: "X.XX兆 JPY" or "X,XXX億 JPY" (allow tags between)
+        r'時価総額.*?([\d,]+(?:\.\d+)?)\s*兆',
+        r'時価総額.*?([\d,]+(?:\.\d+)?)\s*億',
         # English: "XX.XXT JPY" (T=trillion) or "XX.XXB JPY" (B=billion)
-        r'Market cap[^<]*?([\d,.]+)\s*T\b',
-        r'Market cap[^<]*?([\d,.]+)\s*B\b',
+        r'Market cap.*?([\d,.]+)\s*T\b',
+        r'Market cap.*?([\d,.]+)\s*B\b',
     ]:
-        mc_match = re.search(mc_pattern, html, re.IGNORECASE)
+        mc_match = re.search(mc_pattern, html, re.IGNORECASE | re.DOTALL)
         if mc_match:
             try:
                 mc_val = float(mc_match.group(1).replace(",", ""))
@@ -770,18 +770,23 @@ async def _fetch_kabutan_quote(
                     continue
 
     # Market cap: sometimes shown as "時価総額" followed by a number in 億 or 百万
-    m = re.search(r'時価総額[^<]*?([,\d]+(?:\.\d+)?)\s*(?:百万|億)', html)
-    if m:
-        try:
-            mc_str = m.group(1).replace(",", "")
-            mc_val = float(mc_str)
-            # Check if unit is 百万 (millions) or 億 (100 millions)
-            if "億" in html[m.start():m.end() + 5]:
-                result["market_cap"] = mc_val * 100_000_000
-            else:
-                result["market_cap"] = mc_val * 1_000_000
-        except ValueError:
-            pass
+    # Allow HTML tags between label and value (e.g. </th><td>...)
+    mc_patterns = [
+        r'時価総額.*?([,\d]+(?:\.\d+)?)\s*億',
+        r'時価総額.*?([,\d]+(?:\.\d+)?)\s*百万',
+    ]
+    for mc_pat in mc_patterns:
+        m = re.search(mc_pat, html, re.DOTALL)
+        if m:
+            try:
+                mc_val = float(m.group(1).replace(",", ""))
+                if "億" in mc_pat:
+                    result["market_cap"] = mc_val * 100_000_000
+                else:
+                    result["market_cap"] = mc_val * 1_000_000
+                break
+            except ValueError:
+                continue
 
     if result.get("current_price"):
         logger.debug(
