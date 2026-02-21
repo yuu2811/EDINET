@@ -1220,6 +1220,60 @@ body {
     backdrop-filter: blur(2px);
 }
 
+/* Before/After comparison row */
+.modal-ratio-compare {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.modal-ratio-side {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.modal-ratio-side-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.modal-ratio-side-value {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
+.modal-ratio-side-value.prev {
+    font-size: 20px;
+    color: var(--text-dim);
+}
+
+.modal-ratio-side-value.curr {
+    font-size: 28px;
+    font-weight: 800;
+}
+
+.modal-ratio-side-value.curr.positive { color: var(--green); text-shadow: 0 0 20px rgba(0, 230, 118, 0.2); }
+.modal-ratio-side-value.curr.negative { color: var(--red); text-shadow: 0 0 20px rgba(255, 23, 68, 0.2); }
+.modal-ratio-side-value.curr.neutral  { color: var(--text-secondary); }
+
+.modal-ratio-arrow {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.modal-ratio-arrow.positive { color: var(--green); }
+.modal-ratio-arrow.negative { color: var(--red); }
+.modal-ratio-arrow.neutral  { color: var(--text-dim); }
+
+/* Header (used when no previous ratio) */
 .modal-ratio-header {
     display: flex;
     align-items: baseline;
@@ -1235,7 +1289,14 @@ body {
 
 .modal-ratio-value.positive { color: var(--green); text-shadow: 0 0 20px rgba(0, 230, 118, 0.2); }
 .modal-ratio-value.negative { color: var(--red); text-shadow: 0 0 20px rgba(255, 23, 68, 0.2); }
-.modal-ratio-value.neutral { color: var(--text-secondary); }
+.modal-ratio-value.neutral  { color: var(--text-secondary); }
+
+/* Change badge (centered below compare) */
+.modal-ratio-change-row {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 10px;
+}
 
 .modal-ratio-change {
     font-size: 13px;
@@ -1256,6 +1317,7 @@ body {
     border: 1px solid rgba(255, 23, 68, 0.2);
 }
 
+/* Gauge bar */
 .modal-ratio-gauge {
     position: relative;
     height: 14px;
@@ -1281,13 +1343,55 @@ body {
     z-index: 1;
 }
 
-.gauge-curr {
+.gauge-delta {
     z-index: 2;
+    animation: delta-pulse 2.5s ease-in-out infinite;
+}
+
+.gauge-delta.positive {
+    background: linear-gradient(90deg, rgba(0, 230, 118, 0.2), var(--green));
+    box-shadow: 0 0 10px rgba(0, 230, 118, 0.25);
+}
+
+.gauge-delta.negative {
+    background: linear-gradient(90deg, var(--red), rgba(255, 23, 68, 0.2));
+    box-shadow: 0 0 10px rgba(255, 23, 68, 0.25);
+}
+
+@keyframes delta-pulse {
+    0%, 100% { opacity: 0.5; }
+    50%      { opacity: 1; }
+}
+
+.gauge-curr {
+    z-index: 3;
 }
 
 .gauge-curr.positive { background: linear-gradient(90deg, var(--green-dim) 0%, var(--green) 100%); box-shadow: 0 0 8px rgba(0, 230, 118, 0.3); }
 .gauge-curr.negative { background: linear-gradient(90deg, var(--red-dim) 0%, var(--red) 100%); box-shadow: 0 0 8px rgba(255, 23, 68, 0.3); }
-.gauge-curr.neutral { background: var(--text-secondary); }
+.gauge-curr.neutral  { background: var(--text-secondary); }
+
+/* 5% threshold marker */
+.gauge-threshold {
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    width: 1px;
+    border-left: 1px dashed rgba(255, 255, 255, 0.25);
+    z-index: 10;
+    pointer-events: none;
+}
+
+.gauge-threshold-label {
+    position: absolute;
+    top: -14px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 8px;
+    color: rgba(255, 255, 255, 0.3);
+    white-space: nowrap;
+    font-family: var(--font-ui);
+}
 
 .gauge-labels {
     position: absolute;
@@ -2023,10 +2127,11 @@ body {
    Ratio Display (improved increase/decrease visibility)
    ========================================================================== */
 
+/* --- Ratio Display: Flow Layout --- */
 .ratio-display {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
 }
 
 .ratio-display.positive {
@@ -2044,12 +2149,53 @@ body {
     padding-left: 8px;
 }
 
-.ratio-main-row {
+/* Flow row: prev → curr  [change pill] */
+.ratio-flow {
     display: flex;
-    align-items: center;
-    gap: 8px;
+    align-items: baseline;
+    gap: 4px;
+    flex-wrap: wrap;
 }
 
+.ratio-flow-prev {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+
+.ratio-flow-arrow {
+    font-size: 11px;
+    font-weight: 700;
+    margin: 0 1px;
+}
+
+.ratio-flow-arrow.positive { color: var(--green); }
+.ratio-flow-arrow.negative { color: var(--red); }
+.ratio-flow-arrow.neutral  { color: var(--text-dim); }
+
+.ratio-flow-curr {
+    font-size: var(--font-size-base);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+
+.ratio-flow-curr.positive { color: var(--green); }
+.ratio-flow-curr.negative { color: var(--red); }
+.ratio-flow-curr.neutral  { color: var(--text-secondary); }
+
+/* Standalone current ratio (no previous) */
+.card-ratio {
+    font-size: var(--font-size-base);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+
+.card-ratio.positive { color: var(--green); }
+.card-ratio.negative { color: var(--red); }
+.card-ratio.neutral  { color: var(--text-secondary); }
+
+/* Change pill */
 .ratio-change-pill {
     display: inline-flex;
     align-items: center;
@@ -2072,19 +2218,15 @@ body {
     border: 1px solid rgba(255, 23, 68, 0.15);
 }
 
-.ratio-prev {
-    font-size: var(--font-size-xs);
-    color: var(--text-dim);
-}
-
+/* Delta bar: shows prev zone, delta zone, and remaining */
 .ratio-bar-container {
     position: relative;
-    height: 4px;
+    height: 6px;
     background: var(--bg-primary);
-    border-radius: 2px;
+    border-radius: 3px;
     overflow: hidden;
-    margin-top: 2px;
-    max-width: 120px;
+    margin-top: 3px;
+    max-width: 140px;
 }
 
 .ratio-bar {
@@ -2092,30 +2234,46 @@ body {
     top: 0;
     left: 0;
     height: 100%;
-    border-radius: 2px;
-    transition: width 0.3s ease;
+    border-radius: 3px;
+    transition: width 0.5s var(--ease-out);
 }
 
 .ratio-bar-prev {
     background: var(--text-dim);
-    opacity: 0.4;
+    opacity: 0.35;
     z-index: 1;
 }
 
-.ratio-bar-curr {
+.ratio-bar-delta {
     z-index: 2;
+    animation: delta-glow 2s ease-in-out infinite;
 }
 
-.ratio-bar-curr.positive {
-    background: var(--green);
+.ratio-bar-delta.positive {
+    background: linear-gradient(90deg, rgba(0, 230, 118, 0.3), var(--green));
 }
 
-.ratio-bar-curr.negative {
-    background: var(--red);
+.ratio-bar-delta.negative {
+    background: linear-gradient(90deg, var(--red), rgba(255, 23, 68, 0.3));
 }
 
-.ratio-bar-curr.neutral {
-    background: var(--text-dim);
+.ratio-bar-curr {
+    z-index: 3;
+}
+
+.ratio-bar-curr.positive { background: var(--green); }
+.ratio-bar-curr.negative { background: var(--red); }
+.ratio-bar-curr.neutral  { background: var(--text-dim); }
+
+@keyframes delta-glow {
+    0%, 100% { opacity: 0.6; }
+    50%      { opacity: 1; }
+}
+
+/* Legacy: keep .ratio-prev for any remaining uses */
+.ratio-prev {
+    font-size: var(--font-size-xs);
+    color: var(--text-dim);
 }
 
 /* ==========================================================================
