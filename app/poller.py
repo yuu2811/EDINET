@@ -13,7 +13,7 @@ from app.config import settings
 from app.database import async_session
 from app.demo_data import generate_demo_filings
 from app.edinet import edinet_client
-from app.models import Filing
+from app.models import CompanyInfo, Filing
 
 logger = logging.getLogger(__name__)
 
@@ -438,6 +438,108 @@ async def _retry_xbrl_enrichment():
         await session.commit()
 
 
+async def _poll_company_info(target_date: date) -> None:
+    """Fetch 有報/四半期報告書 from EDINET and extract company fundamentals.
+
+    Scans the daily document list for docTypeCodes 120/130/140 and
+    downloads XBRL to extract 発行済株式数 and 純資産.  Results are
+    stored in the CompanyInfo table (upserted by sec_code).
+    """
+    if not settings.EDINET_API_KEY:
+        return
+
+    all_docs = await edinet_client.fetch_all_document_list(target_date)
+    if not all_docs:
+        return
+
+    target_docs = [
+        doc for doc in all_docs
+        if doc.get("docTypeCode") in settings.COMPANY_INFO_DOC_TYPES
+        and doc.get("secCode")  # must have a securities code
+        and doc.get("withdrawalStatus", "0") != "1"  # not withdrawn
+        and doc.get("disclosureStatus", "0") == "0"  # disclosed
+        and doc.get("xbrlFlag") == "1"  # has XBRL data
+    ]
+
+    if not target_docs:
+        return
+
+    logger.info(
+        "Found %d company filings (有報/四半期) for %s",
+        len(target_docs), target_date,
+    )
+
+    updated = 0
+    async with async_session() as session:
+        for i, doc in enumerate(target_docs):
+            sec_code = doc["secCode"]
+            doc_id = doc.get("docID")
+            if not doc_id:
+                continue
+
+            # Rate-limit downloads per EDINET API v2 spec
+            if i > 0:
+                await asyncio.sleep(3.0)
+
+            try:
+                zip_content = await asyncio.wait_for(
+                    edinet_client.download_xbrl(doc_id),
+                    timeout=30.0,
+                )
+                if not zip_content:
+                    continue
+
+                info = edinet_client.parse_xbrl_for_company_info(zip_content)
+                if not info.get("shares_outstanding") and not info.get("net_assets"):
+                    continue
+
+                # Normalise sec_code to 4 digits
+                ticker = sec_code[:4] if len(sec_code) == 5 else sec_code
+
+                # Upsert into CompanyInfo table
+                existing = await session.execute(
+                    select(CompanyInfo).where(CompanyInfo.sec_code == ticker)
+                )
+                company = existing.scalar_one_or_none()
+                if company is None:
+                    company = CompanyInfo(sec_code=ticker)
+                    session.add(company)
+
+                company.edinet_code = doc.get("edinetCode")
+                if info.get("company_name"):
+                    company.company_name = info["company_name"]
+                elif doc.get("filerName"):
+                    company.company_name = doc["filerName"]
+                if info.get("shares_outstanding"):
+                    company.shares_outstanding = info["shares_outstanding"]
+                if info.get("net_assets"):
+                    company.net_assets = info["net_assets"]
+                company.source_doc_id = doc_id
+                company.source_doc_type = doc.get("docTypeCode")
+                company.period_end = doc.get("periodEnd")
+
+                await session.flush()
+                updated += 1
+
+                logger.info(
+                    "CompanyInfo updated: %s %s (shares=%s, net_assets=%s)",
+                    ticker,
+                    company.company_name,
+                    company.shares_outstanding,
+                    company.net_assets,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Company info download timed out for %s", doc_id)
+            except Exception as e:
+                logger.error("Company info processing error for %s: %s", doc_id, e)
+                await session.rollback()
+                continue
+
+        if updated > 0:
+            await session.commit()
+            logger.info("Updated %d company info records from EDINET", updated)
+
+
 async def run_poller():
     """Run the polling loop."""
     logger.info(
@@ -445,9 +547,12 @@ async def run_poller():
     )
     while True:
         try:
-            await poll_edinet()
+            today = date.today()
+            await poll_edinet(today)
             # Also retry enrichment for previously failed XBRL parses
             await _retry_xbrl_enrichment()
+            # Fetch company fundamentals from 有報/四半期報告書
+            await _poll_company_info(today)
         except asyncio.CancelledError:
             logger.info("Poller cancelled")
             raise

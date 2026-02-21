@@ -455,6 +455,156 @@ class EdinetClient:
         logger.debug("Extracted XBRL data: %s", result)
         return result
 
+    # ------------------------------------------------------------------
+    # 有価証券報告書 / 四半期報告書 parsing for company fundamentals
+    # ------------------------------------------------------------------
+
+    async def fetch_all_document_list(self, target_date: date) -> list[dict]:
+        """Fetch ALL document types for a date (not just large shareholding).
+
+        Used to discover 有価証券報告書 (120), 四半期報告書 (140), etc.
+        for company fundamental data extraction.
+        """
+        client = await self._get_client()
+        url = f"{self.base_url}/documents.json"
+        params = {
+            "date": target_date.strftime("%Y-%m-%d"),
+            "type": 2,
+            "Subscription-Key": self.api_key,
+        }
+
+        try:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            logger.error("EDINET API request failed: %s", e)
+            return []
+
+        metadata = data.get("metadata", {})
+        status = metadata.get("status")
+        if status != "200":
+            return []
+
+        return data.get("results", [])
+
+    def parse_xbrl_for_company_info(self, zip_content: bytes) -> dict:
+        """Parse 有価証券報告書 / 四半期報告書 XBRL for company fundamentals.
+
+        Extracts:
+        - shares_outstanding: 発行済株式数
+        - net_assets: 純資産
+        - company_name: 会社名
+
+        These values come from the official financial statements submitted
+        to 金融庁 via EDINET — the most authoritative source.
+        """
+        result = {
+            "shares_outstanding": None,
+            "net_assets": None,
+            "company_name": None,
+        }
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
+                xbrl_files = [
+                    f for f in zf.namelist()
+                    if f.endswith(".xbrl") and "PublicDoc" in f
+                ]
+                if not xbrl_files:
+                    return result
+
+                xbrl_content = zf.read(xbrl_files[0])
+                result = self._extract_company_info(xbrl_content)
+        except zipfile.BadZipFile:
+            logger.warning("Invalid ZIP for company info parsing")
+        except Exception as e:
+            logger.error("Company info XBRL parsing error: %s", e)
+
+        return result
+
+    def _extract_company_info(self, xbrl_bytes: bytes) -> dict:
+        """Extract company fundamentals from 有報/四半期 XBRL."""
+        result = {
+            "shares_outstanding": None,
+            "net_assets": None,
+            "company_name": None,
+        }
+
+        try:
+            tree = etree.fromstring(xbrl_bytes)
+        except etree.XMLSyntaxError as e:
+            logger.warning("XBRL XML parse error: %s", e)
+            return result
+
+        # --- 発行済株式数 (Shares Outstanding) ---
+        # XBRL elements in 有報: NumberOfIssuedSharesXxx, TotalNumberOfIssuedShares
+        shares_patterns = [
+            "NumberOfIssuedSharesTotalNumberOfSharesEtcRegularShares",
+            "TotalNumberOfIssuedShares",
+            "NumberOfIssuedShares",
+            "IssuedSharesTotalNumber",
+        ]
+        for pattern in shares_patterns:
+            elements = tree.xpath(
+                f"//*[contains(local-name(), '{pattern}')]"
+            )
+            for elem in elements:
+                try:
+                    val = int(float(elem.text.strip()))
+                    context_ref = elem.get("contextRef", "")
+                    # Take "Current" / "Instant" context, skip "Prior"
+                    if "Prior" not in context_ref and "Previous" not in context_ref:
+                        if result["shares_outstanding"] is None or val > result["shares_outstanding"]:
+                            result["shares_outstanding"] = val
+                except (ValueError, AttributeError):
+                    continue
+            if result["shares_outstanding"] is not None:
+                break
+
+        # --- 純資産 (Net Assets / Total Equity) ---
+        equity_patterns = [
+            "NetAssets",
+            "EquityAttributableToOwnersOfParent",
+            "TotalEquity",
+            "ShareholdersEquity",
+        ]
+        for pattern in equity_patterns:
+            elements = tree.xpath(
+                f"//*[contains(local-name(), '{pattern}')]"
+            )
+            for elem in elements:
+                try:
+                    val = int(float(elem.text.strip()))
+                    context_ref = elem.get("contextRef", "")
+                    if "Prior" not in context_ref and "Previous" not in context_ref:
+                        if result["net_assets"] is None:
+                            result["net_assets"] = val
+                            break
+                except (ValueError, AttributeError):
+                    continue
+            if result["net_assets"] is not None:
+                break
+
+        # --- 会社名 (Company Name) ---
+        name_patterns = [
+            "CompanyName",
+            "FilerName",
+        ]
+        for pattern in name_patterns:
+            elements = tree.xpath(
+                f"//*[contains(local-name(), '{pattern}')]"
+            )
+            for elem in elements:
+                if elem.text and elem.text.strip():
+                    result["company_name"] = elem.text.strip()
+                    break
+            if result["company_name"]:
+                break
+
+        logger.debug("Extracted company info: %s", result)
+        return result
+
 
 # Singleton client
 edinet_client = EdinetClient()
