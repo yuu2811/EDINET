@@ -238,3 +238,93 @@ class TestDownloadXBRL:
             result = await self.client.download_xbrl("S100TEST")
 
         assert result is None
+
+
+def _make_pdf_zip(pdf_content: bytes) -> bytes:
+    """Helper to create a ZIP file containing a PDF."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("S100TEST/report.pdf", pdf_content)
+    return buf.getvalue()
+
+
+class TestDownloadPDF:
+    """Tests for PDF document download (ZIP extraction)."""
+
+    def setup_method(self):
+        self.client = EdinetClient()
+
+    @pytest.mark.asyncio
+    async def test_download_pdf_extracts_from_zip(self):
+        """Should extract PDF from the ZIP returned by EDINET API."""
+        fake_pdf = b"%PDF-1.4 test pdf content"
+        zip_data = _make_pdf_zip(fake_pdf)
+        mock_response = _mock_response(200, content=zip_data)
+
+        with patch.object(self.client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(return_value=mock_response)
+            mock_get.return_value = mock_http
+
+            result = await self.client.download_pdf("S100TEST")
+
+        assert result == fake_pdf
+
+    @pytest.mark.asyncio
+    async def test_download_pdf_no_pdf_in_zip(self):
+        """Should return None when ZIP has no PDF files."""
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("readme.txt", "no pdf here")
+        mock_response = _mock_response(200, content=buf.getvalue())
+
+        with patch.object(self.client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(return_value=mock_response)
+            mock_get.return_value = mock_http
+
+            result = await self.client.download_pdf("S100TEST")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_download_pdf_raw_pdf_fallback(self):
+        """Should return raw PDF if response is not a ZIP (older API behavior)."""
+        raw_pdf = b"%PDF-1.4 raw pdf content"
+        mock_response = _mock_response(200, content=raw_pdf)
+
+        with patch.object(self.client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(return_value=mock_response)
+            mock_get.return_value = mock_http
+
+            result = await self.client.download_pdf("S100TEST")
+
+        assert result == raw_pdf
+
+    @pytest.mark.asyncio
+    async def test_download_pdf_non_zip_non_pdf(self):
+        """Should return None for non-ZIP, non-PDF responses (e.g. HTML error)."""
+        html_error = b"<html><body>Error</body></html>"
+        mock_response = _mock_response(200, content=html_error)
+
+        with patch.object(self.client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(return_value=mock_response)
+            mock_get.return_value = mock_http
+
+            result = await self.client.download_pdf("S100TEST")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_download_pdf_network_error(self):
+        """Should return None on network error."""
+        with patch.object(self.client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(side_effect=httpx.ConnectError("fail"))
+            mock_get.return_value = mock_http
+
+            result = await self.client.download_pdf("S100TEST")
+
+        assert result is None

@@ -1,6 +1,8 @@
 """Tests for FastAPI REST API endpoints."""
 
+import io
 import os
+import zipfile
 
 import pytest
 import pytest_asyncio
@@ -345,3 +347,49 @@ class TestPollEndpoint:
         resp2 = await client.post("/api/poll")
         assert resp2.status_code == 429
         assert "Rate limited" in resp2.json()["error"]
+
+
+class TestPDFProxyEndpoint:
+    """Tests for /api/documents/{doc_id}/pdf proxy endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_pdf_proxy_success(self, client):
+        """Should serve PDF when EDINET API returns valid content."""
+        from unittest.mock import patch, AsyncMock
+
+        fake_pdf = b"%PDF-1.4 fake pdf content for testing"
+        with patch("app.edinet.edinet_client.download_pdf", new_callable=AsyncMock, return_value=fake_pdf):
+            resp = await client.get("/api/documents/S100API1/pdf")
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/pdf"
+        assert resp.content == fake_pdf
+
+    @pytest.mark.asyncio
+    async def test_pdf_proxy_invalid_doc_id(self, client):
+        """Should reject doc IDs with non-alphanumeric characters."""
+        resp = await client.get("/api/documents/bad-id!/pdf")
+        assert resp.status_code == 400
+        assert "Invalid" in resp.json()["error"]
+
+    @pytest.mark.asyncio
+    async def test_pdf_proxy_all_stages_fail(self, client):
+        """Should return 404 when both EDINET API and disclosure2dl fail."""
+        from unittest.mock import patch, AsyncMock
+
+        with patch("app.edinet.edinet_client.download_pdf", new_callable=AsyncMock, return_value=None), \
+             patch("httpx.AsyncClient") as mock_httpx_cls:
+            # disclosure2dl returns non-PDF
+            mock_resp = AsyncMock()
+            mock_resp.status_code = 404
+            mock_resp.content = b"Not Found"
+            mock_hc = AsyncMock()
+            mock_hc.get = AsyncMock(return_value=mock_resp)
+            mock_hc.__aenter__ = AsyncMock(return_value=mock_hc)
+            mock_hc.__aexit__ = AsyncMock(return_value=False)
+            mock_httpx_cls.return_value = mock_hc
+
+            resp = await client.get("/api/documents/S100API1/pdf")
+
+        assert resp.status_code == 404
+        assert resp.json()["error"] == "PDF not available"

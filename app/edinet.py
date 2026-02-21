@@ -128,7 +128,8 @@ class EdinetClient:
     async def download_pdf(self, doc_id: str) -> bytes | None:
         """Download the PDF for a given document ID (type=2).
 
-        Per API v2 spec: response is application/pdf binary directly.
+        API v2 returns a ZIP (application/octet-stream) containing PDF files.
+        This method extracts the first PDF found in the ZIP and returns it.
         """
         client = await self._get_client()
         url = f"{self.base_url}/documents/{doc_id}"
@@ -140,9 +141,28 @@ class EdinetClient:
         try:
             resp = await client.get(url, params=params)
             resp.raise_for_status()
-            return resp.content
         except Exception as e:
             logger.error("Failed to download PDF for %s: %s", doc_id, e)
+            return None
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                pdf_files = [
+                    f for f in zf.namelist()
+                    if f.lower().endswith(".pdf")
+                ]
+                if not pdf_files:
+                    logger.warning("No PDF files found in ZIP for %s", doc_id)
+                    return None
+                return zf.read(pdf_files[0])
+        except zipfile.BadZipFile:
+            # Some older docs may return raw PDF directly
+            if resp.content[:5].startswith(b"%PDF"):
+                return resp.content
+            logger.warning(
+                "EDINET returned neither valid ZIP nor PDF for %s (%d bytes)",
+                doc_id, len(resp.content),
+            )
             return None
 
     async def download_csv(self, doc_id: str) -> bytes | None:
