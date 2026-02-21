@@ -127,12 +127,6 @@ async def proxy_document_pdf(doc_id: str) -> Response:
     content: bytes | None = None
     if settings.EDINET_API_KEY:
         content = await edinet_client.download_pdf(doc_id)
-        # Verify it's actually a PDF
-        if content and (len(content) < 5 or not content[:5].startswith(b"%PDF")):
-            logger.warning(
-                "EDINET API returned non-PDF for %s (%d bytes)", doc_id, len(content),
-            )
-            content = None
 
     if content:
         return Response(
