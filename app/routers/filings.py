@@ -144,6 +144,71 @@ async def retry_xbrl_enrichment(doc_id: str) -> dict:
         return {"success": True, "data": data}
 
 
+@documents_router.post("/batch-retry-xbrl")
+async def batch_retry_xbrl() -> dict:
+    """Re-parse XBRL for all filings that have xbrl_flag but no holding_ratio.
+
+    This is useful after parser improvements — re-processes filings whose
+    XBRL was previously downloaded but failed to parse correctly.
+    """
+    import asyncio
+
+    from app.edinet import edinet_client
+    from app.models import Filing as FilingModel
+    from sqlalchemy import or_, select as sa_select
+
+    async with get_async_session()() as session:
+        result = await session.execute(
+            sa_select(FilingModel)
+            .where(
+                FilingModel.xbrl_flag.is_(True),
+                or_(
+                    FilingModel.xbrl_parsed.is_(False),
+                    FilingModel.holding_ratio.is_(None),
+                ),
+            )
+            .order_by(desc(FilingModel.id))
+            .limit(50)
+        )
+        filings = result.scalars().all()
+        if not filings:
+            return {"success": True, "processed": 0, "message": "対象なし"}
+
+        processed = 0
+        enriched = 0
+        for i, filing in enumerate(filings):
+            if i > 0:
+                await asyncio.sleep(3.0)  # EDINET rate limit
+            try:
+                zip_content = await asyncio.wait_for(
+                    edinet_client.download_xbrl(filing.doc_id),
+                    timeout=15.0,
+                )
+                if not zip_content:
+                    processed += 1
+                    continue
+
+                data = edinet_client.parse_xbrl_for_holding_data(zip_content)
+                for field, value in data.items():
+                    if value is not None:
+                        setattr(filing, field, value)
+                filing.xbrl_parsed = True
+                if any(v is not None for v in data.values()):
+                    enriched += 1
+                processed += 1
+            except Exception:
+                processed += 1
+                continue
+
+        await session.commit()
+        return {
+            "success": True,
+            "processed": processed,
+            "enriched": enriched,
+            "total_candidates": len(filings),
+        }
+
+
 @documents_router.get("/{doc_id}/debug-xbrl")
 async def debug_xbrl(doc_id: str) -> dict:
     """Diagnostic endpoint: download XBRL and show parsing details.

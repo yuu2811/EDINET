@@ -736,6 +736,18 @@ body {
 .card-links {
     display: flex;
     gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.card-purpose {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    padding: 2px 6px;
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    opacity: 0.7;
 }
 
 .card-link {
@@ -1971,6 +1983,22 @@ body {
 }
 
 .date-fetch-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-batch-retry {
+    color: var(--amber);
+    border-color: var(--amber-dim);
+    font-size: 10px;
+}
+
+.btn-batch-retry:hover {
+    background: var(--amber-dim);
+    color: #fff;
+}
+
+.btn-batch-retry:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }

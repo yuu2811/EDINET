@@ -855,6 +855,13 @@ function createFeedCard(f) {
         ratioHtml = '<div class="ratio-display neutral"><span class="card-ratio neutral">-</span></div>';
     }
 
+    // Purpose of holding (short values like 純投資, 経営参加)
+    let purposeHtml = '';
+    if (f.purpose_of_holding) {
+        const short = f.purpose_of_holding.length <= 20 ? f.purpose_of_holding : f.purpose_of_holding.slice(0, 18) + '…';
+        purposeHtml = `<span class="card-purpose">${escapeHtml(short)}</span>`;
+    }
+
     // Links
     let links = '';
     if (f.pdf_url) {
@@ -897,7 +904,7 @@ function createFeedCard(f) {
             </div>
             <div class="card-bottom">
                 ${ratioHtml}
-                <div class="card-links">${links}</div>
+                <div class="card-links">${purposeHtml}${links}</div>
             </div>
         </div>
     `;
@@ -1867,6 +1874,7 @@ async function retryXbrl(docId) {
                 // Update in state
                 const idx = state.filings.findIndex(f => f.doc_id === docId);
                 if (idx >= 0) state.filings[idx] = freshFiling;
+                renderFeed();
                 openModal(freshFiling);
             }
         } else {
@@ -1876,6 +1884,31 @@ async function retryXbrl(docId) {
         console.error('XBRL retry failed:', e);
         if (btn) btn.textContent = '取得失敗';
     }
+}
+
+async function batchRetryXbrl() {
+    const btn = document.getElementById('btn-batch-retry');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = '一括再取得中...';
+    try {
+        const resp = await fetch('/api/documents/batch-retry-xbrl', { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) {
+            btn.textContent = `完了 (${data.enriched}/${data.processed}件)`;
+            // Reload filings to reflect updated data
+            await loadInitialData();
+        } else {
+            btn.textContent = data.error || '失敗';
+        }
+    } catch (e) {
+        console.error('Batch retry failed:', e);
+        btn.textContent = '失敗';
+    }
+    setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = 'XBRL 一括再取得';
+    }, 5000);
 }
 
 function openModal(filing) {
@@ -1932,11 +1965,13 @@ function openModal(filing) {
                 </div>
             </div>
         `;
-    } else if (filing.xbrl_flag && !filing.xbrl_parsed) {
+    } else if (filing.xbrl_flag) {
+        // xbrl_flag is true but no holding_ratio — either not yet parsed, or parsed but empty
+        const label = filing.xbrl_parsed ? 'XBRL 割合データなし' : 'XBRL データ未取得';
         ratioGaugeHtml = `
             <div class="modal-ratio-section">
                 <div class="modal-ratio-header">
-                    <span class="xbrl-pending-label">XBRL データ未取得</span>
+                    <span class="xbrl-pending-label">${label}</span>
                     <button class="btn-retry-xbrl" onclick="retryXbrl('${escapeHtml(filing.doc_id)}')">再取得</button>
                 </div>
             </div>
