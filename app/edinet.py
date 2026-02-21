@@ -346,12 +346,14 @@ class EdinetClient:
         # Large shareholding report XBRL uses jpcrp060_cor namespace.
 
         # --- Holding ratio (保有割合) ---
-        # Look for elements containing "ShareholdingRatio".
-        # Priority: "Total" ratio > generic ratio.  Exclude abstract elements
+        # Must match both jpcrp_cor and jplvh_cor taxonomy:
+        #   jpcrp_cor: TotalShareholdingRatioOfShareCertificatesEtc
+        #   jplvh_cor: HoldingRatioOfShareCertificatesEtc
+        # Priority: specific > generic.  Exclude abstract elements
         # and individual shareholder entries (EachLargeShareholder1, etc.)
-        # which would give incorrect (per-holder) values.
         ratio_patterns = [
-            "TotalShareholdingRatioOfShareCertificatesEtc",
+            "HoldingRatioOfShareCertificatesEtc",  # jplvh_cor (大量保有)
+            "TotalShareholdingRatioOfShareCertificatesEtc",  # jpcrp_cor
             "TotalShareholdingRatio",
             "RatioOfShareholdingToTotalIssuedShares",
         ]
@@ -388,7 +390,7 @@ class EdinetClient:
         # Fallback: broader search if specific patterns didn't match
         if result["holding_ratio"] is None:
             elements = tree.xpath(
-                "//*[contains(local-name(), 'ShareholdingRatio')]"
+                "//*[contains(local-name(), 'HoldingRatio')]"
             )
             for elem in elements:
                 local = elem.xpath("local-name()")
@@ -428,6 +430,16 @@ class EdinetClient:
                     break
             if result["holder_name"]:
                 break
+
+        # jplvh_cor fallback: exact local-name() = 'Name' within jplvh namespace
+        if result["holder_name"] is None:
+            elements = tree.xpath("//*[local-name() = 'Name']")
+            for elem in elements:
+                ns_uri = elem.tag.split("}")[0].lstrip("{") if "}" in elem.tag else ""
+                if "jplvh" in ns_uri or "lvh" in ns_uri:
+                    if elem.text and elem.text.strip():
+                        result["holder_name"] = elem.text.strip()
+                        break
 
         # --- Target company name (発行者 / 対象会社) ---
         target_patterns = [
@@ -469,6 +481,7 @@ class EdinetClient:
             "TotalNumberOfShareCertificatesEtcHeld",
             "TotalNumberOfSharesHeld",
             "NumberOfShareCertificatesEtc",
+            "NumberOfStocksEtcHeld",  # jplvh_cor: TotalNumberOfStocksEtcHeld
         ]
         for pattern in shares_patterns:
             elements = tree.xpath(
@@ -618,7 +631,7 @@ class EdinetClient:
                     continue
 
             elif is_nonnumeric:
-                if _matches_holder_pattern(local_name):
+                if _matches_holder_pattern(local_name, name_attr):
                     if not result["holder_name"]:
                         result["holder_name"] = text
                 elif _matches_target_pattern(local_name):
@@ -690,7 +703,7 @@ class EdinetClient:
 
             local_name = name_attr.split(":")[-1]
 
-            if _matches_holder_pattern(local_name):
+            if _matches_holder_pattern(local_name, name_attr):
                 if not result["holder_name"]:
                     result["holder_name"] = clean_val
             elif _matches_target_pattern(local_name):
@@ -1003,11 +1016,16 @@ class EdinetClient:
 # ---------------------------------------------------------------------------
 
 def _matches_ratio_pattern(name: str) -> bool:
-    """Check if element name matches a shareholding ratio pattern."""
+    """Check if element name matches a shareholding ratio pattern.
+
+    Must match both jpcrp_cor (有報) and jplvh_cor (大量保有) taxonomy:
+      jpcrp_cor: TotalShareholdingRatioOfShareCertificatesEtc
+      jplvh_cor: HoldingRatioOfShareCertificatesEtc
+    """
     patterns = (
-        "TotalShareholdingRatio",
+        "HoldingRatio",         # matches both jplvh "HoldingRatio..." and jpcrp "ShareholdingRatio..."
+        "ShareholdingRatio",    # explicit jpcrp_cor match
         "RatioOfShareholdingToTotalIssuedShares",
-        "ShareholdingRatio",
     )
     # Exclude per-shareholder entries and abstract elements
     if any(skip in name for skip in ("Abstract", "EachLargeShareholder", "JointHolder")):
@@ -1016,24 +1034,40 @@ def _matches_ratio_pattern(name: str) -> bool:
 
 
 def _matches_shares_pattern(name: str) -> bool:
+    """Match shares-held elements from both jpcrp_cor and jplvh_cor taxonomy.
+
+      jpcrp_cor: TotalNumberOfShareCertificatesEtcHeld
+      jplvh_cor: TotalNumberOfStocksEtcHeld
+    """
     patterns = (
         "TotalNumberOfShareCertificatesEtcHeld",
         "TotalNumberOfSharesHeld",
         "NumberOfShareCertificatesEtc",
+        "NumberOfStocksEtc",     # jplvh_cor: TotalNumberOfStocksEtcHeld
     )
     if "Abstract" in name:
         return False
     return any(p in name for p in patterns)
 
 
-def _matches_holder_pattern(name: str) -> bool:
+def _matches_holder_pattern(name: str, full_qname: str = "") -> bool:
+    """Match holder/filer name elements.
+
+    jplvh_cor uses just 'Name' which is too generic for substring matching,
+    so we also check the full QName (prefix:localName) for jplvh_cor:Name.
+    """
     patterns = (
         "NameOfLargeShareholdingReporter",
         "NameOfFiler",
         "ReporterName",
         "LargeShareholderName",
     )
-    return any(p in name for p in patterns)
+    if any(p in name for p in patterns):
+        return True
+    # jplvh_cor:Name — exact match on localName + namespace check
+    if name == "Name" and ("jplvh" in full_qname or "lvh" in full_qname):
+        return True
+    return False
 
 
 def _matches_target_pattern(name: str) -> bool:
