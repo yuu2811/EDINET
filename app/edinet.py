@@ -137,8 +137,11 @@ class EdinetClient:
     async def download_pdf(self, doc_id: str) -> bytes | None:
         """Download the PDF for a given document ID (type=2).
 
-        API v2 returns a ZIP (application/octet-stream) containing PDF files.
-        This method extracts the first PDF found in the ZIP and returns it.
+        EDINET API v2 spec (Jan 2026):
+        - type=2 returns the PDF file directly as binary data.
+        - Older behaviour returned a ZIP containing PDFs; we handle both.
+        - On error the API may return HTTP 200 with a JSON body instead
+          of document data — we detect this via Content-Type.
         """
         client = await self._get_client()
         url = f"{self.base_url}/documents/{doc_id}"
@@ -150,29 +153,52 @@ class EdinetClient:
         try:
             resp = await client.get(url, params=params)
             resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            logger.warning(
+                "EDINET API returned HTTP %s for PDF download of %s",
+                e.response.status_code, doc_id,
+            )
+            return None
         except Exception as e:
             logger.error("Failed to download PDF for %s: %s", doc_id, e)
             return None
 
+        # EDINET API may return HTTP 200 with a JSON error body.
+        # Detect by checking Content-Type header.
+        ct = resp.headers.get("content-type", "")
+        if "json" in ct or "text/html" in ct:
+            # Not a document — likely an API error response
+            body_preview = resp.content[:500].decode("utf-8", errors="replace")
+            logger.warning(
+                "EDINET API returned non-document Content-Type '%s' for %s: %s",
+                ct, doc_id, body_preview,
+            )
+            return None
+
+        # Try ZIP first (older API / some document types return ZIP containing PDF)
         try:
             with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
                 pdf_files = [
                     f for f in zf.namelist()
                     if f.lower().endswith(".pdf")
                 ]
-                if not pdf_files:
-                    logger.warning("No PDF files found in ZIP for %s", doc_id)
-                    return None
-                return zf.read(pdf_files[0])
+                if pdf_files:
+                    return zf.read(pdf_files[0])
+                logger.warning("No PDF files found in ZIP for %s", doc_id)
+                return None
         except zipfile.BadZipFile:
-            # Some older docs may return raw PDF directly
-            if _looks_like_pdf(resp.content):
-                return resp.content
-            logger.warning(
-                "EDINET returned neither valid ZIP nor PDF for %s (%d bytes)",
-                doc_id, len(resp.content),
-            )
-            return None
+            pass
+
+        # Directly returned PDF (current API v2 spec, Jan 2026)
+        if _looks_like_pdf(resp.content):
+            return resp.content
+
+        logger.warning(
+            "EDINET returned neither valid PDF nor ZIP for %s "
+            "(%d bytes, content-type=%s)",
+            doc_id, len(resp.content), ct,
+        )
+        return None
 
     def parse_xbrl_for_holding_data(self, zip_content: bytes) -> dict:
         """Parse XBRL ZIP to extract shareholding data.

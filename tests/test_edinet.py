@@ -334,6 +334,58 @@ class TestDownloadPDF:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_download_pdf_json_error_response(self):
+        """Should detect JSON error responses from EDINET API (HTTP 200 with JSON body)."""
+        error_json = b'{"metadata":{"status":"404","message":"not found"}}'
+        mock_response = _mock_response(
+            200,
+            content=error_json,
+            headers={"content-type": "application/json; charset=utf-8"},
+        )
+
+        with patch.object(self.client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(return_value=mock_response)
+            mock_get.return_value = mock_http
+
+            result = await self.client.download_pdf("S100TEST")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_download_pdf_html_error_response(self):
+        """Should detect HTML error pages from EDINET API."""
+        html_page = b"<html><body>Service Unavailable</body></html>"
+        mock_response = _mock_response(
+            200,
+            content=html_page,
+            headers={"content-type": "text/html; charset=utf-8"},
+        )
+
+        with patch.object(self.client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(return_value=mock_response)
+            mock_get.return_value = mock_http
+
+            result = await self.client.download_pdf("S100TEST")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_download_pdf_http_error(self):
+        """Should return None on HTTP error status."""
+        mock_response = _mock_response(404)
+
+        with patch.object(self.client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(return_value=mock_response)
+            mock_get.return_value = mock_http
+
+            result = await self.client.download_pdf("S100TEST")
+
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_download_pdf_network_error(self):
         """Should return None on network error."""
         with patch.object(self.client, "_get_client") as mock_get:

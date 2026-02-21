@@ -170,9 +170,10 @@ def generate_demo_filings(
             period_start=None,
             period_end=target_date.isoformat(),
             xbrl_flag=True,
-            pdf_flag=True,
+            pdf_flag=False,  # Demo data — no real PDF exists in EDINET
             is_amendment=is_amendment,
             is_special_exemption=False,
+            is_demo=True,
             # XBRL-derived fields pre-populated
             holding_ratio=holding_ratio,
             previous_holding_ratio=previous_ratio,

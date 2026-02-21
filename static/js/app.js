@@ -739,8 +739,13 @@ function renderFeedTable(container, filings) {
 
         // Links
         let links = '';
-        if (f.pdf_url) {
+        if (f.is_demo) {
+            links += '<span class="tbl-demo" title="デモデータ">DEMO</span>';
+        } else if (f.pdf_url) {
             links += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="tbl-link" onclick="event.stopPropagation()">PDF</a>`;
+        }
+        if (f.edinet_url && !f.is_demo) {
+            links += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="tbl-link" onclick="event.stopPropagation()">EDINET</a>`;
         }
 
         // Row class
@@ -850,8 +855,13 @@ function createFeedCard(f) {
 
     // Links
     let links = '';
-    if (f.pdf_url) {
+    if (f.is_demo) {
+        links += '<span class="card-demo" title="デモデータ">DEMO</span>';
+    } else if (f.pdf_url) {
         links += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="card-link" onclick="event.stopPropagation()">PDF</a>`;
+    }
+    if (f.edinet_url && !f.is_demo) {
+        links += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="card-link" onclick="event.stopPropagation()">EDINET</a>`;
     }
 
     // Market data from cache (desktop only)
@@ -978,8 +988,13 @@ function createMobileFeedCard(f) {
 
     // PDF + EDINET links
     let linkHtml = '';
-    if (f.pdf_url) {
+    if (f.is_demo) {
+        linkHtml += '<span class="m-demo">DEMO</span>';
+    } else if (f.pdf_url) {
         linkHtml += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="m-link" onclick="event.stopPropagation()">PDF</a>`;
+    }
+    if (f.edinet_url && !f.is_demo) {
+        linkHtml += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="m-link" onclick="event.stopPropagation()">EDINET</a>`;
     }
 
     return `<div class="m-card ${cardClass}" data-doc-id="${escapeHtml(f.doc_id)}">
@@ -1893,8 +1908,15 @@ function openModal(filing) {
 
     // Links
     const links = [];
-    if (filing.pdf_url) {
-        links.push(`<a href="${filing.pdf_url}" target="_blank" rel="noopener">PDF ダウンロード</a>`);
+    if (filing.is_demo) {
+        links.push('<span class="text-dim">デモデータ（実際のPDFはありません）</span>');
+    } else {
+        if (filing.pdf_url) {
+            links.push(`<a href="${filing.pdf_url}" target="_blank" rel="noopener">PDF ダウンロード</a>`);
+        }
+        if (filing.edinet_url) {
+            links.push(`<a href="${filing.edinet_url}" target="_blank" rel="noopener">EDINET で閲覧</a>`);
+        }
     }
     if (links.length > 0) {
         rows.push(['リンク', { html: `<span class="detail-value">${links.join(' | ')}</span>` }]);
@@ -2565,7 +2587,7 @@ function exportFilingsCSV() {
     const headers = [
         '提出日時', '提出者', '対象会社', '証券コード',
         '保有割合(%)', '前回保有割合(%)', '変動(%)',
-        '保有株数', '書類種別', '訂正', 'PDF URL'
+        '保有株数', '書類種別', '訂正', 'EDINET URL'
     ];
 
     const rows = state.filings.map(f => [
@@ -2579,7 +2601,7 @@ function exportFilingsCSV() {
         f.shares_held != null ? String(f.shares_held) : '',
         f.doc_description || '',
         f.is_amendment ? 'Yes' : 'No',
-        f.pdf_url ? (location.origin + f.pdf_url) : ''
+        f.edinet_url || (f.pdf_url ? (location.origin + f.pdf_url) : '')
     ]);
 
     const bom = '\uFEFF';

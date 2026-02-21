@@ -83,12 +83,33 @@ class Filing(Base):
         DateTime, server_default=func.now()
     )
     xbrl_parsed: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    def _is_demo_doc_id(self) -> bool:
+        """Check whether this filing has a demo-generated document ID."""
+        if self.is_demo:
+            return True
+        # Heuristic: demo IDs are S + YYYYMMDD + NNNN (13 chars)
+        # Real EDINET IDs are typically 8 chars like S100XXXX
+        if self.doc_id and len(self.doc_id) == 13 and self.doc_id[1:9].isdigit():
+            return True
+        return False
 
     def to_dict(self) -> dict:
         ratio_change = None
         if self.holding_ratio is not None and self.previous_holding_ratio is not None:
             ratio_change = round(
                 self.holding_ratio - self.previous_holding_ratio, 2
+            )
+
+        is_demo = self._is_demo_doc_id()
+
+        # For real documents, build the EDINET viewer URL
+        edinet_document_url = None
+        if self.doc_id and not is_demo:
+            edinet_document_url = (
+                f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx"
+                f"?{self.doc_id},,,"
             )
 
         return {
@@ -118,22 +139,15 @@ class Filing(Base):
             "is_special_exemption": self.is_special_exemption,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "xbrl_parsed": self.xbrl_parsed,
-            # EDINET document link — served through our PDF proxy which
-            # tries EDINET API v2 first, then falls back to disclosure2dl.
-            # Direct links to disclosure2.edinet-fsa.go.jp/WZEK0040.aspx
-            # no longer work ("規定外操作" error after late-2025 update),
-            # and disclosure2dl PDFs are not available for all documents.
-            "edinet_url": f"/api/documents/{self.doc_id}/pdf"
-            if self.doc_id
-            else None,
-            # Server-side proxy for PDF — EDINET API v2 requires
-            # Subscription-Key, which must not be exposed to the browser.
-            # Show PDF link even when pdf_flag is False — the proxy will
-            # return 404/502 gracefully if unavailable, but many filings
-            # have PDFs that are available even when the flag is missing.
+            "is_demo": is_demo,
+            # PDF proxy link — tries EDINET API v2, then disclosure2dl,
+            # then redirects to the EDINET viewer website.
+            # For demo filings this returns a 404 explaining it's demo data.
             "pdf_url": f"/api/documents/{self.doc_id}/pdf"
-            if self.doc_id
+            if self.doc_id and not is_demo
             else None,
+            # Direct link to the EDINET viewer website (for real filings)
+            "edinet_url": edinet_document_url,
         }
 
 

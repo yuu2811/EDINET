@@ -25,3 +25,22 @@ class Base(DeclarativeBase):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Lightweight migration: add columns that may be missing in existing DBs
+        await _migrate_add_columns(conn)
+
+
+async def _migrate_add_columns(conn):
+    """Add new columns to existing tables (SQLite-safe)."""
+    import sqlalchemy as sa
+
+    migrations = [
+        ("filings", "is_demo", "BOOLEAN DEFAULT 0"),
+    ]
+    for table, column, col_def in migrations:
+        try:
+            await conn.execute(sa.text(
+                f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"
+            ))
+        except Exception:
+            # Column already exists — ignore
+            pass

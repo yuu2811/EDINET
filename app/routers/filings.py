@@ -97,6 +97,36 @@ async def get_filing(doc_id: str) -> dict:
 # be exposed to browser clients.  These endpoints act as a server-side proxy.
 # ---------------------------------------------------------------------------
 
+def _is_demo_doc_id(doc_id: str) -> bool:
+    """Detect demo-generated document IDs.
+
+    Demo IDs follow the pattern S + YYYYMMDD + NNNN (13 chars, date-based).
+    Real EDINET IDs are typically 8 chars starting with S100.
+    """
+    if len(doc_id) == 13 and doc_id[0] == "S" and doc_id[1:9].isdigit():
+        return True
+    return False
+
+
+def _edinet_viewer_url(doc_id: str) -> str:
+    """Build the EDINET disclosure viewer URL for a document."""
+    return (
+        f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx"
+        f"?{doc_id},,,"
+    )
+
+
+def _make_pdf_response(content: bytes, doc_id: str) -> Response:
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{doc_id}.pdf"',
+            "Cache-Control": "public, max-age=86400",
+        },
+    )
+
+
 @documents_router.get("/{doc_id}/pdf")
 async def proxy_document_pdf(doc_id: str) -> Response:
     """Proxy EDINET PDF download with multi-stage fallback.
@@ -104,10 +134,12 @@ async def proxy_document_pdf(doc_id: str) -> Response:
     Retrieval order:
       1. EDINET API v2 (type=2) — requires Subscription-Key (server-side)
       2. disclosure2dl direct PDF — public, no auth needed
-      3. 404 error with explanation
+      3. Redirect to EDINET viewer website (for real documents)
+      4. JSON error with alternatives (includes viewer URL)
 
-    Direct links to disclosure2.edinet-fsa.go.jp/WZEK0040.aspx stopped
-    working after a late-2025 EDINET system update ("規定外操作" error).
+    Demo filings (generated when EDINET API is unreachable) have synthetic
+    doc_ids that don't exist in EDINET — these skip straight to stage 4
+    and return a clear explanation.
     """
     import httpx as _httpx
 
@@ -118,44 +150,62 @@ async def proxy_document_pdf(doc_id: str) -> Response:
     if not doc_id.isalnum():
         return JSONResponse({"error": "Invalid document ID"}, status_code=400)
 
-    # --- Stage 1: EDINET API v2 ---
-    content: bytes | None = None
-    if settings.EDINET_API_KEY:
-        content = await edinet_client.download_pdf(doc_id)
+    is_demo = _is_demo_doc_id(doc_id)
 
-    if content:
-        return Response(
-            content=content,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f'inline; filename="{doc_id}.pdf"',
-                "Cache-Control": "public, max-age=86400",
+    # Demo filings have synthetic IDs — skip API calls that will always fail
+    if not is_demo:
+        # --- Stage 1: EDINET API v2 ---
+        if settings.EDINET_API_KEY:
+            content = await edinet_client.download_pdf(doc_id)
+            if content:
+                return _make_pdf_response(content, doc_id)
+        else:
+            logger.warning(
+                "EDINET_API_KEY not configured — skipping API v2 PDF download"
+            )
+
+        # --- Stage 2: disclosure2dl direct PDF (public, no auth) ---
+        dl_url = (
+            "https://disclosure2dl.edinet-fsa.go.jp"
+            f"/searchdocument/pdf/{doc_id}.pdf"
+        )
+        try:
+            async with _httpx.AsyncClient(
+                timeout=15.0, follow_redirects=True,
+            ) as hc:
+                resp = await hc.get(dl_url)
+                if resp.status_code == 200 and _looks_like_pdf(resp.content):
+                    logger.info("Served %s via disclosure2dl fallback", doc_id)
+                    return _make_pdf_response(resp.content, doc_id)
+                logger.info(
+                    "disclosure2dl returned %s for %s",
+                    resp.status_code, doc_id,
+                )
+        except Exception as e:
+            logger.info("disclosure2dl request failed for %s: %s", doc_id, e)
+
+        # --- Stage 3: Redirect to EDINET viewer ---
+        viewer_url = _edinet_viewer_url(doc_id)
+        logger.info(
+            "PDF not downloadable for %s — redirecting to EDINET viewer",
+            doc_id,
+        )
+        return JSONResponse(
+            {
+                "error": "PDF not available for direct download",
+                "doc_id": doc_id,
+                "redirect_url": viewer_url,
             },
+            status_code=302,
+            headers={"Location": viewer_url},
         )
 
-    # --- Stage 2: disclosure2dl direct PDF ---
-    dl_url = f"https://disclosure2dl.edinet-fsa.go.jp/searchdocument/pdf/{doc_id}.pdf"
-    try:
-        async with _httpx.AsyncClient(timeout=15.0) as hc:
-            resp = await hc.get(dl_url)
-            if resp.status_code == 200 and _looks_like_pdf(resp.content):
-                logger.info("Served %s via disclosure2dl fallback", doc_id)
-                return Response(
-                    content=resp.content,
-                    media_type="application/pdf",
-                    headers={
-                        "Content-Disposition": f'inline; filename="{doc_id}.pdf"',
-                        "Cache-Control": "public, max-age=86400",
-                    },
-                )
-            logger.warning(
-                "disclosure2dl returned %s for %s", resp.status_code, doc_id,
-            )
-    except Exception as e:
-        logger.warning("disclosure2dl request failed for %s: %s", doc_id, e)
-
-    # --- Stage 3: All methods exhausted ---
+    # --- Stage 4: Demo filing — no real PDF exists ---
     return JSONResponse(
-        {"error": "PDF not available", "doc_id": doc_id},
+        {
+            "error": "このデータはデモ用です。EDINET APIが利用できない環境のため、実際のPDFは存在しません。",
+            "doc_id": doc_id,
+            "is_demo": True,
+        },
         status_code=404,
     )

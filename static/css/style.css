@@ -2821,6 +2821,15 @@ body {
     background: rgba(24, 208, 232, 0.06);
 }
 
+.tbl-demo, .card-demo, .m-demo {
+    font-size: var(--font-size-xs);
+    color: var(--text-dim);
+    padding: 1px 6px;
+    border: 1px solid var(--border-primary);
+    border-radius: 3px;
+    opacity: 0.6;
+}
+
 /* ==========================================================================
    Card Market Data
    ========================================================================== */

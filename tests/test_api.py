@@ -188,12 +188,20 @@ class TestFilingsAPI:
         assert data["total"] == 3
 
     @pytest.mark.asyncio
-    async def test_edinet_url_uses_pdf_proxy(self, client):
-        """EDINET URL should point to our PDF proxy endpoint."""
+    async def test_edinet_url_points_to_viewer(self, client):
+        """EDINET URL should point to the EDINET viewer website."""
         resp = await client.get("/api/filings/S100API1")
         data = resp.json()
-        url = data["edinet_url"]
-        assert url == "/api/documents/S100API1/pdf"
+        assert data["edinet_url"].startswith("https://disclosure2.edinet-fsa.go.jp/")
+        assert "S100API1" in data["edinet_url"]
+
+    @pytest.mark.asyncio
+    async def test_pdf_url_uses_proxy(self, client):
+        """PDF URL should point to our server-side proxy."""
+        resp = await client.get("/api/filings/S100API1")
+        data = resp.json()
+        assert data["pdf_url"] == "/api/documents/S100API1/pdf"
+        assert data["is_demo"] is False
 
 
 class TestStatsAPI:
@@ -372,7 +380,6 @@ class TestPDFProxyEndpoint:
         assert resp.status_code == 400
         assert "Invalid" in resp.json()["error"]
 
-
     @pytest.mark.asyncio
     async def test_pdf_proxy_disclosure2dl_with_leading_whitespace(self, client):
         """Fallback should serve PDF even if header is not at byte 0."""
@@ -396,13 +403,12 @@ class TestPDFProxyEndpoint:
         assert resp.content == mock_resp.content
 
     @pytest.mark.asyncio
-    async def test_pdf_proxy_all_stages_fail(self, client):
-        """Should return 404 when both EDINET API and disclosure2dl fail."""
+    async def test_pdf_proxy_redirects_to_edinet_viewer(self, client):
+        """When API and disclosure2dl both fail, redirect to EDINET viewer."""
         from unittest.mock import patch, AsyncMock
 
         with patch("app.edinet.edinet_client.download_pdf", new_callable=AsyncMock, return_value=None), \
              patch("httpx.AsyncClient") as mock_httpx_cls:
-            # disclosure2dl returns non-PDF
             mock_resp = AsyncMock()
             mock_resp.status_code = 404
             mock_resp.content = b"Not Found"
@@ -412,7 +418,28 @@ class TestPDFProxyEndpoint:
             mock_hc.__aexit__ = AsyncMock(return_value=False)
             mock_httpx_cls.return_value = mock_hc
 
-            resp = await client.get("/api/documents/S100API1/pdf")
+            resp = await client.get(
+                "/api/documents/S100API1/pdf",
+                follow_redirects=False,
+            )
 
+        assert resp.status_code == 302
+        assert "disclosure2.edinet-fsa.go.jp" in resp.headers["location"]
+        assert "S100API1" in resp.headers["location"]
+        data = resp.json()
+        assert "redirect_url" in data
+
+    @pytest.mark.asyncio
+    async def test_pdf_proxy_demo_doc_id(self, client):
+        """Demo doc IDs should return 404 with is_demo flag (no API calls)."""
+        from unittest.mock import patch, AsyncMock
+
+        # Should NOT call EDINET API or disclosure2dl for demo IDs
+        with patch("app.edinet.edinet_client.download_pdf", new_callable=AsyncMock) as mock_dl:
+            resp = await client.get("/api/documents/S202602180001/pdf")
+
+        mock_dl.assert_not_called()
         assert resp.status_code == 404
-        assert resp.json()["error"] == "PDF not available"
+        data = resp.json()
+        assert data["is_demo"] is True
+        assert "デモ" in data["error"]
