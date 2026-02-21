@@ -186,13 +186,13 @@ class TestFilingsAPI:
         assert data["total"] == 3
 
     @pytest.mark.asyncio
-    async def test_edinet_url_no_double_prefix(self, client):
-        """EDINET URL should not double the S100 prefix."""
+    async def test_edinet_url_direct_pdf(self, client):
+        """EDINET URL should point to disclosure2dl direct PDF."""
         resp = await client.get("/api/filings/S100API1")
         data = resp.json()
         url = data["edinet_url"]
         assert "S100S100" not in url
-        assert url.endswith("S100API1,0,0=")
+        assert url == "https://disclosure2dl.edinet-fsa.go.jp/searchdocument/pdf/S100API1.pdf"
 
 
 class TestStatsAPI:

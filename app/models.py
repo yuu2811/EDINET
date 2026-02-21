@@ -119,15 +119,13 @@ class Filing(Base):
             "is_special_exemption": self.is_special_exemption,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "xbrl_parsed": self.xbrl_parsed,
-            # EDINET disclosure portal (public, no API key required)
-            # doc_id is already a full ID like "S100TDUA"
-            # URL format: WZEK0040.aspx?S100XXXX,0,0=
-            # The trailing ",0,0=" is required by EDINET's ASP.NET backend;
-            # without it the server returns "規定外操作" (irregular operation).
-            # This format was confirmed working via Google-indexed EDINET pages.
+            # EDINET direct PDF link (public, no API key / session required)
+            # disclosure2dl (download server) hosts PDFs at a stable URL.
+            # The old WZEK0040.aspx viewer now rejects direct access with
+            # "規定外操作" after an EDINET system update (late 2025).
             "edinet_url": (
-                "https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx"
-                f"?{self.doc_id},0,0="
+                "https://disclosure2dl.edinet-fsa.go.jp"
+                f"/searchdocument/pdf/{self.doc_id}.pdf"
             )
             if self.doc_id
             else None,
