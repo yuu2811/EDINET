@@ -372,6 +372,61 @@ class TestPDFProxyEndpoint:
         assert resp.status_code == 400
         assert "Invalid" in resp.json()["error"]
 
+
+    @pytest.mark.asyncio
+    async def test_pdf_proxy_disclosure2dl_zip_payload(self, client):
+        """Fallback should extract PDF when disclosure2dl returns ZIP payload."""
+        from unittest.mock import patch, AsyncMock
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("nested/report.pdf", b"%PDF-1.4 from zip fallback")
+
+        with patch(
+            "app.edinet.edinet_client.download_pdf",
+            new_callable=AsyncMock,
+            return_value=None,
+        ), patch("httpx.AsyncClient") as mock_httpx_cls:
+            mock_resp = AsyncMock()
+            mock_resp.status_code = 200
+            mock_resp.content = buf.getvalue()
+            mock_hc = AsyncMock()
+            mock_hc.get = AsyncMock(return_value=mock_resp)
+            mock_hc.__aenter__ = AsyncMock(return_value=mock_hc)
+            mock_hc.__aexit__ = AsyncMock(return_value=False)
+            mock_httpx_cls.return_value = mock_hc
+
+            resp = await client.get("/api/documents/S100API1/pdf")
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/pdf"
+        assert resp.content.startswith(b"%PDF-1.4")
+
+
+    @pytest.mark.asyncio
+    async def test_pdf_proxy_disclosure2dl_with_leading_whitespace(self, client):
+        """Fallback should serve PDF even if header is not at byte 0."""
+        from unittest.mock import patch, AsyncMock
+
+        with patch("app.edinet.edinet_client.download_pdf", new_callable=AsyncMock, return_value=None), \
+             patch("httpx.AsyncClient") as mock_httpx_cls:
+            mock_resp = AsyncMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b"\xef\xbb\xbf\n%PDF-1.4 fallback pdf"
+            mock_hc = AsyncMock()
+            mock_hc.get = AsyncMock(return_value=mock_resp)
+            mock_hc.__aenter__ = AsyncMock(return_value=mock_hc)
+            mock_hc.__aexit__ = AsyncMock(return_value=False)
+            mock_httpx_cls.return_value = mock_hc
+
+            resp = await client.get("/api/documents/S100API1/pdf")
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/pdf"
+        assert resp.content == mock_resp.content
+
     @pytest.mark.asyncio
     async def test_pdf_proxy_all_stages_fail(self, client):
         """Should return 404 when both EDINET API and disclosure2dl fail."""
