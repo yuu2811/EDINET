@@ -2544,10 +2544,6 @@ function initDateNav() {
         }
     });
 
-    const exportBtn = document.getElementById('date-export');
-    if (exportBtn) {
-        exportBtn.addEventListener('click', () => exportFilingsCSV());
-    }
 }
 
 function navigateDate(days) {
@@ -2561,52 +2557,6 @@ function navigateDate(days) {
     document.getElementById('date-picker').value = state.selectedDate;
     loadFilings();
     loadStats();
-}
-
-function csvEscape(val) {
-    const s = String(val);
-    if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
-        return '"' + s.replace(/"/g, '""') + '"';
-    }
-    return s;
-}
-
-function exportFilingsCSV() {
-    if (state.filings.length === 0) return;
-
-    const headers = [
-        '提出日時', '提出者', '対象会社', '証券コード',
-        '保有割合(%)', '前回保有割合(%)', '変動(%)',
-        '保有株数', '書類種別', '訂正', 'EDINET URL'
-    ];
-
-    const rows = state.filings.map(f => [
-        f.submit_date_time || '',
-        f.holder_name || f.filer_name || '',
-        f.target_company_name || '',
-        f.target_sec_code || f.sec_code || '',
-        f.holding_ratio != null ? f.holding_ratio.toFixed(2) : '',
-        f.previous_holding_ratio != null ? f.previous_holding_ratio.toFixed(2) : '',
-        f.ratio_change != null ? f.ratio_change.toFixed(2) : '',
-        f.shares_held != null ? String(f.shares_held) : '',
-        f.doc_description || '',
-        f.is_amendment ? 'Yes' : 'No',
-        f.edinet_url || (f.pdf_url ? (location.origin + f.pdf_url) : '')
-    ]);
-
-    const bom = '\uFEFF';
-    const csvContent = bom + [
-        headers.map(csvEscape).join(','),
-        ...rows.map(r => r.map(csvEscape).join(','))
-    ].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `edinet_filings_${state.selectedDate}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
 }
 
 // ---------------------------------------------------------------------------

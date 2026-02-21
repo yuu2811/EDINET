@@ -1936,16 +1936,6 @@ body {
     cursor: not-allowed;
 }
 
-.date-export-btn {
-    color: var(--green);
-    border-color: var(--green-dim);
-}
-
-.date-export-btn:hover {
-    background: var(--green-dim);
-    color: #fff;
-}
-
 .date-picker {
     background: var(--bg-input);
     border: 1px solid var(--border-primary);
