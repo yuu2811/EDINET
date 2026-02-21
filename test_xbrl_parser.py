@@ -173,6 +173,54 @@ JPLVH_INLINE_SEPARATE_PREV = """<?xml version="1.0" encoding="UTF-8"?>
 """.encode("utf-8")
 
 
+# --- Test 10: Traditional XBRL with RatioOfShareCertificatesEtcAtTimeOfPreviousReport ---
+# Real EDINET taxonomy uses this element name for 前回保有割合 (previous holding ratio)
+# with the SAME FilingDateInstant context as the current ratio.
+JPLVH_AT_TIME_OF_PREVIOUS = """<?xml version="1.0" encoding="UTF-8"?>
+<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance"
+            xmlns:jplvh_cor="http://disclosure.edinet-fsa.go.jp/taxonomy/jplvh/2023-11-01/jplvh_cor">
+  <jplvh_cor:HoldingRatioOfShareCertificatesEtc contextRef="FilingDateInstant" unitRef="pure" decimals="4">8.34</jplvh_cor:HoldingRatioOfShareCertificatesEtc>
+  <jplvh_cor:RatioOfShareCertificatesEtcAtTimeOfPreviousReport contextRef="FilingDateInstant" unitRef="pure" decimals="4">7.12</jplvh_cor:RatioOfShareCertificatesEtcAtTimeOfPreviousReport>
+  <jplvh_cor:Name contextRef="FilingDateInstant">三井住友信託銀行株式会社</jplvh_cor:Name>
+  <jplvh_cor:NameOfIssuer contextRef="FilingDateInstant">ＫＤＤＩ株式会社</jplvh_cor:NameOfIssuer>
+  <jplvh_cor:SecurityCodeOfIssuer contextRef="FilingDateInstant">94330</jplvh_cor:SecurityCodeOfIssuer>
+  <jplvh_cor:TotalNumberOfStocksEtcHeld contextRef="FilingDateInstant" unitRef="shares" decimals="0">7600000</jplvh_cor:TotalNumberOfStocksEtcHeld>
+  <jplvh_cor:PurposeOfHolding contextRef="FilingDateInstant">純投資</jplvh_cor:PurposeOfHolding>
+</xbrli:xbrl>
+""".encode("utf-8")
+
+# --- Test 11: Inline XBRL with RatioOfShareCertificatesEtcAtTimeOfPreviousReport ---
+JPLVH_INLINE_AT_TIME_OF_PREVIOUS = """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"
+      xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
+      xmlns:jplvh_cor="http://disclosure.edinet-fsa.go.jp/taxonomy/jplvh/2023-11-01/jplvh_cor"
+      xmlns:xbrli="http://www.xbrl.org/2003/instance">
+<head><title>Large Shareholding Change Report</title></head>
+<body>
+<div>
+  <ix:header>
+    <ix:references>
+      <link:schemaRef xmlns:link="http://www.xbrl.org/2003/linkbase" xlink:type="simple" xlink:href="jplvh060300-q1r-001_E00001-000.xsd" xmlns:xlink="http://www.w3.org/1999/xlink"/>
+    </ix:references>
+    <ix:resources>
+      <xbrli:context id="FilingDateInstant"><xbrli:entity><xbrli:identifier scheme="http://disclosure.edinet-fsa.go.jp">E00001</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2024-06-15</xbrli:instant></xbrli:period></xbrli:context>
+      <xbrli:unit id="pure"><xbrli:measure>xbrli:pure</xbrli:measure></xbrli:unit>
+      <xbrli:unit id="shares"><xbrli:measure>xbrli:shares</xbrli:measure></xbrli:unit>
+    </ix:resources>
+  </ix:header>
+  <p>Filer: <ix:nonNumeric name="jplvh_cor:Name" contextRef="FilingDateInstant">三菱UFJ信託銀行株式会社</ix:nonNumeric></p>
+  <p>Issuer: <ix:nonNumeric name="jplvh_cor:NameOfIssuer" contextRef="FilingDateInstant">日本電信電話株式会社</ix:nonNumeric></p>
+  <p>Code: <ix:nonNumeric name="jplvh_cor:SecurityCodeOfIssuer" contextRef="FilingDateInstant">94320</ix:nonNumeric></p>
+  <p>Current ratio: <ix:nonFraction name="jplvh_cor:HoldingRatioOfShareCertificatesEtc" contextRef="FilingDateInstant" unitRef="pure" decimals="2">6.25</ix:nonFraction>%%</p>
+  <p>Previous ratio: <ix:nonFraction name="jplvh_cor:RatioOfShareCertificatesEtcAtTimeOfPreviousReport" contextRef="FilingDateInstant" unitRef="pure" decimals="2">5.10</ix:nonFraction>%%</p>
+  <p>Shares: <ix:nonFraction name="jplvh_cor:TotalNumberOfStocksEtcHeld" contextRef="FilingDateInstant" unitRef="shares" decimals="0">9100000</ix:nonFraction></p>
+  <p>Purpose: <ix:nonNumeric name="jplvh_cor:PurposeOfHolding" contextRef="FilingDateInstant">純投資</ix:nonNumeric></p>
+</div>
+</body>
+</html>
+""".encode("utf-8")
+
+
 def run_tests():
     client = EdinetClient()
     passed = 0
@@ -282,6 +330,30 @@ def run_tests():
     check("T9", r9, "target_company_name", "ファーストリテイリング株式会社")
     check("T9", r9, "target_sec_code", "99830")
     check("T9", r9, "shares_held", 4500000)
+
+    # Test 10: Traditional XBRL with RatioOfShareCertificatesEtcAtTimeOfPreviousReport
+    print("\n=== Test 10: Traditional XBRL with AtTimeOfPreviousReport element ===")
+    z10 = _make_zip({"XBRL/PublicDoc/report.xbrl": JPLVH_AT_TIME_OF_PREVIOUS})
+    r10 = client.parse_xbrl_for_holding_data(z10)
+    print(f"  Result: {r10}")
+    check("T10", r10, "holding_ratio", 8.34)
+    check("T10", r10, "previous_holding_ratio", 7.12)
+    check("T10", r10, "holder_name", "三井住友信託銀行株式会社")
+    check("T10", r10, "target_company_name", "ＫＤＤＩ株式会社")
+    check("T10", r10, "target_sec_code", "94330")
+    check("T10", r10, "shares_held", 7600000)
+
+    # Test 11: Inline XBRL with RatioOfShareCertificatesEtcAtTimeOfPreviousReport
+    print("\n=== Test 11: Inline XBRL with AtTimeOfPreviousReport element ===")
+    z11 = _make_zip({"XBRL/PublicDoc/report.htm": JPLVH_INLINE_AT_TIME_OF_PREVIOUS})
+    r11 = client.parse_xbrl_for_holding_data(z11)
+    print(f"  Result: {r11}")
+    check("T11", r11, "holding_ratio", 6.25)
+    check("T11", r11, "previous_holding_ratio", 5.10)
+    check("T11", r11, "holder_name", "三菱UFJ信託銀行株式会社")
+    check("T11", r11, "target_company_name", "日本電信電話株式会社")
+    check("T11", r11, "target_sec_code", "94320")
+    check("T11", r11, "shares_held", 9100000)
 
     print(f"\n{'='*50}")
     print(f"Results: {passed} passed, {failed} failed")

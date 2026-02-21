@@ -349,6 +349,7 @@ class EdinetClient:
         # Must match both jpcrp_cor and jplvh_cor taxonomy:
         #   jpcrp_cor: TotalShareholdingRatioOfShareCertificatesEtc
         #   jplvh_cor: HoldingRatioOfShareCertificatesEtc
+        #   jplvh_cor: RatioOfShareCertificatesEtcAtTimeOfPreviousReport (前回保有割合)
         # Priority: specific > generic.  Exclude abstract elements
         # and individual shareholder entries (EachLargeShareholder1, etc.)
         ratio_patterns = [
@@ -356,6 +357,7 @@ class EdinetClient:
             "TotalShareholdingRatioOfShareCertificatesEtc",  # jpcrp_cor
             "TotalShareholdingRatio",
             "RatioOfShareholdingToTotalIssuedShares",
+            "RatioOfShareCertificatesEtcAtTimeOfPreviousReport",  # jplvh_cor 前回保有割合
         ]
         for pattern in ratio_patterns:
             elements = tree.xpath(
@@ -391,7 +393,7 @@ class EdinetClient:
                                 result["holding_ratio"] = val
                     except (ValueError, AttributeError):
                         continue
-                if result["holding_ratio"] is not None:
+                if result["holding_ratio"] is not None and result["previous_holding_ratio"] is not None:
                     break
 
         # Fallback: broader search if specific patterns didn't match
@@ -1043,11 +1045,13 @@ def _matches_ratio_pattern(name: str) -> bool:
     Must match both jpcrp_cor (有報) and jplvh_cor (大量保有) taxonomy:
       jpcrp_cor: TotalShareholdingRatioOfShareCertificatesEtc
       jplvh_cor: HoldingRatioOfShareCertificatesEtc
+      jplvh_cor: RatioOfShareCertificatesEtcAtTimeOfPreviousReport (前回保有割合)
     """
     patterns = (
         "HoldingRatio",         # matches both jplvh "HoldingRatio..." and jpcrp "ShareholdingRatio..."
         "ShareholdingRatio",    # explicit jpcrp_cor match
         "RatioOfShareholdingToTotalIssuedShares",
+        "RatioOfShareCertificatesEtc",  # jplvh_cor 前回保有割合 element
     )
     # Exclude per-shareholder entries and abstract elements
     if any(skip in name for skip in ("Abstract", "EachLargeShareholder", "JointHolder")):
