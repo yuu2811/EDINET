@@ -124,6 +124,55 @@ JPLVH_INLINE_XBRL = """<?xml version="1.0" encoding="UTF-8"?>
 """.encode("utf-8")
 
 
+# --- Test 8: Traditional XBRL with separate PreviousHoldingRatio element (real EDINET pattern) ---
+# In real EDINET filings, the previous holding ratio uses a DIFFERENT element name
+# (PreviousHoldingRatioOfShareCertificatesEtc) with the SAME contextRef (FilingDateInstant),
+# NOT the same element with PriorFilingDateInstant context.
+JPLVH_SEPARATE_PREV_ELEMENT = """<?xml version="1.0" encoding="UTF-8"?>
+<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance"
+            xmlns:jplvh_cor="http://disclosure.edinet-fsa.go.jp/taxonomy/jplvh/2023-11-01/jplvh_cor">
+  <jplvh_cor:HoldingRatioOfShareCertificatesEtc contextRef="FilingDateInstant" unitRef="pure" decimals="4">12.50</jplvh_cor:HoldingRatioOfShareCertificatesEtc>
+  <jplvh_cor:PreviousHoldingRatioOfShareCertificatesEtc contextRef="FilingDateInstant" unitRef="pure" decimals="4">11.20</jplvh_cor:PreviousHoldingRatioOfShareCertificatesEtc>
+  <jplvh_cor:Name contextRef="FilingDateInstant">野村アセットマネジメント株式会社</jplvh_cor:Name>
+  <jplvh_cor:NameOfIssuer contextRef="FilingDateInstant">任天堂株式会社</jplvh_cor:NameOfIssuer>
+  <jplvh_cor:SecurityCodeOfIssuer contextRef="FilingDateInstant">78310</jplvh_cor:SecurityCodeOfIssuer>
+  <jplvh_cor:TotalNumberOfStocksEtcHeld contextRef="FilingDateInstant" unitRef="shares" decimals="0">3200000</jplvh_cor:TotalNumberOfStocksEtcHeld>
+  <jplvh_cor:PurposeOfHolding contextRef="FilingDateInstant">純投資</jplvh_cor:PurposeOfHolding>
+</xbrli:xbrl>
+""".encode("utf-8")
+
+# --- Test 9: Inline XBRL with separate PreviousHoldingRatio element (real EDINET pattern) ---
+JPLVH_INLINE_SEPARATE_PREV = """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"
+      xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
+      xmlns:jplvh_cor="http://disclosure.edinet-fsa.go.jp/taxonomy/jplvh/2023-11-01/jplvh_cor"
+      xmlns:xbrli="http://www.xbrl.org/2003/instance">
+<head><title>Large Shareholding Change Report</title></head>
+<body>
+<div>
+  <ix:header>
+    <ix:references>
+      <link:schemaRef xmlns:link="http://www.xbrl.org/2003/linkbase" xlink:type="simple" xlink:href="jplvh060300-q1r-001_E00001-000.xsd" xmlns:xlink="http://www.w3.org/1999/xlink"/>
+    </ix:references>
+    <ix:resources>
+      <xbrli:context id="FilingDateInstant"><xbrli:entity><xbrli:identifier scheme="http://disclosure.edinet-fsa.go.jp">E00001</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2024-06-15</xbrli:instant></xbrli:period></xbrli:context>
+      <xbrli:unit id="pure"><xbrli:measure>xbrli:pure</xbrli:measure></xbrli:unit>
+      <xbrli:unit id="shares"><xbrli:measure>xbrli:shares</xbrli:measure></xbrli:unit>
+    </ix:resources>
+  </ix:header>
+  <p>Filer: <ix:nonNumeric name="jplvh_cor:Name" contextRef="FilingDateInstant">大和アセットマネジメント株式会社</ix:nonNumeric></p>
+  <p>Issuer: <ix:nonNumeric name="jplvh_cor:NameOfIssuer" contextRef="FilingDateInstant">ファーストリテイリング株式会社</ix:nonNumeric></p>
+  <p>Code: <ix:nonNumeric name="jplvh_cor:SecurityCodeOfIssuer" contextRef="FilingDateInstant">99830</ix:nonNumeric></p>
+  <p>Current ratio: <ix:nonFraction name="jplvh_cor:HoldingRatioOfShareCertificatesEtc" contextRef="FilingDateInstant" unitRef="pure" decimals="2">6.75</ix:nonFraction>%%</p>
+  <p>Previous ratio: <ix:nonFraction name="jplvh_cor:PreviousHoldingRatioOfShareCertificatesEtc" contextRef="FilingDateInstant" unitRef="pure" decimals="2">5.50</ix:nonFraction>%%</p>
+  <p>Shares: <ix:nonFraction name="jplvh_cor:TotalNumberOfStocksEtcHeld" contextRef="FilingDateInstant" unitRef="shares" decimals="0">4500000</ix:nonFraction></p>
+  <p>Purpose: <ix:nonNumeric name="jplvh_cor:PurposeOfHolding" contextRef="FilingDateInstant">純投資</ix:nonNumeric></p>
+</div>
+</body>
+</html>
+""".encode("utf-8")
+
+
 def run_tests():
     client = EdinetClient()
     passed = 0
@@ -209,6 +258,30 @@ def run_tests():
     check("T7", r7, "target_sec_code", "72030")
     check("T7", r7, "shares_held", 8300000)
     check("T7", r7, "purpose_of_holding", "純投資")
+
+    # Test 8: Traditional XBRL with separate PreviousHoldingRatio element (real EDINET pattern)
+    print("\n=== Test 8: Traditional XBRL with PreviousHoldingRatio element ===")
+    z8 = _make_zip({"XBRL/PublicDoc/report.xbrl": JPLVH_SEPARATE_PREV_ELEMENT})
+    r8 = client.parse_xbrl_for_holding_data(z8)
+    print(f"  Result: {r8}")
+    check("T8", r8, "holding_ratio", 12.50)
+    check("T8", r8, "previous_holding_ratio", 11.20)
+    check("T8", r8, "holder_name", "野村アセットマネジメント株式会社")
+    check("T8", r8, "target_company_name", "任天堂株式会社")
+    check("T8", r8, "target_sec_code", "78310")
+    check("T8", r8, "shares_held", 3200000)
+
+    # Test 9: Inline XBRL with separate PreviousHoldingRatio element (real EDINET pattern)
+    print("\n=== Test 9: Inline XBRL with PreviousHoldingRatio element ===")
+    z9 = _make_zip({"XBRL/PublicDoc/report.htm": JPLVH_INLINE_SEPARATE_PREV})
+    r9 = client.parse_xbrl_for_holding_data(z9)
+    print(f"  Result: {r9}")
+    check("T9", r9, "holding_ratio", 6.75)
+    check("T9", r9, "previous_holding_ratio", 5.50)
+    check("T9", r9, "holder_name", "大和アセットマネジメント株式会社")
+    check("T9", r9, "target_company_name", "ファーストリテイリング株式会社")
+    check("T9", r9, "target_sec_code", "99830")
+    check("T9", r9, "shares_held", 4500000)
 
     print(f"\n{'='*50}")
     print(f"Results: {passed} passed, {failed} failed")
