@@ -753,16 +753,26 @@ class EdinetClient:
         try:
             with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
                 info["zip_valid"] = True
-                info["files"] = zf.namelist()
-                info["xbrl_files"] = [
-                    f for f in info["files"]
-                    if f.endswith(".xbrl") and "PublicDoc" in f
-                ]
-                info["htm_files"] = [
-                    f for f in info["files"]
-                    if "PublicDoc" in f
-                    and (f.endswith(".htm") or f.endswith(".xhtml"))
-                ]
+                all_files = zf.namelist()
+                info["files"] = all_files
+
+                # Use same file discovery as parse_xbrl_for_holding_data
+                xbrl_pub = [f for f in all_files
+                            if f.endswith(".xbrl") and "PublicDoc" in f]
+                xbrl_any = [f for f in all_files
+                            if f.endswith(".xbrl")
+                            and "AuditDoc" not in f
+                            and "__MACOSX" not in f]
+                info["xbrl_files"] = xbrl_pub or xbrl_any
+
+                htm_pub = [f for f in all_files
+                           if "PublicDoc" in f
+                           and (f.endswith(".htm") or f.endswith(".xhtml"))]
+                htm_any = [f for f in all_files
+                           if (f.endswith(".htm") or f.endswith(".xhtml"))
+                           and "AuditDoc" not in f
+                           and "__MACOSX" not in f]
+                info["htm_files"] = htm_pub or htm_any
 
                 # Sample elements from .xbrl files
                 for xf in info["xbrl_files"][:1]:
@@ -785,27 +795,44 @@ class EdinetClient:
                         info["xbrl_sample_elements"] = [{"error": str(e)}]
 
                 # Sample elements from .htm files (inline XBRL)
+                # Use XML parser (same as _extract_inline_via_xml) to preserve namespaces
                 for hf in info["htm_files"][:1]:
                     try:
-                        parser = etree.HTMLParser(encoding="utf-8")
-                        tree = etree.fromstring(zf.read(hf), parser)
+                        htm_bytes = zf.read(hf)
+                        tree = etree.fromstring(htm_bytes)
                         elements = []
                         for elem in tree.iter():
                             tag = elem.tag if isinstance(elem.tag, str) else ""
-                            local_tag = tag.rsplit("}", 1)[-1].lower() if "}" in tag else tag.lower()
-                            if local_tag in ("nonfraction", "ix:nonfraction",
-                                             "nonnumeric", "ix:nonnumeric"):
+                            # Check for ix:nonFraction / ix:nonNumeric via namespace URI
+                            if "inlineXBRL" in tag:
+                                local_tag = tag.rsplit("}", 1)[-1] if "}" in tag else tag
                                 name = elem.get("name", "")
                                 text = "".join(elem.itertext()).strip()
                                 elements.append({
                                     "tag": local_tag,
                                     "name": name,
                                     "text": text[:200],
-                                    "contextRef": elem.get("contextref", "")
-                                                  or elem.get("contextRef", ""),
+                                    "contextRef": elem.get("contextRef", ""),
                                     "format": elem.get("format", ""),
                                     "scale": elem.get("scale", ""),
                                 })
+                        info["htm_sample_elements"] = elements[:80]
+                    except etree.XMLSyntaxError:
+                        # Fallback: use regex to show what's in the file
+                        text = htm_bytes.decode("utf-8", errors="replace")
+                        nf_matches = re.findall(
+                            r'<[^>]*:nonFraction[^>]*name=["\']([^"\']+)["\'][^>]*>(.*?)</[^>]*:nonFraction>',
+                            text, re.DOTALL,
+                        )
+                        nn_matches = re.findall(
+                            r'<[^>]*:nonNumeric[^>]*name=["\']([^"\']+)["\'][^>]*>(.*?)</[^>]*:nonNumeric>',
+                            text, re.DOTALL,
+                        )
+                        elements = []
+                        for name, val in nf_matches:
+                            elements.append({"tag": "nonFraction(regex)", "name": name, "text": val.strip()[:200]})
+                        for name, val in nn_matches:
+                            elements.append({"tag": "nonNumeric(regex)", "name": name, "text": val.strip()[:200]})
                         info["htm_sample_elements"] = elements[:80]
                     except Exception as e:
                         info["htm_sample_elements"] = [{"error": str(e)}]
