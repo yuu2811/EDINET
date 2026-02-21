@@ -3,7 +3,7 @@
 Data priority for company names:
   1. EDINET Filing DB (金融庁 data – authoritative)
   2. EDINET code list (金融庁 code master – fetched at startup)
-  3. External APIs (stooq, Yahoo Finance – live market data)
+  3. External APIs (Google Finance, stooq, Yahoo Finance, Kabutan – live market data)
   4. _KNOWN_STOCKS fallback (hardcoded, used only when all else fails)
 """
 
@@ -13,6 +13,7 @@ import hashlib
 import io
 import logging
 import math
+import re
 import time
 from datetime import date, timedelta
 
@@ -616,6 +617,227 @@ async def _fetch_yahoo_quote_summary(
 
 
 # ---------------------------------------------------------------------------
+# Google Finance scraper (free, no API key)
+# ---------------------------------------------------------------------------
+
+_GOOGLE_FINANCE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;"
+        "q=0.9,image/webp,*/*;q=0.8"
+    ),
+}
+
+
+async def _fetch_google_finance(
+    client: httpx.AsyncClient,
+    ticker: str,
+) -> dict:
+    """Scrape current stock price from Google Finance page.
+
+    Google Finance has no public REST API, but stock data is embedded in
+    the HTML page.  This scraper uses multiple regex strategies to extract
+    the current price — from most to least reliable.
+
+    URL format: https://www.google.com/finance/quote/{TICKER}:TYO
+    """
+    url = f"https://www.google.com/finance/quote/{ticker}:TYO"
+    result: dict = {}
+
+    try:
+        resp = await client.get(
+            url,
+            headers=_GOOGLE_FINANCE_HEADERS,
+            follow_redirects=True,
+        )
+        resp.raise_for_status()
+    except Exception as exc:
+        logger.debug("Google Finance request failed for %s: %s", ticker, exc)
+        return result
+
+    html = resp.text
+
+    # Strategy 1: data-last-price attribute (used in some Google Finance versions)
+    m = re.search(r'data-last-price="([\d,.]+)"', html)
+    if m:
+        try:
+            result["current_price"] = float(m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+
+    # Strategy 2: data-currency-code confirms JPY pricing
+    m = re.search(r'data-currency-code="(\w+)"', html)
+    if m:
+        result["currency"] = m.group(1)
+
+    # Strategy 3: Previous close from data attribute
+    m = re.search(r'data-previous-close="([\d,.]+)"', html)
+    if m:
+        try:
+            result["previous_close"] = float(m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+
+    # Strategy 4: Look for price in JSON-LD structured data
+    if "current_price" not in result:
+        # Google sometimes embeds structured data with price info
+        for pattern in [
+            r'"price"\s*:\s*"?([\d,]+(?:\.\d+)?)"?',
+            r'"currentPrice"\s*:\s*"?([\d,]+(?:\.\d+)?)"?',
+        ]:
+            m = re.search(pattern, html)
+            if m:
+                try:
+                    price = float(m.group(1).replace(",", ""))
+                    if 1 < price < 10_000_000:  # sanity check for JPY
+                        result["current_price"] = price
+                        break
+                except ValueError:
+                    continue
+
+    # Strategy 5: Extract the large displayed price near the ticker
+    # Google Finance shows the price prominently, typically as the first
+    # large number with ¥ or in a specific div after the ticker heading.
+    if "current_price" not in result:
+        # Pattern: ¥X,XXX or ¥X,XXX.XX  (with or without comma)
+        yen_prices = re.findall(r'[¥￥]([\d,]+(?:\.\d{1,2})?)', html)
+        for p in yen_prices:
+            try:
+                val = float(p.replace(",", ""))
+                if 1 < val < 10_000_000:
+                    result["current_price"] = val
+                    break
+            except ValueError:
+                continue
+
+    if result.get("current_price"):
+        logger.debug(
+            "Google Finance price for %s: %s", ticker, result["current_price"]
+        )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Kabutan (株探) scraper  –  free Japanese stock data
+# ---------------------------------------------------------------------------
+
+async def _fetch_kabutan_quote(
+    client: httpx.AsyncClient,
+    ticker: str,
+) -> dict:
+    """Scrape current stock price and company name from Kabutan (株探).
+
+    Kabutan (https://kabutan.jp) is one of Japan's most popular free
+    stock information sites.  The stock page has a stable HTML structure
+    making it more reliable than Google Finance for Japanese stocks.
+
+    Returns dict with optional keys: current_price, name, market_cap.
+    """
+    url = f"https://kabutan.jp/stock/?code={ticker}"
+    result: dict = {}
+
+    try:
+        resp = await client.get(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Accept-Language": "ja,en;q=0.9",
+            },
+            follow_redirects=True,
+        )
+        resp.raise_for_status()
+    except Exception as exc:
+        logger.debug("Kabutan request failed for %s: %s", ticker, exc)
+        return result
+
+    html = resp.text
+
+    # Company name: <h2>...<h3>社名</h3></h2> or <title>【XXXX】社名 ... </title>
+    m = re.search(r'<title>[^<]*?】\s*(.+?)\s*[\|｜<]', html)
+    if m:
+        name = m.group(1).strip()
+        # Remove trailing stock info like "の株価・株式情報"
+        name = re.sub(r'の株価.*$', '', name).strip()
+        if name:
+            result["name"] = name
+
+    # Current price: Kabutan shows the price in a <span class="kabuprice"> or
+    # in the stock_price table.  Look for multiple patterns.
+
+    # Pattern 1: <td class="stock_price">X,XXX</td> or similar
+    price_patterns = [
+        # 株価 (stock price) in the main price display area
+        r'class="[^"]*stock_price[^"]*"[^>]*>\s*([,\d]+(?:\.\d+)?)',
+        # kabuprice class
+        r'class="[^"]*kabuprice[^"]*"[^>]*>\s*([,\d]+(?:\.\d+)?)',
+        # The "現在値" (current price) cell
+        r'現在値[^<]*</[^>]+>\s*<[^>]+>\s*([,\d]+(?:\.\d+)?)',
+        # Price in a dd or span near 株価
+        r'株価[^<]*<[^>]+>\s*([,\d]+(?:\.\d+)?)',
+    ]
+
+    for pattern in price_patterns:
+        m = re.search(pattern, html)
+        if m:
+            try:
+                price_str = m.group(1).replace(",", "")
+                price = float(price_str)
+                if 1 < price < 10_000_000:
+                    result["current_price"] = price
+                    break
+            except ValueError:
+                continue
+
+    # Fallback: just find the first comma-separated number in a prominent position
+    if "current_price" not in result:
+        # Look near the beginning of the page body for a prominent number
+        body_start = html.find('<body')
+        if body_start > 0:
+            body_chunk = html[body_start:body_start + 5000]
+            # Find numbers that look like stock prices (3-7 digits, with commas)
+            nums = re.findall(r'>([,\d]{3,9}(?:\.\d{1,2})?)<', body_chunk)
+            for n in nums:
+                try:
+                    val = float(n.replace(",", ""))
+                    if 50 < val < 10_000_000:
+                        result["current_price"] = val
+                        break
+                except ValueError:
+                    continue
+
+    # Market cap: sometimes shown as "時価総額" followed by a number in 億 or 百万
+    m = re.search(r'時価総額[^<]*?([,\d]+(?:\.\d+)?)\s*(?:百万|億)', html)
+    if m:
+        try:
+            mc_str = m.group(1).replace(",", "")
+            mc_val = float(mc_str)
+            # Check if unit is 百万 (millions) or 億 (100 millions)
+            if "億" in html[m.start():m.end() + 5]:
+                result["market_cap"] = mc_val * 100_000_000
+            else:
+                result["market_cap"] = mc_val * 1_000_000
+        except ValueError:
+            pass
+
+    if result.get("current_price"):
+        logger.debug(
+            "Kabutan price for %s: %s", ticker, result["current_price"]
+        )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
 
@@ -626,10 +848,16 @@ async def get_stock_data(sec_code: str) -> dict:
     Accepts EDINET-style 5-digit codes (e.g. ``39320``) or plain 4-digit
     TSE codes (e.g. ``3932``).
 
+    Data sources (all free, no API keys required for stock prices):
+      - stooq.com: price history (CSV) + current quote
+      - Google Finance: current price (HTML scraping)
+      - Yahoo Finance: chart meta + quoteSummary (JSON)
+      - Kabutan (株探): current price + company name (HTML scraping)
+
     Company name priority (金融庁データ優先):
       1. EDINET Filing DB (大量保有報告書のXBRLから抽出)
       2. EDINET code list (金融庁コードマスター)
-      3. External APIs (stooq / Yahoo Finance)
+      3. External APIs (Google Finance / stooq / Yahoo / Kabutan)
       4. _KNOWN_STOCKS fallback (ハードコード, 最終手段)
     """
     global _external_apis_failed
@@ -660,37 +888,70 @@ async def get_stock_data(sec_code: str) -> dict:
     api_name = None  # name from external APIs (lower priority)
     market_cap = None
     pbr = None
+    price_source = "fallback"
 
     # --- Step 2: Fetch live market data from external APIs ---
+    # 6 sources fetched in parallel (all free, no API keys):
+    #   - stooq: price history + current quote (CSV API)
+    #   - Yahoo Finance: chart meta + quoteSummary (JSON API)
+    #   - Google Finance: page scraping (HTML)
+    #   - Kabutan (株探): page scraping (HTML, Japanese stock specialist)
+    #
     # If external APIs previously failed for ALL sources, skip straight to
     # fallback to avoid 10-second timeouts on every request.
     if not _external_apis_failed:
-        async with httpx.AsyncClient(timeout=2.0) as client:
+        async with httpx.AsyncClient(timeout=4.0) as client:
             history_task = asyncio.create_task(_fetch_stooq_history(client, ticker))
             quote_task = asyncio.create_task(_fetch_stooq_quote(client, ticker))
             yahoo_meta_task = asyncio.create_task(_fetch_yahoo_finance_meta(client, ticker))
             yahoo_summary_task = asyncio.create_task(_fetch_yahoo_quote_summary(client, ticker))
+            google_task = asyncio.create_task(_fetch_google_finance(client, ticker))
+            kabutan_task = asyncio.create_task(_fetch_kabutan_quote(client, ticker))
 
-            history, quote, yahoo_meta, yahoo_summary = await asyncio.gather(
+            (
+                history, quote, yahoo_meta, yahoo_summary,
+                google_data, kabutan_data,
+            ) = await asyncio.gather(
                 history_task, quote_task, yahoo_meta_task, yahoo_summary_task,
+                google_task, kabutan_task,
             )
 
-        # Merge results – prefer Yahoo for market cap / PBR, stooq for prices
+        # Merge results – prefer Yahoo for market cap / PBR, stooq for prices,
+        # Google Finance and Kabutan as additional price sources
         weekly_prices = history
 
-        current_price = (
-            quote.get("current_price")
-            or yahoo_summary.get("current_price")
-            or yahoo_meta.get("current_price")
-        )
+        # Current price priority (with source tracking):
+        #   1. stooq (most reliable for Japanese stocks)
+        #   2. Google Finance (real-time, free)
+        #   3. Yahoo Finance quoteSummary
+        #   4. Yahoo Finance chart meta
+        #   5. Kabutan (株探)
+        price_source = "fallback"
+        for source_name, source_price in [
+            ("stooq", quote.get("current_price")),
+            ("google_finance", google_data.get("current_price")),
+            ("yahoo_summary", yahoo_summary.get("current_price")),
+            ("yahoo_chart", yahoo_meta.get("current_price")),
+            ("kabutan", kabutan_data.get("current_price")),
+        ]:
+            if source_price is not None:
+                current_price = source_price
+                price_source = source_name
+                break
 
+        # Company name from APIs (lower priority than EDINET)
         api_name = (
             yahoo_summary.get("name")
             or yahoo_meta.get("name")
+            or kabutan_data.get("name")
             or quote.get("name")
         )
 
-        market_cap = yahoo_summary.get("market_cap") or yahoo_meta.get("market_cap")
+        market_cap = (
+            yahoo_summary.get("market_cap")
+            or yahoo_meta.get("market_cap")
+            or kabutan_data.get("market_cap")
+        )
         shares_outstanding = yahoo_summary.get("shares_outstanding")
         pbr = yahoo_summary.get("pbr")
 
@@ -702,13 +963,17 @@ async def get_stock_data(sec_code: str) -> dict:
         if best_shares and current_price:
             market_cap = best_shares * current_price
         elif not market_cap:
-            market_cap = yahoo_summary.get("market_cap") or yahoo_meta.get("market_cap")
+            market_cap = (
+                yahoo_summary.get("market_cap")
+                or yahoo_meta.get("market_cap")
+                or kabutan_data.get("market_cap")
+            )
 
         # PBR: EDINET BPS is more accurate when available
         if edinet_bps and current_price and edinet_bps > 0:
             pbr = round(current_price / edinet_bps, 2)
 
-        # If everything came back empty, mark external APIs as failed
+        # If everything came back empty from ALL sources, mark as failed
         # so subsequent requests skip the slow timeout path.
         if not weekly_prices and current_price is None:
             _external_apis_failed = True
@@ -719,6 +984,7 @@ async def get_stock_data(sec_code: str) -> dict:
         weekly_prices, current_price, fallback_name, market_cap, pbr = (
             _generate_fallback_data(ticker)
         )
+        price_source = "fallback"
         if not api_name:
             api_name = fallback_name
 
@@ -734,6 +1000,7 @@ async def get_stock_data(sec_code: str) -> dict:
         "market_cap_display": _format_market_cap(market_cap),
         "pbr": pbr,
         "weekly_prices": weekly_prices,
+        "price_source": price_source,
     }
 
     _cache_set(ticker, result)
