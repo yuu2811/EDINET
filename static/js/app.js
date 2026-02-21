@@ -818,7 +818,7 @@ function createFeedCard(f) {
     const target = f.target_company_name || extractTargetFromDescription(f.doc_description) || '(対象不明)';
     const targetCode = (f.target_sec_code || f.sec_code) ? `[${f.target_sec_code || f.sec_code}]` : '';
 
-    // Ratio with change indicator (improved visibility)
+    // Ratio with before→after flow display
     let ratioHtml = '';
     if (f.holding_ratio != null) {
         const ratioClass = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : 'neutral';
@@ -830,23 +830,40 @@ function createFeedCard(f) {
             changeHtml = `<span class="ratio-change-pill ${ratioClass}">${arrow} ${sign}${f.ratio_change.toFixed(2)}%</span>`;
         }
 
-        let prevHtml = '';
+        // Flow row: prev → curr [change pill], or just curr if no prev
+        let flowHtml;
         if (f.previous_holding_ratio != null) {
-            prevHtml = `<span class="ratio-prev">前回 ${f.previous_holding_ratio.toFixed(2)}%</span>`;
+            flowHtml = `<div class="ratio-flow">
+                <span class="ratio-flow-prev">${f.previous_holding_ratio.toFixed(2)}%</span>
+                <span class="ratio-flow-arrow ${ratioClass}">→</span>
+                <span class="ratio-flow-curr ${ratioClass}">${f.holding_ratio.toFixed(2)}%</span>
+                ${changeHtml}
+            </div>`;
+        } else {
+            flowHtml = `<div class="ratio-flow">
+                <span class="ratio-flow-curr ${ratioClass}">${f.holding_ratio.toFixed(2)}%</span>
+                ${changeHtml}
+            </div>`;
         }
 
-        const barWidth = Math.min(f.holding_ratio, 100);
-        const prevBarWidth = f.previous_holding_ratio != null ? Math.min(f.previous_holding_ratio, 100) : 0;
-        const barHtml = `<div class="ratio-bar-container">${
-            prevBarWidth > 0 ? `<div class="ratio-bar ratio-bar-prev" style="width: ${prevBarWidth}%"></div>` : ''
-        }<div class="ratio-bar ratio-bar-curr ${ratioClass}" style="width: ${barWidth}%"></div></div>`;
+        // Delta bar: base(prev) + delta zone + curr marker
+        const currW = Math.min(f.holding_ratio, 100);
+        const prevW = f.previous_holding_ratio != null ? Math.min(f.previous_holding_ratio, 100) : 0;
+        let barInner = '';
+        if (prevW > 0 && f.ratio_change != null && f.ratio_change !== 0) {
+            const minW = Math.min(prevW, currW);
+            const maxW = Math.max(prevW, currW);
+            // Base bar up to the smaller value
+            barInner += `<div class="ratio-bar ratio-bar-prev" style="width: ${minW}%"></div>`;
+            // Delta zone between prev and curr
+            barInner += `<div class="ratio-bar ratio-bar-delta ${ratioClass}" style="left: ${minW}%; width: ${maxW - minW}%"></div>`;
+        } else {
+            barInner += `<div class="ratio-bar ratio-bar-curr ${ratioClass}" style="width: ${currW}%"></div>`;
+        }
+        const barHtml = `<div class="ratio-bar-container">${barInner}</div>`;
 
         ratioHtml = `<div class="ratio-display ${ratioClass}">
-            <div class="ratio-main-row">
-                <span class="card-ratio ${ratioClass}">${f.holding_ratio.toFixed(2)}%</span>
-                ${changeHtml}
-            </div>
-            ${prevHtml}
+            ${flowHtml}
             ${barHtml}
         </div>`;
     } else if (f.xbrl_flag && !f.xbrl_parsed) {
@@ -949,13 +966,21 @@ function createMobileFeedCard(f) {
     // Filer = secondary
     const filer = f.holder_name || f.filer_name || '(不明)';
 
-    // Ratio metrics
+    // Ratio metrics — compact flow: prev → curr  change
     const ratioClass = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : 'neutral';
-    const ratioVal = f.holding_ratio != null
-        ? `${f.holding_ratio.toFixed(2)}%`
-        : (f.xbrl_flag && !f.xbrl_parsed)
-            ? '<span class="xbrl-pending" style="font-size:11px">取得中...</span>'
-            : '<span class="text-dim" style="font-size:11px">割合未取得</span>';
+
+    let ratioVal;
+    if (f.holding_ratio != null && f.previous_holding_ratio != null) {
+        ratioVal = `<span class="text-dim" style="font-size:11px">${f.previous_holding_ratio.toFixed(2)}%</span>`
+            + `<span class="${ratioClass}" style="font-size:11px;font-weight:700;margin:0 2px">→</span>`
+            + `${f.holding_ratio.toFixed(2)}%`;
+    } else if (f.holding_ratio != null) {
+        ratioVal = `${f.holding_ratio.toFixed(2)}%`;
+    } else if (f.xbrl_flag && !f.xbrl_parsed) {
+        ratioVal = '<span class="xbrl-pending" style="font-size:11px">取得中...</span>';
+    } else {
+        ratioVal = '<span class="text-dim" style="font-size:11px">割合未取得</span>';
+    }
 
     let changeHtml = '';
     if (f.ratio_change != null && f.ratio_change !== 0) {
@@ -964,10 +989,8 @@ function createMobileFeedCard(f) {
         changeHtml = `<span class="m-change ${ratioClass}">${arrow}${sign}${f.ratio_change.toFixed(2)}%</span>`;
     }
 
-    let prevHtml = '';
-    if (f.previous_holding_ratio != null) {
-        prevHtml = `<span class="m-prev">前回 ${f.previous_holding_ratio.toFixed(2)}%</span>`;
-    }
+    // prevHtml no longer needed — shown inline in ratioVal
+    const prevHtml = '';
 
     // Market data from stock cache (secCode already defined above)
     const code = secCode ? (secCode.length === 5 ? secCode.slice(0, 4) : secCode) : '';
@@ -1930,32 +1953,77 @@ function openModal(filing) {
         ['対象証券コード', filing.target_sec_code || filing.sec_code || '-'],
     );
 
-    // Visual ratio gauge section
+    // Visual ratio gauge section with before/after comparison
     let ratioGaugeHtml = '';
     if (filing.holding_ratio != null) {
         const ratioClass = filing.ratio_change > 0 ? 'positive' : filing.ratio_change < 0 ? 'negative' : 'neutral';
         const currWidth = Math.min(filing.holding_ratio, 100);
         const prevWidth = filing.previous_holding_ratio != null ? Math.min(filing.previous_holding_ratio, 100) : 0;
+        const hasPrev = filing.previous_holding_ratio != null;
 
-        let changeText = '';
+        // Change badge
+        let changeBadge = '';
         if (filing.ratio_change != null && filing.ratio_change !== 0) {
             const arrow = filing.ratio_change > 0 ? '▲' : '▼';
             const sign = filing.ratio_change > 0 ? '+' : '';
-            changeText = `<span class="modal-ratio-change ${ratioClass}">${arrow} ${sign}${filing.ratio_change.toFixed(2)}%</span>`;
+            changeBadge = `<div class="modal-ratio-change-row">
+                <span class="modal-ratio-change ${ratioClass}">${arrow} ${sign}${filing.ratio_change.toFixed(3)}%</span>
+            </div>`;
         }
+
+        // Header: before → after comparison or just current value
+        let headerHtml;
+        if (hasPrev) {
+            headerHtml = `
+                <div class="modal-ratio-compare">
+                    <div class="modal-ratio-side">
+                        <span class="modal-ratio-side-label">前回</span>
+                        <span class="modal-ratio-side-value prev">${filing.previous_holding_ratio.toFixed(3)}%</span>
+                    </div>
+                    <span class="modal-ratio-arrow ${ratioClass}">→</span>
+                    <div class="modal-ratio-side">
+                        <span class="modal-ratio-side-label">今回</span>
+                        <span class="modal-ratio-side-value curr ${ratioClass}">${filing.holding_ratio.toFixed(3)}%</span>
+                    </div>
+                </div>
+                ${changeBadge}`;
+        } else {
+            headerHtml = `
+                <div class="modal-ratio-header">
+                    <span class="modal-ratio-value ${ratioClass}">${filing.holding_ratio.toFixed(3)}%</span>
+                </div>`;
+        }
+
+        // Gauge with delta zone and 5% threshold marker
+        const minW = Math.min(prevWidth, currWidth);
+        const maxW = Math.max(prevWidth, currWidth);
+        let gaugeInner = '';
+        if (hasPrev && filing.ratio_change != null && filing.ratio_change !== 0) {
+            // Base bar up to smaller value
+            gaugeInner += `<div class="gauge-bar gauge-prev" style="width: ${minW}%"></div>`;
+            // Delta zone (glowing)
+            gaugeInner += `<div class="gauge-bar gauge-delta ${ratioClass}" style="left: ${minW}%; width: ${maxW - minW}%"></div>`;
+        } else {
+            gaugeInner += `<div class="gauge-bar gauge-curr ${ratioClass}" style="width: ${currWidth}%"></div>`;
+        }
+
+        // 5% threshold marker (the reporting threshold for large shareholding)
+        const maxRatio = Math.max(filing.holding_ratio, filing.previous_holding_ratio || 0, 5);
+        const gaugeScale = Math.min(maxRatio * 2, 100); // Scale gauge so bars aren't tiny
+        const thresholdPos = Math.min((5 / gaugeScale) * 100, 100);
+        // Only show if threshold is within visible range
+        const thresholdHtml = gaugeScale >= 5
+            ? `<div class="gauge-threshold" style="left: ${thresholdPos}%"><span class="gauge-threshold-label">5%</span></div>`
+            : '';
 
         ratioGaugeHtml = `
             <div class="modal-ratio-section">
-                <div class="modal-ratio-header">
-                    <span class="modal-ratio-value ${ratioClass}">${filing.holding_ratio.toFixed(3)}%</span>
-                    ${changeText}
-                </div>
+                ${headerHtml}
                 <div class="modal-ratio-gauge">
-                    ${prevWidth > 0 ? `<div class="gauge-bar gauge-prev" style="width: ${prevWidth}%"></div>` : ''}
-                    <div class="gauge-bar gauge-curr ${ratioClass}" style="width: ${currWidth}%"></div>
+                    ${gaugeInner}
+                    ${thresholdHtml}
                     <div class="gauge-labels">
-                        ${filing.previous_holding_ratio != null ?
-                            `<span class="gauge-label" style="left: ${prevWidth}%">前回 ${filing.previous_holding_ratio.toFixed(3)}%</span>` : ''}
+                        ${hasPrev ? `<span class="gauge-label" style="left: ${prevWidth}%">前回</span>` : ''}
                     </div>
                 </div>
                 <div class="modal-ratio-footer">
