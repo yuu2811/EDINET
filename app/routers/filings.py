@@ -146,7 +146,7 @@ async def proxy_document_pdf(doc_id: str) -> Response:
             if resp.status_code == 200 and _looks_like_pdf(resp.content):
                 logger.info("Served %s via disclosure2dl fallback", doc_id)
                 return Response(
-                    content=extracted,
+                    content=resp.content,
                     media_type="application/pdf",
                     headers={
                         "Content-Disposition": f'inline; filename="{doc_id}.pdf"',
