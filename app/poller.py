@@ -496,29 +496,30 @@ async def _poll_company_info(target_date: date) -> None:
                 # Normalise sec_code to 4 digits
                 ticker = sec_code[:4] if len(sec_code) == 5 else sec_code
 
-                # Upsert into CompanyInfo table
-                existing = await session.execute(
-                    select(CompanyInfo).where(CompanyInfo.sec_code == ticker)
-                )
-                company = existing.scalar_one_or_none()
-                if company is None:
-                    company = CompanyInfo(sec_code=ticker)
-                    session.add(company)
+                # Use SAVEPOINT so a failure in one document doesn't
+                # roll back previously flushed updates.
+                async with session.begin_nested():
+                    existing = await session.execute(
+                        select(CompanyInfo).where(CompanyInfo.sec_code == ticker)
+                    )
+                    company = existing.scalar_one_or_none()
+                    if company is None:
+                        company = CompanyInfo(sec_code=ticker)
+                        session.add(company)
 
-                company.edinet_code = doc.get("edinetCode")
-                if info.get("company_name"):
-                    company.company_name = info["company_name"]
-                elif doc.get("filerName"):
-                    company.company_name = doc["filerName"]
-                if info.get("shares_outstanding"):
-                    company.shares_outstanding = info["shares_outstanding"]
-                if info.get("net_assets"):
-                    company.net_assets = info["net_assets"]
-                company.source_doc_id = doc_id
-                company.source_doc_type = doc.get("docTypeCode")
-                company.period_end = doc.get("periodEnd")
+                    company.edinet_code = doc.get("edinetCode")
+                    if info.get("company_name"):
+                        company.company_name = info["company_name"]
+                    elif doc.get("filerName"):
+                        company.company_name = doc["filerName"]
+                    if info.get("shares_outstanding"):
+                        company.shares_outstanding = info["shares_outstanding"]
+                    if info.get("net_assets"):
+                        company.net_assets = info["net_assets"]
+                    company.source_doc_id = doc_id
+                    company.source_doc_type = doc.get("docTypeCode")
+                    company.period_end = doc.get("periodEnd")
 
-                await session.flush()
                 updated += 1
 
                 logger.info(
@@ -532,7 +533,6 @@ async def _poll_company_info(target_date: date) -> None:
                 logger.warning("Company info download timed out for %s", doc_id)
             except Exception as e:
                 logger.error("Company info processing error for %s: %s", doc_id, e)
-                await session.rollback()
                 continue
 
         if updated > 0:
@@ -553,6 +553,8 @@ async def run_poller():
             await _retry_xbrl_enrichment()
             # Fetch company fundamentals from 有報/四半期報告書
             await _poll_company_info(today)
+            # Clean up SSE clients that have been connected too long
+            await broadcaster._cleanup_stale()
         except asyncio.CancelledError:
             logger.info("Poller cancelled")
             raise

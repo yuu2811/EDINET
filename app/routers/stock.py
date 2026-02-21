@@ -33,7 +33,8 @@ router = APIRouter(prefix="/api/stock", tags=["Stock"])
 # ---------------------------------------------------------------------------
 _cache: dict[str, tuple[float, dict]] = {}
 _CACHE_TTL = 30 * 60  # 30 minutes
-_external_apis_failed = False  # fast-fail flag when all external APIs are unreachable
+_external_apis_failed_at: float = 0.0  # monotonic timestamp; 0 = not failed
+_EXTERNAL_RETRY_INTERVAL = 5 * 60  # retry external APIs after 5 minutes
 
 
 def _cache_get(key: str) -> dict | None:
@@ -919,7 +920,7 @@ async def get_stock_data(sec_code: str) -> dict:
       3. External APIs (Google Finance / stooq / Yahoo / Kabutan)
       4. _KNOWN_STOCKS fallback (ハードコード, 最終手段)
     """
-    global _external_apis_failed
+    global _external_apis_failed_at
     ticker = _normalise_sec_code(sec_code)
 
     # Check cache using normalized ticker so "3932" and "39320" share one entry
@@ -959,7 +960,11 @@ async def get_stock_data(sec_code: str) -> dict:
     #
     # If external APIs previously failed for ALL sources, skip straight to
     # fallback to avoid 10-second timeouts on every request.
-    if not _external_apis_failed:
+    apis_available = (
+        _external_apis_failed_at == 0.0
+        or (time.monotonic() - _external_apis_failed_at) > _EXTERNAL_RETRY_INTERVAL
+    )
+    if apis_available:
         async with httpx.AsyncClient(timeout=4.0) as client:
             history_task = asyncio.create_task(_fetch_stooq_history(client, ticker))
             quote_task = asyncio.create_task(_fetch_stooq_quote(client, ticker))
@@ -1036,8 +1041,10 @@ async def get_stock_data(sec_code: str) -> dict:
         # If everything came back empty from ALL sources, mark as failed
         # so subsequent requests skip the slow timeout path.
         if not weekly_prices and current_price is None:
-            _external_apis_failed = True
-            logger.info("All external APIs unreachable; switching to fallback mode")
+            _external_apis_failed_at = time.monotonic()
+            logger.info("All external APIs unreachable; fallback mode for %ds", _EXTERNAL_RETRY_INTERVAL)
+        else:
+            _external_apis_failed_at = 0.0  # APIs working again
 
     # --- Step 3: Fallback when no live data available ---
     extra: dict = {}

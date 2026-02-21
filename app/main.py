@@ -13,10 +13,11 @@ from app.config import settings
 from app.database import async_session, init_db  # noqa: F401 – routers resolve async_session here
 from app.edinet import edinet_client
 from app.errors import register_error_handlers
+from app.logging_config import setup_logging
 from app.poller import run_poller
 from app.routers import analytics, filings, poll, stats, stock, stream, watchlist
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+setup_logging()
 logger = logging.getLogger(__name__)
 
 _poll_last_called: float = 0.0  # rate limiter state for /api/poll

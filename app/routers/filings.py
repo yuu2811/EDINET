@@ -44,7 +44,7 @@ async def list_filings(
             )
         if date_to:
             query = query.where(
-                Filing.submit_date_time <= date_to.isoformat() + " 23:59"
+                Filing.submit_date_time <= date_to.isoformat() + " 23:59:59"
             )
         if filer:
             query = query.where(
@@ -104,11 +104,18 @@ async def get_filing(doc_id: str) -> dict:
 
 @documents_router.get("/{doc_id}/pdf")
 async def proxy_document_pdf(doc_id: str) -> Response:
-    """Proxy EDINET PDF download (type=2).
+    """Proxy EDINET PDF download with multi-stage fallback.
 
-    Per EDINET API v2 spec, browser-based JavaScript cannot call the
-    EDINET API directly, and the Subscription-Key must stay server-side.
+    Retrieval order:
+      1. EDINET API v2 (type=2) — requires Subscription-Key (server-side)
+      2. disclosure2dl direct PDF — public, no auth needed
+      3. 404 error with explanation
+
+    Direct links to disclosure2.edinet-fsa.go.jp/WZEK0040.aspx stopped
+    working after a late-2025 EDINET system update ("規定外操作" error).
     """
+    import httpx as _httpx
+
     from app.config import settings
     from app.edinet import edinet_client
 
@@ -116,37 +123,50 @@ async def proxy_document_pdf(doc_id: str) -> Response:
     if not doc_id.isalnum():
         return JSONResponse({"error": "Invalid document ID"}, status_code=400)
 
-    if not settings.EDINET_API_KEY:
-        # No API key configured — redirect to EDINET disclosure page instead
-        edinet_url = f"https://disclosure2dl.edinet-fsa.go.jp/searchdocument/pdf/{doc_id}.pdf"
+    # --- Stage 1: EDINET API v2 ---
+    content: bytes | None = None
+    if settings.EDINET_API_KEY:
+        content = await edinet_client.download_pdf(doc_id)
+        # Verify it's actually a PDF
+        if content and (len(content) < 5 or not content[:5].startswith(b"%PDF")):
+            logger.warning(
+                "EDINET API returned non-PDF for %s (%d bytes)", doc_id, len(content),
+            )
+            content = None
+
+    if content:
         return Response(
-            status_code=302,
-            headers={"Location": edinet_url},
+            content=content,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'inline; filename="{doc_id}.pdf"',
+                "Cache-Control": "public, max-age=86400",
+            },
         )
 
-    content = await edinet_client.download_pdf(doc_id)
-    if content is None:
-        logger.warning("PDF download failed for %s, redirecting to EDINET", doc_id)
-        edinet_url = f"https://disclosure2dl.edinet-fsa.go.jp/searchdocument/pdf/{doc_id}.pdf"
-        return Response(
-            status_code=302,
-            headers={"Location": edinet_url},
-        )
+    # --- Stage 2: disclosure2dl direct PDF ---
+    dl_url = f"https://disclosure2dl.edinet-fsa.go.jp/searchdocument/pdf/{doc_id}.pdf"
+    try:
+        async with _httpx.AsyncClient(timeout=15.0) as hc:
+            resp = await hc.get(dl_url)
+            if resp.status_code == 200 and len(resp.content) >= 5 and resp.content[:5].startswith(b"%PDF"):
+                logger.info("Served %s via disclosure2dl fallback", doc_id)
+                return Response(
+                    content=resp.content,
+                    media_type="application/pdf",
+                    headers={
+                        "Content-Disposition": f'inline; filename="{doc_id}.pdf"',
+                        "Cache-Control": "public, max-age=86400",
+                    },
+                )
+            logger.warning(
+                "disclosure2dl returned %s for %s", resp.status_code, doc_id,
+            )
+    except Exception as e:
+        logger.warning("disclosure2dl request failed for %s: %s", doc_id, e)
 
-    # Verify the response looks like a PDF (starts with %PDF)
-    if len(content) < 5 or not content[:5].startswith(b"%PDF"):
-        logger.warning("EDINET returned non-PDF content for %s (%d bytes)", doc_id, len(content))
-        edinet_url = f"https://disclosure2dl.edinet-fsa.go.jp/searchdocument/pdf/{doc_id}.pdf"
-        return Response(
-            status_code=302,
-            headers={"Location": edinet_url},
-        )
-
-    return Response(
-        content=content,
-        media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'inline; filename="{doc_id}.pdf"',
-            "Cache-Control": "public, max-age=86400",
-        },
+    # --- Stage 3: All methods exhausted ---
+    return JSONResponse(
+        {"error": "PDF not available", "doc_id": doc_id},
+        status_code=404,
     )
