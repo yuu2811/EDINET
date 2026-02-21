@@ -119,14 +119,12 @@ class Filing(Base):
             "is_special_exemption": self.is_special_exemption,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "xbrl_parsed": self.xbrl_parsed,
-            # EDINET direct PDF link (public, no API key / session required)
-            # disclosure2dl (download server) hosts PDFs at a stable URL.
-            # The old WZEK0040.aspx viewer now rejects direct access with
-            # "規定外操作" after an EDINET system update (late 2025).
-            "edinet_url": (
-                "https://disclosure2dl.edinet-fsa.go.jp"
-                f"/searchdocument/pdf/{self.doc_id}.pdf"
-            )
+            # EDINET document link — served through our PDF proxy which
+            # tries EDINET API v2 first, then falls back to disclosure2dl.
+            # Direct links to disclosure2.edinet-fsa.go.jp/WZEK0040.aspx
+            # no longer work ("規定外操作" error after late-2025 update),
+            # and disclosure2dl PDFs are not available for all documents.
+            "edinet_url": f"/api/documents/{self.doc_id}/pdf"
             if self.doc_id
             else None,
             # Server-side proxy for PDF — EDINET API v2 requires

@@ -186,13 +186,12 @@ class TestFilingsAPI:
         assert data["total"] == 3
 
     @pytest.mark.asyncio
-    async def test_edinet_url_direct_pdf(self, client):
-        """EDINET URL should point to disclosure2dl direct PDF."""
+    async def test_edinet_url_uses_pdf_proxy(self, client):
+        """EDINET URL should point to our PDF proxy endpoint."""
         resp = await client.get("/api/filings/S100API1")
         data = resp.json()
         url = data["edinet_url"]
-        assert "S100S100" not in url
-        assert url == "https://disclosure2dl.edinet-fsa.go.jp/searchdocument/pdf/S100API1.pdf"
+        assert url == "/api/documents/S100API1/pdf"
 
 
 class TestStatsAPI:

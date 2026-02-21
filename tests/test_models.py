@@ -30,14 +30,10 @@ async def test_filing_to_dict(sample_filing):
 
 @pytest.mark.asyncio
 async def test_filing_to_dict_has_urls(sample_filing):
-    """Filing.to_dict() should generate EDINET direct PDF and proxy PDF URLs."""
+    """Filing.to_dict() should generate EDINET and PDF URLs via proxy."""
     d = sample_filing.to_dict()
-    assert d["edinet_url"] is not None
-    assert "S100TEST1" in d["edinet_url"]
-    assert "S100S100" not in d["edinet_url"]
-    assert d["edinet_url"] == "https://disclosure2dl.edinet-fsa.go.jp/searchdocument/pdf/S100TEST1.pdf"
-    assert d["pdf_url"] is not None
-    assert "S100TEST1" in d["pdf_url"]
+    assert d["edinet_url"] == "/api/documents/S100TEST1/pdf"
+    assert d["pdf_url"] == "/api/documents/S100TEST1/pdf"
 
 
 @pytest.mark.asyncio

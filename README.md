@@ -238,7 +238,7 @@ Server-Sent Events ストリーム。接続すると以下のイベントが配�
       "is_special_exemption": false,
       "created_at": "2026-02-18T09:20:00",
       "xbrl_parsed": true,
-      "edinet_url": "https://disclosure2dl.edinet-fsa.go.jp/searchdocument/pdf/S100ABC1.pdf",
+      "edinet_url": "/api/documents/S100ABC1/pdf",
       "pdf_url": "/api/documents/S100ABC1/pdf"
     }
   ]
