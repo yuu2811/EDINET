@@ -118,20 +118,16 @@ class Filing(Base):
             "is_special_exemption": self.is_special_exemption,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "xbrl_parsed": self.xbrl_parsed,
-            # EDINET document link — served through our PDF proxy which
-            # tries EDINET API v2 first, then falls back to disclosure2dl.
-            # Direct links to disclosure2.edinet-fsa.go.jp/WZEK0040.aspx
-            # no longer work ("規定外操作" error after late-2025 update),
-            # and disclosure2dl PDFs are not available for all documents.
-            "edinet_url": f"/api/documents/{self.doc_id}/pdf"
+            # PDF proxy — tries EDINET API v2, then disclosure2dl,
+            # then redirects to the EDINET viewer website.
+            "pdf_url": f"/api/documents/{self.doc_id}/pdf"
             if self.doc_id
             else None,
-            # Server-side proxy for PDF — EDINET API v2 requires
-            # Subscription-Key, which must not be exposed to the browser.
-            # Show PDF link even when pdf_flag is False — the proxy will
-            # return 404/502 gracefully if unavailable, but many filings
-            # have PDFs that are available even when the flag is missing.
-            "pdf_url": f"/api/documents/{self.doc_id}/pdf"
+            # Direct link to the EDINET viewer website
+            "edinet_url": (
+                f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx"
+                f"?{self.doc_id},,,"
+            )
             if self.doc_id
             else None,
         }
