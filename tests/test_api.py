@@ -192,7 +192,7 @@ class TestFilingsAPI:
         data = resp.json()
         url = data["edinet_url"]
         assert "S100S100" not in url
-        assert url.endswith("S100API1")
+        assert url.endswith("S100API1,,=")
 
 
 class TestStatsAPI:
