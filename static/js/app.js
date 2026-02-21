@@ -739,12 +739,10 @@ function renderFeedTable(container, filings) {
 
         // Links
         let links = '';
-        if (f.is_demo) {
-            links += '<span class="tbl-demo" title="デモデータ">DEMO</span>';
-        } else if (f.pdf_url) {
+        if (f.pdf_url) {
             links += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="tbl-link" onclick="event.stopPropagation()">PDF</a>`;
         }
-        if (f.edinet_url && !f.is_demo) {
+        if (f.edinet_url) {
             links += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="tbl-link" onclick="event.stopPropagation()">EDINET</a>`;
         }
 
@@ -855,12 +853,10 @@ function createFeedCard(f) {
 
     // Links
     let links = '';
-    if (f.is_demo) {
-        links += '<span class="card-demo" title="デモデータ">DEMO</span>';
-    } else if (f.pdf_url) {
+    if (f.pdf_url) {
         links += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="card-link" onclick="event.stopPropagation()">PDF</a>`;
     }
-    if (f.edinet_url && !f.is_demo) {
+    if (f.edinet_url) {
         links += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="card-link" onclick="event.stopPropagation()">EDINET</a>`;
     }
 
@@ -988,12 +984,10 @@ function createMobileFeedCard(f) {
 
     // PDF + EDINET links
     let linkHtml = '';
-    if (f.is_demo) {
-        linkHtml += '<span class="m-demo">DEMO</span>';
-    } else if (f.pdf_url) {
+    if (f.pdf_url) {
         linkHtml += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="m-link" onclick="event.stopPropagation()">PDF</a>`;
     }
-    if (f.edinet_url && !f.is_demo) {
+    if (f.edinet_url) {
         linkHtml += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="m-link" onclick="event.stopPropagation()">EDINET</a>`;
     }
 
@@ -1908,15 +1902,11 @@ function openModal(filing) {
 
     // Links
     const links = [];
-    if (filing.is_demo) {
-        links.push('<span class="text-dim">デモデータ（実際のPDFはありません）</span>');
-    } else {
-        if (filing.pdf_url) {
-            links.push(`<a href="${filing.pdf_url}" target="_blank" rel="noopener">PDF ダウンロード</a>`);
-        }
-        if (filing.edinet_url) {
-            links.push(`<a href="${filing.edinet_url}" target="_blank" rel="noopener">EDINET で閲覧</a>`);
-        }
+    if (filing.pdf_url) {
+        links.push(`<a href="${filing.pdf_url}" target="_blank" rel="noopener">PDF ダウンロード</a>`);
+    }
+    if (filing.edinet_url) {
+        links.push(`<a href="${filing.edinet_url}" target="_blank" rel="noopener">EDINET で閲覧</a>`);
     }
     if (links.length > 0) {
         rows.push(['リンク', { html: `<span class="detail-value">${links.join(' | ')}</span>` }]);

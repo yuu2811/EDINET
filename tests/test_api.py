@@ -201,7 +201,6 @@ class TestFilingsAPI:
         resp = await client.get("/api/filings/S100API1")
         data = resp.json()
         assert data["pdf_url"] == "/api/documents/S100API1/pdf"
-        assert data["is_demo"] is False
 
 
 class TestStatsAPI:
@@ -429,17 +428,3 @@ class TestPDFProxyEndpoint:
         data = resp.json()
         assert "redirect_url" in data
 
-    @pytest.mark.asyncio
-    async def test_pdf_proxy_demo_doc_id(self, client):
-        """Demo doc IDs should return 404 with is_demo flag (no API calls)."""
-        from unittest.mock import patch, AsyncMock
-
-        # Should NOT call EDINET API or disclosure2dl for demo IDs
-        with patch("app.edinet.edinet_client.download_pdf", new_callable=AsyncMock) as mock_dl:
-            resp = await client.get("/api/documents/S202602180001/pdf")
-
-        mock_dl.assert_not_called()
-        assert resp.status_code == 404
-        data = resp.json()
-        assert data["is_demo"] is True
-        assert "デモ" in data["error"]

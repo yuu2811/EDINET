@@ -37,7 +37,6 @@ async def test_filing_to_dict_has_urls(sample_filing):
     assert "S100TEST1" in d["edinet_url"]
     # pdf_url still points to our server-side proxy
     assert d["pdf_url"] == "/api/documents/S100TEST1/pdf"
-    assert d["is_demo"] is False
 
 
 @pytest.mark.asyncio
