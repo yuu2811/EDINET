@@ -109,17 +109,37 @@ async def proxy_document_pdf(doc_id: str) -> Response:
     Per EDINET API v2 spec, browser-based JavaScript cannot call the
     EDINET API directly, and the Subscription-Key must stay server-side.
     """
+    from app.config import settings
     from app.edinet import edinet_client
 
     # Sanitise doc_id to prevent path traversal
     if not doc_id.isalnum():
         return JSONResponse({"error": "Invalid document ID"}, status_code=400)
 
+    if not settings.EDINET_API_KEY:
+        # No API key configured — redirect to EDINET disclosure page instead
+        edinet_url = f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{doc_id}"
+        return Response(
+            status_code=302,
+            headers={"Location": edinet_url},
+        )
+
     content = await edinet_client.download_pdf(doc_id)
     if content is None:
-        return JSONResponse(
-            {"error": "PDF not available or EDINET API unreachable"},
-            status_code=502,
+        logger.warning("PDF download failed for %s, redirecting to EDINET", doc_id)
+        edinet_url = f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{doc_id}"
+        return Response(
+            status_code=302,
+            headers={"Location": edinet_url},
+        )
+
+    # Verify the response looks like a PDF (starts with %PDF)
+    if len(content) < 5 or not content[:5].startswith(b"%PDF"):
+        logger.warning("EDINET returned non-PDF content for %s (%d bytes)", doc_id, len(content))
+        edinet_url = f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{doc_id}"
+        return Response(
+            status_code=302,
+            headers={"Location": edinet_url},
         )
 
     return Response(
@@ -127,5 +147,6 @@ async def proxy_document_pdf(doc_id: str) -> Response:
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'inline; filename="{doc_id}.pdf"',
+            "Cache-Control": "public, max-age=86400",
         },
     )

@@ -234,8 +234,14 @@ class EdinetClient:
                             continue
 
                         if "shareholdingratio" in elem_id and "total" in elem_id:
+                            # Skip abstract and individual holder entries
+                            if "abstract" in elem_id or "eachlargeshareholder" in elem_id:
+                                continue
                             try:
                                 val = float(value)
+                                # Auto-detect decimal vs percentage
+                                if 0 < val < 1.0:
+                                    val = round(val * 100, 4)
                                 if "prior" in context.lower() or "previous" in context.lower():
                                     if result["previous_holding_ratio"] is None:
                                         result["previous_holding_ratio"] = val
@@ -333,11 +339,13 @@ class EdinetClient:
         # Large shareholding report XBRL uses jpcrp060_cor namespace.
 
         # --- Holding ratio (保有割合) ---
-        # Look for elements containing "ShareholdingRatio" or "保有割合"
+        # Look for elements containing "ShareholdingRatio".
+        # Priority: "Total" ratio > generic ratio.  Exclude abstract elements
+        # and individual shareholder entries (EachLargeShareholder1, etc.)
+        # which would give incorrect (per-holder) values.
         ratio_patterns = [
             "TotalShareholdingRatioOfShareCertificatesEtc",
             "TotalShareholdingRatio",
-            "ShareholdingRatio",
             "RatioOfShareholdingToTotalIssuedShares",
         ]
         for pattern in ratio_patterns:
@@ -346,10 +354,19 @@ class EdinetClient:
             )
             if elements:
                 for elem in elements:
+                    local = elem.xpath("local-name()")
+                    # Skip abstract/header elements and individual holder entries
+                    if "Abstract" in local or "EachLargeShareholder" in local:
+                        continue
                     try:
                         val = float(elem.text.strip())
+                        # Auto-detect decimal vs percentage format:
+                        # EDINET stores as percentage (e.g. 5.23 = 5.23%)
+                        # but some filings use decimal (e.g. 0.0523 = 5.23%)
+                        if 0 < val < 1.0:
+                            val = round(val * 100, 4)
                         context_ref = elem.get("contextRef", "")
-                        # "Prior" contexts typically contain previous ratio
+                        # "Prior" contexts contain the previous ratio
                         if "Prior" in context_ref or "Previous" in context_ref:
                             if result["previous_holding_ratio"] is None:
                                 result["previous_holding_ratio"] = val
@@ -360,6 +377,32 @@ class EdinetClient:
                         continue
                 if result["holding_ratio"] is not None:
                     break
+
+        # Fallback: broader search if specific patterns didn't match
+        if result["holding_ratio"] is None:
+            elements = tree.xpath(
+                "//*[contains(local-name(), 'ShareholdingRatio')]"
+            )
+            for elem in elements:
+                local = elem.xpath("local-name()")
+                # Exclude abstract, individual holder, and joint holder entries
+                if any(skip in local for skip in (
+                    "Abstract", "EachLargeShareholder", "JointHolder",
+                )):
+                    continue
+                try:
+                    val = float(elem.text.strip())
+                    if 0 < val < 1.0:
+                        val = round(val * 100, 4)
+                    context_ref = elem.get("contextRef", "")
+                    if "Prior" in context_ref or "Previous" in context_ref:
+                        if result["previous_holding_ratio"] is None:
+                            result["previous_holding_ratio"] = val
+                    else:
+                        if result["holding_ratio"] is None:
+                            result["holding_ratio"] = val
+                except (ValueError, AttributeError):
+                    continue
 
         # --- Holder name (報告義務発生者 / 提出者) ---
         holder_patterns = [

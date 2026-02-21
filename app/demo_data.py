@@ -117,13 +117,16 @@ def generate_demo_filings(
             is_amendment = True
             desc_prefix = "訂正報告書"
 
-        # Holding ratio: typically 5-30%
-        holding_ratio = round(rng.uniform(5.0, 35.0), 2)
+        # Holding ratio: realistic distribution
+        # Most reports are 5-15%, some 15-25%, few above 25%.
+        # Use Gaussian centered at ~8% to match real-world distribution.
+        base = rng.gauss(8.0, 4.0)
+        holding_ratio = round(max(5.01, min(base, 45.0)), 2)
         # Previous ratio: nearby (for change reports)
         if "変更" in desc_prefix:
-            delta = round(rng.gauss(0, 2.5), 2)
-            delta = max(-5.0, min(5.0, delta))
-            previous_ratio = round(max(0, holding_ratio - delta), 2)
+            delta = round(rng.gauss(0, 1.5), 2)
+            delta = max(-3.0, min(3.0, delta))
+            previous_ratio = round(max(0.5, holding_ratio - delta), 2)
         else:
             previous_ratio = None if rng.random() < 0.4 else round(rng.uniform(3.0, holding_ratio), 2)
 

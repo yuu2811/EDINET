@@ -33,6 +33,8 @@ EDINETから大量保有報告書・変更報告書をリアルタイムに検�
               │                  │                  │
        EDINET API v2      stooq.com         Yahoo Finance
      (報告書/XBRL)       (株価履歴)        (時価総額/PBR)
+                                          Google Finance
+                                          Kabutan (株探)
 ```
 
 ## 機能一覧
@@ -50,9 +52,12 @@ EDINETから大量保有報告書・変更報告書をリアルタイムに検�
 - **保有割合変動の自動計算**: 前回比の変動幅を算出し、増加(緑)/減少(赤)を色分け表示
 - **報告書分類**: 新規報告(350)/訂正報告(360)/特例対象の自動判定
 - **マーケットサマリー**: 当日の増加/減少件数、平均変動幅、最大変動銘柄を自動集計・表示
-- **株価・時価総額表示**: stooq / Yahoo Finance から株価・時価総額・PBR を取得し、カードおよび詳細モーダルに表示。52週チャート付き
+- **株価・時価総額表示**: 6つの無料データソース（stooq / Yahoo Finance / Google Finance / Kabutan）から株価・時価総額・PBR・PER・配当利回り・52週レンジ・出来高を取得。詳細モーダルに52週チャート付き
+- **金融庁データ優先**: 企業名は Filing DB > EDINET コードリスト > 外部API > ハードコードの優先順位。発行済株式数は有報(120)/四半期(140)から取得し、最も正確な時価総額を算出
+- **PDF プロキシ**: EDINET API v2 の Subscription-Key をブラウザに露出させず、サーバー側プロキシ経由で PDF を配信
 - **doc_description からの企業名抽出**: XBRL未解析時でも `変更報告書（トヨタ自動車株式）` から対象企業名を自動抽出
 - **XBRL再解析リトライ**: 未解析のfilingをローテーション方式で最大5件並行リトライ（30秒バッチタイムアウト付き）
+- **保有割合の精度**: XBRL で decimal/percentage 形式を自動判定。Abstract/個別保有者の要素を除外し、Total（合計）保有割合のみを取得
 
 ### アナリティクス
 - **提出者プロフィール**: 任意のEDINETコードで提出者の全履歴・対象企業一覧・活動サマリーを表示
@@ -234,7 +239,7 @@ Server-Sent Events ストリーム。接続すると以下のイベントが配�
       "created_at": "2026-02-18T09:20:00",
       "xbrl_parsed": true,
       "edinet_url": "https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?S100...",
-      "pdf_url": "https://api.edinet-fsa.go.jp/api/v2/documents/S100ABC1?type=2"
+      "pdf_url": "/api/documents/S100ABC1/pdf"
     }
   ]
 }
@@ -341,17 +346,36 @@ Server-Sent Events ストリーム。接続すると以下のイベントが配�
   "market_cap": 44386200000000,
   "market_cap_display": "44兆3862億",
   "pbr": 1.2,
+  "per": 10.5,
+  "dividend_yield": 2.84,
+  "week52_high": 3100.0,
+  "week52_low": 2200.0,
+  "price_change": 21.0,
+  "price_change_pct": 0.75,
+  "previous_close": 2800.0,
+  "volume": 15000000,
+  "price_source": "stooq",
   "weekly_prices": [
-    {"date": "2025-02-21", "open": 2800, "high": 2850, "low": 2780, "close": 2821, "volume": 5000000}
+    {"date": "2026-02-21", "open": 2800, "high": 2850, "low": 2780, "close": 2821, "volume": 5000000}
   ]
 }
 ```
 
 **データソース（優先順位）:**
 
-1. stooq.com — 株価履歴・現在値
-2. Yahoo Finance — 時価総額・PBR・企業名
-3. フォールバック — 主要30銘柄の発行済株式数に基づく推定値（全API接続不可時）
+| 優先度 | ソース | 取得データ | コスト |
+|--------|--------|-----------|--------|
+| 1 | EDINET CompanyInfo (有報/四半期) | 発行済株式数・純資産 (金融庁データ) | 無料 |
+| 2 | stooq.com | 株価履歴・現在値 (CSV API) | 無料 |
+| 3 | Google Finance | 現在株価 (HTMLスクレイピング) | 無料 |
+| 4 | Yahoo Finance | 時価総額・PBR・PER・配当利回り・52週レンジ | 無料 |
+| 5 | Kabutan (株探) | 現在株価・社名・時価総額 (HTMLスクレイピング) | 無料 |
+| 6 | フォールバック | 主要30銘柄の推定値 (全API不可時) | - |
+
+**時価総額の算出:**
+- 最優先: EDINET 発行済株式数 × ライブ株価（最も正確）
+- 次善: Yahoo Finance 発行済株式数 × ライブ株価
+- フォールバック: Yahoo Finance / Kabutan の時価総額値
 
 **キャッシュ:** サーバー側30分 / クライアント側30分
 
@@ -409,7 +433,7 @@ EDINET から取得した XBRL ZIP ファイルを解析し、大量保有報告
 
 | フィールド | 内容 | XBRL要素名パターン |
 |-----------|------|-------------------|
-| `holding_ratio` | 保有割合 (%) | `TotalShareholdingRatioOfShareCertificatesEtc`, `TotalShareholdingRatio`, `ShareholdingRatio`, `RatioOfShareholdingToTotalIssuedShares` |
+| `holding_ratio` | 保有割合 (%) | `TotalShareholdingRatioOfShareCertificatesEtc`, `TotalShareholdingRatio`, `RatioOfShareholdingToTotalIssuedShares` (Abstract/EachLargeShareholder/JointHolder要素は除外。decimal形式(0.XX)は自動で%変換) |
 | `previous_holding_ratio` | 前回保有割合 (%) | 同上（`contextRef` に `Prior`/`Previous` を含む要素） |
 | `holder_name` | 報告義務発生者名 | `NameOfLargeShareholdingReporter`, `NameOfFiler`, `ReporterName`, `LargeShareholderName` |
 | `target_company_name` | 発行者名 | `IssuerNameLargeShareholding`, `IssuerName`, `NameOfIssuer`, `TargetCompanyName` |
@@ -454,16 +478,17 @@ EDINET/
 │   ├── errors.py            # グローバルエラーハンドラ登録
 │   ├── logging_config.py    # ロギング設定
 │   ├── main.py              # FastAPI アプリ (REST API + SSE + lifespan)
-│   ├── models.py            # Filing / Watchlist ORM モデル
+│   ├── models.py            # Filing / CompanyInfo / Watchlist ORM モデル
 │   ├── schemas.py           # Pydantic スキーマ
 │   ├── poller.py            # バックグラウンドポーラー + SSEBroadcaster + XBRLリトライ
 │   └── routers/
 │       ├── __init__.py
 │       ├── analytics.py     # アナリティクス API（提出者/企業/ランキング/セクター）
-│       ├── filings.py       # 報告書一覧・詳細 API
+│       ├── filings.py       # 報告書一覧・詳細 API + PDF プロキシ
 │       ├── poll.py          # 手動ポーリング API（日付指定対応）
 │       ├── stats.py         # 統計情報 API（日付指定対応）
-│       ├── stock.py         # 株価・時価総額・PBR API（stooq/Yahoo/フォールバック）
+│       ├── stock.py         # 株価API（stooq/Google Finance/Yahoo/Kabutan/フォールバック）
+│       │                    #   PER・配当利回り・52週レンジ・出来高も取得
 │       ├── stream.py        # SSE ストリーム
 │       └── watchlist.py     # ウォッチリスト CRUD API
 ├── static/
@@ -520,7 +545,7 @@ pytest tests/test_poller.py
 | Database | SQLite (aiosqlite) |
 | Real-time | Server-Sent Events (SSE) |
 | XBRL Parser | lxml (XPath) |
-| 株価データ | stooq.com / Yahoo Finance（フォールバック: 発行済株式数ベースの推定） |
+| 株価データ | stooq.com / Google Finance / Yahoo Finance / Kabutan (株探)（6系統並列取得、全て無料・APIキー不要） |
 | Frontend | Vanilla HTML / CSS / JavaScript (フレームワーク不使用) |
 | UI Design | Bloomberg端末風ダークテーマ / モバイル専用カードレイアウト |
 | Scheduler | asyncio ベースのポーリングループ |
@@ -538,11 +563,31 @@ pytest tests/test_poller.py
 | `350` | 大量保有報告書・変更報告書 |
 | `360` | 訂正報告書（大量保有報告書） |
 
-### API エンドポイント
+### 使用する docTypeCode（会社基本情報）
+
+| コード | 種別 | 用途 |
+|--------|------|------|
+| `120` | 有価証券報告書 | 発行済株式数・純資産の取得 |
+| `130` | 訂正有価証券報告書 | 同上（訂正版） |
+| `140` | 四半期報告書 | 同上（四半期更新） |
+
+### EDINET API v2 エンドポイント
 
 - **書類一覧取得**: `GET /api/v2/documents.json?date=YYYY-MM-DD&type=2&Subscription-Key=...`
-- **XBRL ダウンロード**: `GET /api/v2/documents/{docID}?type=1&Subscription-Key=...`
-- **PDF ダウンロード**: `GET /api/v2/documents/{docID}?type=2&Subscription-Key=...`
+- **XBRL ダウンロード**: `GET /api/v2/documents/{docID}?type=1&Subscription-Key=...` (ZIP)
+- **PDF ダウンロード**: `GET /api/v2/documents/{docID}?type=2&Subscription-Key=...` (PDF直接)
+- **CSV ダウンロード**: `GET /api/v2/documents/{docID}?type=5&Subscription-Key=...` (ZIP, API v2新機能)
+- **コードリスト**: `GET /api/v2/EdinetcodeDlInfo.csv?Subscription-Key=...` (cp932, Row 1はメタデータ)
+
+### PDF プロキシ
+
+ブラウザから直接 EDINET API を呼ぶと Subscription-Key が露出するため、サーバー側プロキシ経由で配信:
+
+```
+ブラウザ → GET /api/documents/{docID}/pdf → FastAPI プロキシ → EDINET API (type=2)
+```
+
+PDF取得失敗時はEDINET開示ページへ302リダイレクト。
 
 ## トラブルシューティング
 
@@ -556,7 +601,9 @@ pytest tests/test_poller.py
 |-----|------|-------------|
 | EDINET API v2 | 報告書一覧・XBRL取得 | `api.edinet-fsa.go.jp` |
 | stooq | 株価履歴・現在値 | `stooq.com` |
-| Yahoo Finance | 時価総額・PBR | `query1.finance.yahoo.com`, `query2.finance.yahoo.com` |
+| Yahoo Finance | 時価総額・PBR・PER | `query1.finance.yahoo.com`, `query2.finance.yahoo.com` |
+| Google Finance | 株価スクレイピング | `www.google.com` |
+| Kabutan (株探) | 株価・社名スクレイピング | `kabutan.jp` |
 
 **確認方法:**
 
