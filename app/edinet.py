@@ -258,14 +258,29 @@ class EdinetClient:
             with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
                 all_files = zf.namelist()
                 logger.debug("XBRL ZIP contains %d files: %s",
-                             len(all_files),
-                             [f for f in all_files if "PublicDoc" in f])
+                             len(all_files), all_files[:20])
+
+                # Collect candidate files.  Prefer PublicDoc/ but fall back
+                # to any .xbrl/.htm/.xhtml in the ZIP (EDINET large holding
+                # reports may use a flat structure without PublicDoc/).
+                xbrl_pub = [f for f in all_files
+                            if f.endswith(".xbrl") and "PublicDoc" in f]
+                xbrl_any = [f for f in all_files
+                            if f.endswith(".xbrl")
+                            and "AuditDoc" not in f
+                            and "__MACOSX" not in f]
+                xbrl_files = xbrl_pub or xbrl_any
+
+                htm_pub = [f for f in all_files
+                           if "PublicDoc" in f
+                           and (f.endswith(".htm") or f.endswith(".xhtml"))]
+                htm_any = [f for f in all_files
+                           if (f.endswith(".htm") or f.endswith(".xhtml"))
+                           and "AuditDoc" not in f
+                           and "__MACOSX" not in f]
+                htm_files = htm_pub or htm_any
 
                 # --- Try 1: traditional XBRL instance (.xbrl) ---
-                xbrl_files = [
-                    f for f in all_files
-                    if f.endswith(".xbrl") and "PublicDoc" in f
-                ]
                 if xbrl_files:
                     xbrl_content = zf.read(xbrl_files[0])
                     result = self._extract_from_xbrl(xbrl_content)
@@ -274,11 +289,6 @@ class EdinetClient:
                         return result
 
                 # --- Try 2: inline XBRL (.htm / .xhtml) ---
-                htm_files = [
-                    f for f in all_files
-                    if "PublicDoc" in f
-                    and (f.endswith(".htm") or f.endswith(".xhtml"))
-                ]
                 if htm_files:
                     logger.debug("Trying inline XBRL from %d .htm files", len(htm_files))
                     for htm_file in htm_files:
