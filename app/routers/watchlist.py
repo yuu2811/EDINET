@@ -74,6 +74,7 @@ async def get_watchlist_filings() -> dict:
         query = (
             select(Filing)
             .where(or_(*conditions))
+            .distinct()
             .order_by(desc(Filing.submit_date_time))
             .limit(50)
         )

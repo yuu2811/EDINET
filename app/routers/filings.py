@@ -44,7 +44,7 @@ async def list_filings(
             )
         if date_to:
             query = query.where(
-                Filing.submit_date_time <= date_to.isoformat() + " 23:59"
+                Filing.submit_date_time <= date_to.isoformat() + " 23:59:59"
             )
         if filer:
             query = query.where(

@@ -553,6 +553,8 @@ async def run_poller():
             await _retry_xbrl_enrichment()
             # Fetch company fundamentals from 有報/四半期報告書
             await _poll_company_info(today)
+            # Clean up SSE clients that have been connected too long
+            await broadcaster._cleanup_stale()
         except asyncio.CancelledError:
             logger.info("Poller cancelled")
             raise
