@@ -118,7 +118,7 @@ async def proxy_document_pdf(doc_id: str) -> Response:
 
     if not settings.EDINET_API_KEY:
         # No API key configured — redirect to EDINET disclosure page instead
-        edinet_url = f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{doc_id},,="
+        edinet_url = f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{doc_id},0,0="
         return Response(
             status_code=302,
             headers={"Location": edinet_url},
@@ -127,7 +127,7 @@ async def proxy_document_pdf(doc_id: str) -> Response:
     content = await edinet_client.download_pdf(doc_id)
     if content is None:
         logger.warning("PDF download failed for %s, redirecting to EDINET", doc_id)
-        edinet_url = f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{doc_id},,="
+        edinet_url = f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{doc_id},0,0="
         return Response(
             status_code=302,
             headers={"Location": edinet_url},
@@ -136,7 +136,7 @@ async def proxy_document_pdf(doc_id: str) -> Response:
     # Verify the response looks like a PDF (starts with %PDF)
     if len(content) < 5 or not content[:5].startswith(b"%PDF"):
         logger.warning("EDINET returned non-PDF content for %s (%d bytes)", doc_id, len(content))
-        edinet_url = f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{doc_id},,="
+        edinet_url = f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{doc_id},0,0="
         return Response(
             status_code=302,
             headers={"Location": edinet_url},
