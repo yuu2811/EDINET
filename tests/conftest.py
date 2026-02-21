@@ -156,7 +156,7 @@ SAMPLE_EDINET_RESPONSE = {
             "pdfFlag": "1",
             "attachDocFlag": "1",
             "englishDocFlag": "0",
-            "csvFlag": "0",
+
             "legalStatus": "0",
         },
         {
@@ -187,7 +187,7 @@ SAMPLE_EDINET_RESPONSE = {
             "pdfFlag": "1",
             "attachDocFlag": "0",
             "englishDocFlag": "0",
-            "csvFlag": "0",
+
             "legalStatus": "0",
         },
         {
@@ -218,7 +218,7 @@ SAMPLE_EDINET_RESPONSE = {
             "pdfFlag": "1",
             "attachDocFlag": "1",
             "englishDocFlag": "0",
-            "csvFlag": "1",
+
             "legalStatus": "0",
         },
     ],

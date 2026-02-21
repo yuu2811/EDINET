@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.database import async_session, init_db  # noqa: F401 – routers resolve async_session here
+from app.database import async_session, init_db  # noqa: F401 – deps.py resolves async_session here
 from app.edinet import edinet_client
 from app.errors import register_error_handlers
 from app.logging_config import setup_logging
@@ -19,9 +19,6 @@ from app.routers import analytics, filings, poll, stats, stock, stream, watchlis
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
-_poll_last_called: float = 0.0  # rate limiter state for /api/poll
-_POLL_COOLDOWN = 10.0
 
 
 @asynccontextmanager

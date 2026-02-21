@@ -4,8 +4,9 @@ from datetime import date, timedelta
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
-from sqlalchemy import case, desc, distinct, func, or_, select
+from sqlalchemy import desc, func, or_, select
 
+from app.deps import get_async_session, normalize_sec_code
 from app.models import Filing
 
 router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
@@ -26,50 +27,12 @@ _SECTOR_MAP = {
 }
 
 
-def _get_async_session():
-    """Resolve async_session at runtime via app.main for testability."""
-    import app.main
-    return app.main.async_session
-
-
-def _normalize_sec_code(raw: str | None) -> str | None:
-    """Normalize a securities code to its 4-digit form.
-
-    5-digit codes have a trailing check digit which is stripped.
-    Returns None for None/empty input.
-    """
-    if not raw:
-        return None
-    code = raw.strip()
-    if len(code) == 5:
-        code = code[:4]
-    return code
-
-
 def _sec_code_to_sector(sec_code: str | None) -> str:
-    """Map a securities code to its sector name.
-
-    Uses the first 2 digits of the normalized 4-digit code.
-    """
-    norm = _normalize_sec_code(sec_code)
+    """Map a securities code to its sector name."""
+    norm = normalize_sec_code(sec_code)
     if not norm or len(norm) < 2:
         return "その他"
-    prefix = norm[:2]
-    return _SECTOR_MAP.get(prefix, "その他")
-
-
-def _ratio_change_expr():
-    """SQLAlchemy expression for holding_ratio - previous_holding_ratio.
-
-    Returns NULL when either value is NULL.
-    """
-    return case(
-        (
-            (Filing.holding_ratio.isnot(None)) & (Filing.previous_holding_ratio.isnot(None)),
-            Filing.holding_ratio - Filing.previous_holding_ratio,
-        ),
-        else_=None,
-    )
+    return _SECTOR_MAP.get(norm[:2], "その他")
 
 
 def _period_start_date(period: str) -> str | None:
@@ -97,7 +60,7 @@ def _period_start_date(period: str) -> str | None:
 @router.get("/filer/{edinet_code}")
 async def filer_profile(edinet_code: str) -> dict:
     """Return a filer's full history and analytics."""
-    async with _get_async_session()() as session:
+    async with get_async_session()() as session:
         # Total filings for this filer
         total_result = await session.execute(
             select(func.count(Filing.id)).where(Filing.edinet_code == edinet_code)
@@ -167,11 +130,11 @@ async def filer_profile(edinet_code: str) -> dict:
                 func.avg(Filing.holding_ratio).label("avg_holding_ratio"),
             ).where(Filing.edinet_code == edinet_code)
         )
-        summary_row = summary_result.one()
-        avg_ratio = summary_row.avg_holding_ratio
+        summary_row = summary_result.one_or_none()
+        avg_ratio = summary_row.avg_holding_ratio if summary_row else None
         activity_summary = {
-            "first_filing_date": summary_row.first_filing_date,
-            "last_filing_date": summary_row.last_filing_date,
+            "first_filing_date": summary_row.first_filing_date if summary_row else None,
+            "last_filing_date": summary_row.last_filing_date if summary_row else None,
             "avg_holding_ratio": round(avg_ratio, 2) if avg_ratio is not None else None,
         }
 
@@ -192,7 +155,7 @@ async def filer_profile(edinet_code: str) -> dict:
 @router.get("/company/{sec_code}")
 async def company_profile(sec_code: str) -> dict:
     """Return all filing analytics targeting a specific company."""
-    async with _get_async_session()() as session:
+    async with get_async_session()() as session:
         # Match on target_sec_code or sec_code (both the raw value and
         # common variants with/without trailing 0)
         code_variants = [sec_code]
@@ -226,9 +189,9 @@ async def company_profile(sec_code: str) -> dict:
             .order_by(desc(Filing.submit_date_time))
             .limit(1)
         )
-        name_row = name_result.one()
-        company_name = name_row.target_company_name
-        normalized_sec = _normalize_sec_code(name_row.target_sec_code) or sec_code
+        name_row = name_result.one_or_none()
+        company_name = name_row.target_company_name if name_row else None
+        normalized_sec = (normalize_sec_code(name_row.target_sec_code) if name_row else None) or sec_code
 
         # Major holders: latest filing per filer
         holder_q = (
@@ -309,7 +272,7 @@ async def activity_rankings(
     """Return activity rankings for filers, companies, and ratio changes."""
     start_date = _period_start_date(period)
 
-    async with _get_async_session()() as session:
+    async with get_async_session()() as session:
         # Base filter for the time period
         def _period_filter(stmt):
             if start_date is not None:
@@ -357,7 +320,6 @@ async def activity_rankings(
         ]
 
         # Largest increases: top 10 with biggest positive ratio change
-        ratio_change = _ratio_change_expr()
         increase_q = _period_filter(
             select(Filing)
             .where(Filing.holding_ratio.isnot(None))
@@ -428,7 +390,7 @@ async def market_movements(
         parsed = date.today()
     date_str = parsed.isoformat()
 
-    async with _get_async_session()() as session:
+    async with get_async_session()() as session:
         date_filter = Filing.submit_date_time.startswith(date_str)
 
         # Total filings on the date
@@ -450,9 +412,6 @@ async def market_movements(
                 "sector_movements": [],
                 "notable_moves": [],
             }
-
-        # Ratio change classification
-        ratio_change = _ratio_change_expr()
 
         # Counts by direction
         increase_count_result = await session.execute(
@@ -579,7 +538,7 @@ async def market_movements(
 @router.get("/sectors")
 async def sector_breakdown() -> dict:
     """Return sector-level aggregation of all filings in the database."""
-    async with _get_async_session()() as session:
+    async with get_async_session()() as session:
         # Fetch the minimal data needed for sector classification
         result = await session.execute(
             select(
@@ -597,7 +556,7 @@ async def sector_breakdown() -> dict:
                     "filing_count": 0,
                     "ratios": [],
                 }
-            norm = _normalize_sec_code(row.target_sec_code)
+            norm = normalize_sec_code(row.target_sec_code)
             if norm:
                 sector_data[sector]["sec_codes"].add(norm)
             sector_data[sector]["filing_count"] += 1

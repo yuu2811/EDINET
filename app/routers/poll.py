@@ -9,6 +9,9 @@ from fastapi.responses import JSONResponse
 
 router = APIRouter(tags=["Poll"])
 
+_poll_last_called: float = 0.0
+_POLL_COOLDOWN = 10.0
+
 # Store references to background tasks so they are not garbage-collected mid-execution.
 _background_tasks: set[asyncio.Task] = set()
 
@@ -18,16 +21,16 @@ async def trigger_poll(
     date: str | None = Query(None, description="Date to poll (YYYY-MM-DD)"),
 ) -> dict:
     """Manually trigger an EDINET poll (rate-limited to once per 10s)."""
-    import app.main as _main
+    global _poll_last_called
 
     now = time.monotonic()
-    if now - _main._poll_last_called < _main._POLL_COOLDOWN:
-        remaining = int(_main._POLL_COOLDOWN - (now - _main._poll_last_called))
+    if now - _poll_last_called < _POLL_COOLDOWN:
+        remaining = int(_POLL_COOLDOWN - (now - _poll_last_called))
         return JSONResponse(
             {"error": f"Rate limited. Try again in {remaining}s"},
             status_code=429,
         )
-    _main._poll_last_called = now
+    _poll_last_called = now
 
     from app.poller import poll_edinet
 

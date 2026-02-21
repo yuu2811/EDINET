@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import desc, func, or_, select
 
+from app.deps import get_async_session
 from app.models import Filing
 
 logger = logging.getLogger(__name__)
@@ -15,12 +16,6 @@ router = APIRouter(prefix="/api/filings", tags=["Filings"])
 
 # Separate router for document proxy (mounted at /api/documents)
 documents_router = APIRouter(prefix="/api/documents", tags=["Documents"])
-
-
-def _get_async_session():
-    """Resolve async_session at runtime via app.main for testability."""
-    import app.main
-    return app.main.async_session
 
 
 @router.get("")
@@ -35,7 +30,7 @@ async def list_filings(
     offset: int = Query(0, ge=0),
 ) -> dict:
     """List large shareholding filings with filters."""
-    async with _get_async_session()() as session:
+    async with get_async_session()() as session:
         query = select(Filing).order_by(desc(Filing.submit_date_time), desc(Filing.id))
 
         if date_from:
@@ -87,7 +82,7 @@ async def list_filings(
 @router.get("/{doc_id}")
 async def get_filing(doc_id: str) -> dict:
     """Get a single filing by document ID."""
-    async with _get_async_session()() as session:
+    async with get_async_session()() as session:
         result = await session.execute(
             select(Filing).where(Filing.doc_id == doc_id)
         )
@@ -146,7 +141,7 @@ async def proxy_document_pdf(doc_id: str) -> Response:
             if resp.status_code == 200 and _looks_like_pdf(resp.content):
                 logger.info("Served %s via disclosure2dl fallback", doc_id)
                 return Response(
-                    content=extracted,
+                    content=resp.content,
                     media_type="application/pdf",
                     headers={
                         "Content-Disposition": f'inline; filename="{doc_id}.pdf"',

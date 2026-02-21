@@ -191,7 +191,6 @@ async def poll_edinet(target_date=None):
                 # API v2: all flag fields are string "0"/"1"
                 xbrl_flag=doc.get("xbrlFlag") == "1",
                 pdf_flag=doc.get("pdfFlag") == "1",
-                csv_flag=doc.get("csvFlag") == "1",  # API v2 new
                 attach_doc_flag=doc.get("attachDocFlag") == "1",
                 english_doc_flag=doc.get("englishDocFlag") == "1",
                 is_amendment=is_amendment,
@@ -215,8 +214,8 @@ async def poll_edinet(target_date=None):
                 session.add(filing)
                 await session.flush()
 
-                # Try to enrich from XBRL/CSV for additional data
-                if filing.xbrl_flag or filing.csv_flag:
+                # Try to enrich from XBRL for additional data
+                if filing.xbrl_flag:
                     # Per EDINET API v2 spec: several seconds delay between
                     # document downloads is recommended to avoid rate limiting.
                     if new_count > 0:
@@ -299,20 +298,15 @@ _XBRL_FIELDS = (
 
 
 async def _enrich_from_xbrl(filing: Filing):
-    """Download and parse XBRL/CSV to enrich filing data.
+    """Download and parse XBRL to enrich filing data.
 
     Per EDINET API v2 spec, a delay of several seconds between document
     downloads is recommended to avoid rate limiting.  The caller is
     responsible for the inter-request delay; this function handles a
     single download.
-
-    Strategy:
-      1. Try XBRL (type=1) first — most detailed data
-      2. If XBRL fails and CSV is available (csv_flag), try CSV (type=5)
     """
     data = None
 
-    # --- Try XBRL (type=1) ---
     try:
         zip_content = await asyncio.wait_for(
             edinet_client.download_xbrl(filing.doc_id),
@@ -324,28 +318,6 @@ async def _enrich_from_xbrl(filing: Filing):
         logger.warning("XBRL download timed out for %s", filing.doc_id)
     except Exception as e:
         logger.error("XBRL download failed for %s: %s", filing.doc_id, e)
-
-    # --- Fallback: try CSV (type=5, API v2 new feature) ---
-    if data is None or data.get("holding_ratio") is None:
-        if getattr(filing, "csv_flag", False):
-            try:
-                csv_content = await asyncio.wait_for(
-                    edinet_client.download_csv(filing.doc_id),
-                    timeout=30.0,
-                )
-                if csv_content:
-                    csv_data = edinet_client.parse_csv_for_holding_data(csv_content)
-                    # Merge: CSV fills in gaps that XBRL missed
-                    if data is None:
-                        data = csv_data
-                    else:
-                        for field in _XBRL_FIELDS:
-                            if data.get(field) is None and csv_data.get(field) is not None:
-                                data[field] = csv_data[field]
-            except asyncio.TimeoutError:
-                logger.warning("CSV download timed out for %s", filing.doc_id)
-            except Exception as e:
-                logger.debug("CSV download failed for %s: %s", filing.doc_id, e)
 
     if data is None:
         return

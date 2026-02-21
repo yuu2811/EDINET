@@ -5,16 +5,8 @@ import logging
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-
-
-class ErrorResponse(BaseModel):
-    """Standard error response model."""
-
-    error: str
-    detail: str | None = None
 
 
 def register_error_handlers(app: FastAPI) -> None:
