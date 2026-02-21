@@ -121,13 +121,20 @@ class Filing(Base):
             "xbrl_parsed": self.xbrl_parsed,
             # EDINET disclosure portal (public, no API key required)
             # doc_id is already a full ID like "S100TDUA"
-            "edinet_url": f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{self.doc_id}"
+            # URL format: WZEK0040.aspx?S100XXXX&owner=bsrep (大量保有報告書)
+            "edinet_url": (
+                "https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx"
+                f"?{self.doc_id}"
+            )
             if self.doc_id
             else None,
             # Server-side proxy for PDF — EDINET API v2 requires
             # Subscription-Key, which must not be exposed to the browser.
+            # Show PDF link even when pdf_flag is False — the proxy will
+            # return 404/502 gracefully if unavailable, but many filings
+            # have PDFs that are available even when the flag is missing.
             "pdf_url": f"/api/documents/{self.doc_id}/pdf"
-            if self.doc_id and self.pdf_flag
+            if self.doc_id
             else None,
         }
 

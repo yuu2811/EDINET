@@ -562,11 +562,15 @@ async def _fetch_yahoo_quote_summary(
     client: httpx.AsyncClient,
     ticker: str,
 ) -> dict:
-    """Fallback: try Yahoo Finance quoteSummary for market cap / PBR."""
+    """Fetch detailed stock data from Yahoo Finance quoteSummary.
+
+    Extracts market cap, PBR, shares outstanding, 52-week range,
+    change percent, dividend yield, and other financial metrics.
+    """
     yahoo_ticker = f"{ticker}.T"
     url = (
         f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{yahoo_ticker}"
-        f"?modules=defaultKeyStatistics,price"
+        f"?modules=defaultKeyStatistics,price,summaryDetail"
     )
 
     result: dict = {}
@@ -581,12 +585,18 @@ async def _fetch_yahoo_quote_summary(
         logger.debug("Yahoo quoteSummary failed for %s: %s", ticker, exc)
         return result
 
+    def _raw(obj: dict | None) -> float | int | None:
+        """Extract 'raw' value from Yahoo Finance nested dict."""
+        if isinstance(obj, dict):
+            return obj.get("raw")
+        return None
+
     try:
         summary = data["quoteSummary"]["result"][0]
 
+        # --- price module ---
         price_info = summary.get("price") or {}
-        market_cap_obj = price_info.get("marketCap") or {}
-        market_cap_raw = market_cap_obj.get("raw") if isinstance(market_cap_obj, dict) else None
+        market_cap_raw = _raw(price_info.get("marketCap"))
         if market_cap_raw:
             result["market_cap"] = market_cap_raw
 
@@ -594,22 +604,71 @@ async def _fetch_yahoo_quote_summary(
         if name:
             result["name"] = name
 
-        # Extract current price from price module
-        reg_price = price_info.get("regularMarketPrice") or {}
-        if isinstance(reg_price, dict) and reg_price.get("raw"):
-            result["current_price"] = reg_price["raw"]
+        reg_price = _raw(price_info.get("regularMarketPrice"))
+        if reg_price:
+            result["current_price"] = reg_price
 
+        # Change from previous close
+        change = _raw(price_info.get("regularMarketChange"))
+        change_pct = _raw(price_info.get("regularMarketChangePercent"))
+        if change is not None:
+            result["price_change"] = round(float(change), 1)
+        if change_pct is not None:
+            result["price_change_pct"] = round(float(change_pct) * 100, 2)
+
+        prev_close = _raw(price_info.get("regularMarketPreviousClose"))
+        if prev_close:
+            result["previous_close"] = prev_close
+
+        # --- defaultKeyStatistics module ---
         key_stats = summary.get("defaultKeyStatistics") or {}
-        pbr_obj = key_stats.get("priceToBook") or {}
-        pbr_raw = pbr_obj.get("raw") if isinstance(pbr_obj, dict) else None
+
+        pbr_raw = _raw(key_stats.get("priceToBook"))
         if pbr_raw is not None:
             result["pbr"] = round(float(pbr_raw), 2)
 
-        # Extract sharesOutstanding — critical for accurate market cap
-        shares_obj = key_stats.get("sharesOutstanding") or {}
-        shares_raw = shares_obj.get("raw") if isinstance(shares_obj, dict) else None
+        shares_raw = _raw(key_stats.get("sharesOutstanding"))
         if shares_raw is not None:
             result["shares_outstanding"] = int(shares_raw)
+
+        # 52-week high/low
+        week52_high = _raw(key_stats.get("fiftyTwoWeekHigh"))
+        week52_low = _raw(key_stats.get("fiftyTwoWeekLow"))
+        if week52_high is not None:
+            result["week52_high"] = week52_high
+        if week52_low is not None:
+            result["week52_low"] = week52_low
+
+        # Enterprise value
+        ev = _raw(key_stats.get("enterpriseValue"))
+        if ev is not None:
+            result["enterprise_value"] = ev
+
+        # --- summaryDetail module ---
+        detail = summary.get("summaryDetail") or {}
+
+        dividend_yield = _raw(detail.get("dividendYield"))
+        if dividend_yield is not None:
+            result["dividend_yield"] = round(float(dividend_yield) * 100, 2)
+
+        trailing_pe = _raw(detail.get("trailingPE"))
+        if trailing_pe is not None:
+            result["per"] = round(float(trailing_pe), 2)
+
+        # 52-week from summaryDetail (fallback)
+        if "week52_high" not in result:
+            w52h = _raw(detail.get("fiftyTwoWeekHigh"))
+            if w52h is not None:
+                result["week52_high"] = w52h
+        if "week52_low" not in result:
+            w52l = _raw(detail.get("fiftyTwoWeekLow"))
+            if w52l is not None:
+                result["week52_low"] = w52l
+
+        volume = _raw(detail.get("volume"))
+        if volume is not None:
+            result["volume"] = int(volume)
+
     except (KeyError, IndexError, TypeError):
         pass
 
@@ -889,6 +948,7 @@ async def get_stock_data(sec_code: str) -> dict:
     market_cap = None
     pbr = None
     price_source = "fallback"
+    yahoo_summary: dict = {}  # populated by Yahoo quoteSummary if APIs are reachable
 
     # --- Step 2: Fetch live market data from external APIs ---
     # 6 sources fetched in parallel (all free, no API keys):
@@ -980,6 +1040,7 @@ async def get_stock_data(sec_code: str) -> dict:
             logger.info("All external APIs unreachable; switching to fallback mode")
 
     # --- Step 3: Fallback when no live data available ---
+    extra: dict = {}
     if not weekly_prices and current_price is None:
         weekly_prices, current_price, fallback_name, market_cap, pbr = (
             _generate_fallback_data(ticker)
@@ -987,6 +1048,17 @@ async def get_stock_data(sec_code: str) -> dict:
         price_source = "fallback"
         if not api_name:
             api_name = fallback_name
+    else:
+        # Collect enriched data from Yahoo Finance
+        if yahoo_summary:
+            for key in (
+                "per", "dividend_yield", "volume",
+                "week52_high", "week52_low",
+                "price_change", "price_change_pct", "previous_close",
+            ):
+                val = yahoo_summary.get(key)
+                if val is not None:
+                    extra[key] = val
 
     # --- Step 4: Apply name priority (金融庁 > API > fallback) ---
     name = edinet_name or api_name
@@ -1001,6 +1073,7 @@ async def get_stock_data(sec_code: str) -> dict:
         "pbr": pbr,
         "weekly_prices": weekly_prices,
         "price_source": price_source,
+        **extra,
     }
 
     _cache_set(ticker, result)

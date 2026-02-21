@@ -742,6 +742,9 @@ function renderFeedTable(container, filings) {
         if (f.pdf_url) {
             links += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="tbl-link" onclick="event.stopPropagation()">PDF</a>`;
         }
+        if (f.edinet_url) {
+            links += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="tbl-link" onclick="event.stopPropagation()">EDINET</a>`;
+        }
 
         // Row class
         let rowClass = '';
@@ -979,10 +982,13 @@ function createMobileFeedCard(f) {
     const hasMktData = mcapHtml || priceHtml || pbrHtml;
     const sep = hasMktData ? '<span class="m-sep"></span>' : '';
 
-    // PDF link
+    // PDF + EDINET links
     let linkHtml = '';
     if (f.pdf_url) {
-        linkHtml = `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="m-link" onclick="event.stopPropagation()">PDF</a>`;
+        linkHtml += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="m-link" onclick="event.stopPropagation()">PDF</a>`;
+    }
+    if (f.edinet_url) {
+        linkHtml += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="m-link" onclick="event.stopPropagation()">EDINET</a>`;
     }
 
     return `<div class="m-card ${cardClass}" data-doc-id="${escapeHtml(f.doc_id)}">
@@ -1939,7 +1945,15 @@ function openModal(filing) {
 
             let infoHtml = '<div class="stock-info-bar">';
             if (stockData.current_price != null) {
-                infoHtml += `<span class="stock-price">\u00a5${Math.round(stockData.current_price).toLocaleString()}</span>`;
+                let priceStr = `\u00a5${Math.round(stockData.current_price).toLocaleString()}`;
+                // Show change from previous close
+                if (stockData.price_change != null) {
+                    const cls = stockData.price_change > 0 ? 'positive' : stockData.price_change < 0 ? 'negative' : '';
+                    const sign = stockData.price_change > 0 ? '+' : '';
+                    const pctStr = stockData.price_change_pct != null ? ` (${sign}${stockData.price_change_pct.toFixed(2)}%)` : '';
+                    priceStr += ` <span class="${cls}" style="font-size:0.85em">${sign}${stockData.price_change.toFixed(1)}${pctStr}</span>`;
+                }
+                infoHtml += `<span class="stock-price">${priceStr}</span>`;
             }
             if (stockData.market_cap_display) {
                 infoHtml += `<span class="stock-metric">時価: <strong>${stockData.market_cap_display}</strong></span>`;
@@ -1947,7 +1961,25 @@ function openModal(filing) {
             if (stockData.pbr != null) {
                 infoHtml += `<span class="stock-metric">PBR: <strong>${Number(stockData.pbr).toFixed(2)}倍</strong></span>`;
             }
+            if (stockData.per != null) {
+                infoHtml += `<span class="stock-metric">PER: <strong>${Number(stockData.per).toFixed(1)}倍</strong></span>`;
+            }
+            if (stockData.dividend_yield != null) {
+                infoHtml += `<span class="stock-metric">配当: <strong>${stockData.dividend_yield.toFixed(2)}%</strong></span>`;
+            }
+            if (stockData.week52_high != null && stockData.week52_low != null) {
+                infoHtml += `<span class="stock-metric">52W: <strong>\u00a5${Math.round(stockData.week52_low).toLocaleString()}-${Math.round(stockData.week52_high).toLocaleString()}</strong></span>`;
+            }
+            if (stockData.volume != null) {
+                const volStr = stockData.volume >= 1000000 ? (stockData.volume / 1000000).toFixed(1) + 'M' : stockData.volume >= 1000 ? (stockData.volume / 1000).toFixed(0) + 'K' : stockData.volume.toString();
+                infoHtml += `<span class="stock-metric">出来高: <strong>${volStr}</strong></span>`;
+            }
             infoHtml += '</div>';
+
+            // Price source indicator (small, for transparency)
+            if (stockData.price_source && stockData.price_source !== 'fallback') {
+                infoHtml += `<div style="text-align:right;font-size:10px;opacity:0.4;margin-top:2px">source: ${stockData.price_source}</div>`;
+            }
 
             stockSection.innerHTML = infoHtml + '<div class="stock-chart-container"><canvas id="stock-chart-canvas"></canvas><div id="modal-chart-tooltip" class="chart-tooltip"></div></div>';
 
