@@ -21,5 +21,11 @@ class Settings:
     # ordinanceCode for large shareholding
     LARGE_HOLDING_ORDINANCE: str = "060"
 
+    # Company fundamental data source docTypeCodes
+    # 120: 有価証券報告書 (Annual Securities Report) — shares outstanding, net assets
+    # 130: 訂正有価証券報告書 (Amended Annual Report)
+    # 140: 四半期報告書 (Quarterly Report)
+    COMPANY_INFO_DOC_TYPES: list[str] = ["120", "130", "140"]
+
 
 settings = Settings()

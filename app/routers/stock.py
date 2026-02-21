@@ -21,7 +21,7 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import func as sa_func, select
 
 from app.database import async_session
-from app.models import Filing
+from app.models import CompanyInfo, Filing
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +228,23 @@ async def _lookup_company_from_filings(ticker: str) -> str | None:
     except Exception as exc:
         logger.debug("Filing lookup failed for %s: %s", ticker, exc)
         return None
+
+
+async def _lookup_company_info(ticker: str) -> dict | None:
+    """Look up CompanyInfo from DB (populated from 有報/四半期報告書).
+
+    Returns dict with shares_outstanding, net_assets, company_name, or None.
+    """
+    try:
+        async with async_session() as session:
+            stmt = select(CompanyInfo).where(CompanyInfo.sec_code == ticker)
+            result = await session.execute(stmt)
+            info = result.scalar_one_or_none()
+            if info:
+                return info.to_dict()
+    except Exception as exc:
+        logger.debug("CompanyInfo lookup failed for %s: %s", ticker, exc)
+    return None
 
 
 def _lookup_edinet_code_list(ticker: str) -> str | None:
@@ -576,11 +593,22 @@ async def _fetch_yahoo_quote_summary(
         if name:
             result["name"] = name
 
+        # Extract current price from price module
+        reg_price = price_info.get("regularMarketPrice") or {}
+        if isinstance(reg_price, dict) and reg_price.get("raw"):
+            result["current_price"] = reg_price["raw"]
+
         key_stats = summary.get("defaultKeyStatistics") or {}
         pbr_obj = key_stats.get("priceToBook") or {}
         pbr_raw = pbr_obj.get("raw") if isinstance(pbr_obj, dict) else None
         if pbr_raw is not None:
             result["pbr"] = round(float(pbr_raw), 2)
+
+        # Extract sharesOutstanding — critical for accurate market cap
+        shares_obj = key_stats.get("sharesOutstanding") or {}
+        shares_raw = shares_obj.get("raw") if isinstance(shares_obj, dict) else None
+        if shares_raw is not None:
+            result["shares_outstanding"] = int(shares_raw)
     except (KeyError, IndexError, TypeError):
         pass
 
@@ -612,12 +640,20 @@ async def get_stock_data(sec_code: str) -> dict:
     if cached is not None:
         return cached
 
-    # --- Step 1: Look up authoritative company name from 金融庁 data ---
-    # These run concurrently: DB lookup + EDINET code list (already in memory)
+    # --- Step 1: Look up authoritative data from 金融庁 (EDINET) ---
     await _load_edinet_code_list()  # no-op if already loaded
+
+    # Company name: Filing DB > Code list
     edinet_name = await _lookup_company_from_filings(ticker)
     if not edinet_name:
         edinet_name = _lookup_edinet_code_list(ticker)
+
+    # Company fundamentals: CompanyInfo table (from 有報/四半期報告書)
+    company_info = await _lookup_company_info(ticker)
+    edinet_shares = company_info.get("shares_outstanding") if company_info else None
+    edinet_bps = company_info.get("bps") if company_info else None
+    if company_info and not edinet_name:
+        edinet_name = company_info.get("company_name")
 
     weekly_prices: list[dict] = []
     current_price = None
@@ -642,9 +678,11 @@ async def get_stock_data(sec_code: str) -> dict:
         # Merge results – prefer Yahoo for market cap / PBR, stooq for prices
         weekly_prices = history
 
-        current_price = quote.get("current_price")
-        if current_price is None:
-            current_price = yahoo_meta.get("current_price")
+        current_price = (
+            quote.get("current_price")
+            or yahoo_summary.get("current_price")
+            or yahoo_meta.get("current_price")
+        )
 
         api_name = (
             yahoo_summary.get("name")
@@ -653,7 +691,22 @@ async def get_stock_data(sec_code: str) -> dict:
         )
 
         market_cap = yahoo_summary.get("market_cap") or yahoo_meta.get("market_cap")
+        shares_outstanding = yahoo_summary.get("shares_outstanding")
         pbr = yahoo_summary.get("pbr")
+
+        # --- Market cap accuracy: EDINET shares × live price is best ---
+        # Priority for shares_outstanding:
+        #   1. EDINET CompanyInfo (有報/四半期, 金融庁 authoritative)
+        #   2. Yahoo Finance quoteSummary
+        best_shares = edinet_shares or shares_outstanding
+        if best_shares and current_price:
+            market_cap = best_shares * current_price
+        elif not market_cap:
+            market_cap = yahoo_summary.get("market_cap") or yahoo_meta.get("market_cap")
+
+        # PBR: EDINET BPS is more accurate when available
+        if edinet_bps and current_price and edinet_bps > 0:
+            pbr = round(current_price / edinet_bps, 2)
 
         # If everything came back empty, mark external APIs as failed
         # so subsequent requests skip the slow timeout path.

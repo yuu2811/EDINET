@@ -132,6 +132,59 @@ class Filing(Base):
         }
 
 
+class CompanyInfo(Base):
+    """Authoritative company fundamental data from EDINET filings.
+
+    Populated from 有価証券報告書 (docTypeCode 120) and 四半期報告書 (140).
+    These contain 発行済株式数 and 純資産 which are critical for accurate
+    market cap and PBR calculation.
+
+    Only the LATEST data for each sec_code is kept (upserted on each update).
+    """
+
+    __tablename__ = "company_info"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    sec_code: Mapped[str] = mapped_column(String(10), unique=True, index=True)
+    edinet_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    company_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+
+    # 発行済株式数 (shares outstanding, from 有報/四半期報告書)
+    shares_outstanding: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 純資産 (net assets, for PBR = price / BPS, BPS = net_assets / shares)
+    net_assets: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 業種 (industry sector from EDINET code list)
+    industry: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    # Source filing info
+    source_doc_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_doc_type: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    # Period end date of the source filing (e.g. "2025-03-31")
+    period_end: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    def to_dict(self) -> dict:
+        bps = None
+        if self.net_assets and self.shares_outstanding and self.shares_outstanding > 0:
+            bps = round(self.net_assets / self.shares_outstanding, 2)
+        return {
+            "sec_code": self.sec_code,
+            "edinet_code": self.edinet_code,
+            "company_name": self.company_name,
+            "shares_outstanding": self.shares_outstanding,
+            "net_assets": self.net_assets,
+            "bps": bps,
+            "industry": self.industry,
+            "source_doc_id": self.source_doc_id,
+            "source_doc_type": self.source_doc_type,
+            "period_end": self.period_end,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class Watchlist(Base):
     """A company on the user's watchlist."""
 
