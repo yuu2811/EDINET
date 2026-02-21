@@ -35,7 +35,7 @@ async def test_filing_to_dict_has_urls(sample_filing):
     assert d["edinet_url"] is not None
     assert "S100TEST1" in d["edinet_url"]
     assert "S100S100" not in d["edinet_url"]
-    assert d["edinet_url"].endswith("S100TEST1,,=")
+    assert d["edinet_url"].endswith("S100TEST1,0,0=")
     assert d["pdf_url"] is not None
     assert "S100TEST1" in d["pdf_url"]
 

@@ -121,12 +121,13 @@ class Filing(Base):
             "xbrl_parsed": self.xbrl_parsed,
             # EDINET disclosure portal (public, no API key required)
             # doc_id is already a full ID like "S100TDUA"
-            # URL format: WZEK0040.aspx?S100XXXX,,=
-            # The trailing ",,=" is required by EDINET's ASP.NET backend;
+            # URL format: WZEK0040.aspx?S100XXXX,0,0=
+            # The trailing ",0,0=" is required by EDINET's ASP.NET backend;
             # without it the server returns "規定外操作" (irregular operation).
+            # This format was confirmed working via Google-indexed EDINET pages.
             "edinet_url": (
                 "https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx"
-                f"?{self.doc_id},,="
+                f"?{self.doc_id},0,0="
             )
             if self.doc_id
             else None,
