@@ -130,11 +130,11 @@ async def filer_profile(edinet_code: str) -> dict:
                 func.avg(Filing.holding_ratio).label("avg_holding_ratio"),
             ).where(Filing.edinet_code == edinet_code)
         )
-        summary_row = summary_result.one()
-        avg_ratio = summary_row.avg_holding_ratio
+        summary_row = summary_result.one_or_none()
+        avg_ratio = summary_row.avg_holding_ratio if summary_row else None
         activity_summary = {
-            "first_filing_date": summary_row.first_filing_date,
-            "last_filing_date": summary_row.last_filing_date,
+            "first_filing_date": summary_row.first_filing_date if summary_row else None,
+            "last_filing_date": summary_row.last_filing_date if summary_row else None,
             "avg_holding_ratio": round(avg_ratio, 2) if avg_ratio is not None else None,
         }
 
@@ -189,9 +189,9 @@ async def company_profile(sec_code: str) -> dict:
             .order_by(desc(Filing.submit_date_time))
             .limit(1)
         )
-        name_row = name_result.one()
-        company_name = name_row.target_company_name
-        normalized_sec = normalize_sec_code(name_row.target_sec_code) or sec_code
+        name_row = name_result.one_or_none()
+        company_name = name_row.target_company_name if name_row else None
+        normalized_sec = (normalize_sec_code(name_row.target_sec_code) if name_row else None) or sec_code
 
         # Major holders: latest filing per filer
         holder_q = (
