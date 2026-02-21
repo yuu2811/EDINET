@@ -375,8 +375,15 @@ class EdinetClient:
                         if 0 < val < 1.0:
                             val = round(val * 100, 4)
                         context_ref = elem.get("contextRef", "")
-                        # "Prior" contexts contain the previous ratio
-                        if "Prior" in context_ref or "Previous" in context_ref:
+                        # Detect "previous" ratio by element name or context:
+                        # - Element name contains "Previous" (e.g. PreviousHoldingRatioOfShareCertificatesEtc)
+                        # - contextRef contains "Prior" or "Previous" (e.g. PriorFilingDateInstant)
+                        is_previous = (
+                            "Previous" in local
+                            or "Prior" in context_ref
+                            or "Previous" in context_ref
+                        )
+                        if is_previous:
                             if result["previous_holding_ratio"] is None:
                                 result["previous_holding_ratio"] = val
                         else:
@@ -404,7 +411,12 @@ class EdinetClient:
                     if 0 < val < 1.0:
                         val = round(val * 100, 4)
                     context_ref = elem.get("contextRef", "")
-                    if "Prior" in context_ref or "Previous" in context_ref:
+                    is_previous = (
+                        "Previous" in local
+                        or "Prior" in context_ref
+                        or "Previous" in context_ref
+                    )
+                    if is_previous:
                         if result["previous_holding_ratio"] is None:
                             result["previous_holding_ratio"] = val
                     else:
@@ -611,7 +623,12 @@ class EdinetClient:
                     if val is not None:
                         if 0 < val < 1.0:
                             val = round(val * 100, 4)
-                        if "Prior" in context_ref or "Previous" in context_ref:
+                        is_previous = (
+                            "Previous" in local_name
+                            or "Prior" in context_ref
+                            or "Previous" in context_ref
+                        )
+                        if is_previous:
                             if result["previous_holding_ratio"] is None:
                                 result["previous_holding_ratio"] = val
                         else:
@@ -736,7 +753,12 @@ class EdinetClient:
         if _matches_ratio_pattern(local_name):
             if 0 < val < 1.0:
                 val = round(val * 100, 4)
-            if "Prior" in ctx or "Previous" in ctx:
+            is_previous = (
+                "Previous" in local_name
+                or "Prior" in ctx
+                or "Previous" in ctx
+            )
+            if is_previous:
                 if result["previous_holding_ratio"] is None:
                     result["previous_holding_ratio"] = val
             else:
