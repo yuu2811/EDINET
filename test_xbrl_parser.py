@@ -77,6 +77,53 @@ INLINE_XBRL_ALT_NS = """<?xml version="1.0" encoding="UTF-8"?>
 """.encode("utf-8")
 
 
+# --- Test 6: Traditional XBRL with jplvh_cor namespace (real EDINET 大量保有報告書) ---
+JPLVH_TRADITIONAL_XBRL = """<?xml version="1.0" encoding="UTF-8"?>
+<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance"
+            xmlns:jplvh_cor="http://disclosure.edinet-fsa.go.jp/taxonomy/jplvh/2023-11-01/jplvh_cor">
+  <jplvh_cor:HoldingRatioOfShareCertificatesEtc contextRef="FilingDateInstant" unitRef="pure" decimals="4">9.67</jplvh_cor:HoldingRatioOfShareCertificatesEtc>
+  <jplvh_cor:HoldingRatioOfShareCertificatesEtc contextRef="PriorFilingDateInstant" unitRef="pure" decimals="4">7.23</jplvh_cor:HoldingRatioOfShareCertificatesEtc>
+  <jplvh_cor:Name contextRef="FilingDateInstant">ゴールドマン・サックス証券株式会社</jplvh_cor:Name>
+  <jplvh_cor:NameOfIssuer contextRef="FilingDateInstant">ソニーグループ株式会社</jplvh_cor:NameOfIssuer>
+  <jplvh_cor:SecurityCodeOfIssuer contextRef="FilingDateInstant">67580</jplvh_cor:SecurityCodeOfIssuer>
+  <jplvh_cor:TotalNumberOfStocksEtcHeld contextRef="FilingDateInstant" unitRef="shares" decimals="0">5800000</jplvh_cor:TotalNumberOfStocksEtcHeld>
+  <jplvh_cor:PurposeOfHolding contextRef="FilingDateInstant">純投資</jplvh_cor:PurposeOfHolding>
+</xbrli:xbrl>
+""".encode("utf-8")
+
+# --- Test 7: Inline XBRL with jplvh_cor namespace ---
+JPLVH_INLINE_XBRL = """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"
+      xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
+      xmlns:jplvh_cor="http://disclosure.edinet-fsa.go.jp/taxonomy/jplvh/2023-11-01/jplvh_cor"
+      xmlns:xbrli="http://www.xbrl.org/2003/instance">
+<head><title>Large Shareholding Report</title></head>
+<body>
+<div>
+  <ix:header>
+    <ix:references>
+      <link:schemaRef xmlns:link="http://www.xbrl.org/2003/linkbase" xlink:type="simple" xlink:href="jplvh060300-q1r-001_E00001-000.xsd" xmlns:xlink="http://www.w3.org/1999/xlink"/>
+    </ix:references>
+    <ix:resources>
+      <xbrli:context id="FilingDateInstant"><xbrli:entity><xbrli:identifier scheme="http://disclosure.edinet-fsa.go.jp">E00001</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2024-06-15</xbrli:instant></xbrli:period></xbrli:context>
+      <xbrli:context id="PriorFilingDateInstant"><xbrli:entity><xbrli:identifier scheme="http://disclosure.edinet-fsa.go.jp">E00001</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2024-03-15</xbrli:instant></xbrli:period></xbrli:context>
+      <xbrli:unit id="pure"><xbrli:measure>xbrli:pure</xbrli:measure></xbrli:unit>
+      <xbrli:unit id="shares"><xbrli:measure>xbrli:shares</xbrli:measure></xbrli:unit>
+    </ix:resources>
+  </ix:header>
+  <p>Filer: <ix:nonNumeric name="jplvh_cor:Name" contextRef="FilingDateInstant">ブラックロック・ジャパン株式会社</ix:nonNumeric></p>
+  <p>Issuer: <ix:nonNumeric name="jplvh_cor:NameOfIssuer" contextRef="FilingDateInstant">トヨタ自動車株式会社</ix:nonNumeric></p>
+  <p>Code: <ix:nonNumeric name="jplvh_cor:SecurityCodeOfIssuer" contextRef="FilingDateInstant">72030</ix:nonNumeric></p>
+  <p>Current ratio: <ix:nonFraction name="jplvh_cor:HoldingRatioOfShareCertificatesEtc" contextRef="FilingDateInstant" unitRef="pure" decimals="2">5.12</ix:nonFraction>%%</p>
+  <p>Previous ratio: <ix:nonFraction name="jplvh_cor:HoldingRatioOfShareCertificatesEtc" contextRef="PriorFilingDateInstant" unitRef="pure" decimals="2">4.85</ix:nonFraction>%%</p>
+  <p>Shares: <ix:nonFraction name="jplvh_cor:TotalNumberOfStocksEtcHeld" contextRef="FilingDateInstant" unitRef="shares" decimals="0">8300000</ix:nonFraction></p>
+  <p>Purpose: <ix:nonNumeric name="jplvh_cor:PurposeOfHolding" contextRef="FilingDateInstant">純投資</ix:nonNumeric></p>
+</div>
+</body>
+</html>
+""".encode("utf-8")
+
+
 def run_tests():
     client = EdinetClient()
     passed = 0
@@ -136,6 +183,32 @@ def run_tests():
     r5 = client.parse_xbrl_for_holding_data(z5)
     print(f"  Result: {r5}")
     check("T5", r5, "holding_ratio", 3.50)
+
+    # Test 6: Traditional XBRL with jplvh_cor namespace (real EDINET taxonomy)
+    print("\n=== Test 6: Traditional XBRL with jplvh_cor (大量保有) ===")
+    z6 = _make_zip({"XBRL/PublicDoc/report.xbrl": JPLVH_TRADITIONAL_XBRL})
+    r6 = client.parse_xbrl_for_holding_data(z6)
+    print(f"  Result: {r6}")
+    check("T6", r6, "holding_ratio", 9.67)
+    check("T6", r6, "previous_holding_ratio", 7.23)
+    check("T6", r6, "holder_name", "ゴールドマン・サックス証券株式会社")
+    check("T6", r6, "target_company_name", "ソニーグループ株式会社")
+    check("T6", r6, "target_sec_code", "67580")
+    check("T6", r6, "shares_held", 5800000)
+    check("T6", r6, "purpose_of_holding", "純投資")
+
+    # Test 7: Inline XBRL with jplvh_cor namespace
+    print("\n=== Test 7: Inline XBRL with jplvh_cor (大量保有) ===")
+    z7 = _make_zip({"XBRL/PublicDoc/report.htm": JPLVH_INLINE_XBRL})
+    r7 = client.parse_xbrl_for_holding_data(z7)
+    print(f"  Result: {r7}")
+    check("T7", r7, "holding_ratio", 5.12)
+    check("T7", r7, "previous_holding_ratio", 4.85)
+    check("T7", r7, "holder_name", "ブラックロック・ジャパン株式会社")
+    check("T7", r7, "target_company_name", "トヨタ自動車株式会社")
+    check("T7", r7, "target_sec_code", "72030")
+    check("T7", r7, "shares_held", 8300000)
+    check("T7", r7, "purpose_of_holding", "純投資")
 
     print(f"\n{'='*50}")
     print(f"Results: {passed} passed, {failed} failed")
