@@ -28,28 +28,6 @@ def _looks_like_pdf(content: bytes) -> bool:
     return b"%PDF" in content[:1024]
 
 
-def _extract_pdf_bytes(content: bytes) -> bytes | None:
-    """Extract PDF bytes from EDINET/disclosure payload.
-
-    The upstream may return either:
-      - a ZIP containing one or more PDF files, or
-      - raw PDF bytes.
-    """
-    try:
-        with zipfile.ZipFile(io.BytesIO(content)) as zf:
-            pdf_files = [
-                f for f in zf.namelist()
-                if f.lower().endswith(".pdf")
-            ]
-            if not pdf_files:
-                return None
-            return zf.read(pdf_files[0])
-    except zipfile.BadZipFile:
-        if _looks_like_pdf(content):
-            return content
-        return None
-
-
 class EdinetClient:
     """Async client for the EDINET API v2."""
 
@@ -176,15 +154,25 @@ class EdinetClient:
             logger.error("Failed to download PDF for %s: %s", doc_id, e)
             return None
 
-        extracted = _extract_pdf_bytes(resp.content)
-        if extracted:
-            return extracted
-
-        logger.warning(
-            "EDINET returned neither valid ZIP nor PDF for %s (%d bytes)",
-            doc_id, len(resp.content),
-        )
-        return None
+        try:
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                pdf_files = [
+                    f for f in zf.namelist()
+                    if f.lower().endswith(".pdf")
+                ]
+                if not pdf_files:
+                    logger.warning("No PDF files found in ZIP for %s", doc_id)
+                    return None
+                return zf.read(pdf_files[0])
+        except zipfile.BadZipFile:
+            # Some older docs may return raw PDF directly
+            if _looks_like_pdf(resp.content):
+                return resp.content
+            logger.warning(
+                "EDINET returned neither valid ZIP nor PDF for %s (%d bytes)",
+                doc_id, len(resp.content),
+            )
+            return None
 
     async def download_csv(self, doc_id: str) -> bytes | None:
         """Download the CSV data for a given document ID (type=5).

@@ -117,7 +117,7 @@ async def proxy_document_pdf(doc_id: str) -> Response:
     import httpx as _httpx
 
     from app.config import settings
-    from app.edinet import _extract_pdf_bytes, edinet_client
+    from app.edinet import _looks_like_pdf, edinet_client
 
     # Sanitise doc_id to prevent path traversal
     if not doc_id.isalnum():
@@ -143,8 +143,7 @@ async def proxy_document_pdf(doc_id: str) -> Response:
     try:
         async with _httpx.AsyncClient(timeout=15.0) as hc:
             resp = await hc.get(dl_url)
-            extracted = _extract_pdf_bytes(resp.content) if resp.status_code == 200 else None
-            if extracted:
+            if resp.status_code == 200 and _looks_like_pdf(resp.content):
                 logger.info("Served %s via disclosure2dl fallback", doc_id)
                 return Response(
                     content=extracted,
