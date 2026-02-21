@@ -4,22 +4,17 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import desc, or_, select
 
+from app.deps import get_async_session
 from app.models import Filing, Watchlist
 from app.schemas import WatchlistCreate
 
 router = APIRouter(prefix="/api/watchlist", tags=["Watchlist"])
 
 
-def _get_async_session():
-    """Resolve async_session at runtime via app.main for testability."""
-    import app.main
-    return app.main.async_session
-
-
 @router.get("")
 async def get_watchlist() -> dict:
     """Get the user's watchlist."""
-    async with _get_async_session()() as session:
+    async with get_async_session()() as session:
         result = await session.execute(
             select(Watchlist).order_by(Watchlist.created_at)
         )
@@ -30,7 +25,7 @@ async def get_watchlist() -> dict:
 @router.post("")
 async def add_to_watchlist(body: WatchlistCreate) -> dict:
     """Add a company to the watchlist."""
-    async with _get_async_session()() as session:
+    async with get_async_session()() as session:
         item = Watchlist(
             company_name=body.company_name.strip(),
             sec_code=body.sec_code.strip() if body.sec_code else None,
@@ -47,7 +42,7 @@ async def add_to_watchlist(body: WatchlistCreate) -> dict:
 @router.get("/filings")
 async def get_watchlist_filings() -> dict:
     """Get recent filings matching the watchlist."""
-    async with _get_async_session()() as session:
+    async with get_async_session()() as session:
         wl_result = await session.execute(select(Watchlist))
         watchlist = wl_result.scalars().all()
 
@@ -87,7 +82,7 @@ async def get_watchlist_filings() -> dict:
 @router.delete("/{item_id}")
 async def remove_from_watchlist(item_id: int) -> dict:
     """Remove a company from the watchlist."""
-    async with _get_async_session()() as session:
+    async with get_async_session()() as session:
         result = await session.execute(
             select(Watchlist).where(Watchlist.id == item_id)
         )

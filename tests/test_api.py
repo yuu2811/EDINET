@@ -327,8 +327,8 @@ class TestPollEndpoint:
     @pytest.mark.asyncio
     async def test_trigger_poll(self, client):
         # Reset rate limiter for test
-        import app.main as main_mod
-        main_mod._poll_last_called = 0.0
+        import app.routers.poll as poll_mod
+        poll_mod._poll_last_called = 0.0
 
         resp = await client.post("/api/poll")
         assert resp.status_code == 200
@@ -338,8 +338,8 @@ class TestPollEndpoint:
     @pytest.mark.asyncio
     async def test_poll_rate_limited(self, client):
         """Rapid polling should be rate-limited (429)."""
-        import app.main as main_mod
-        main_mod._poll_last_called = 0.0
+        import app.routers.poll as poll_mod
+        poll_mod._poll_last_called = 0.0
 
         resp1 = await client.post("/api/poll")
         assert resp1.status_code == 200

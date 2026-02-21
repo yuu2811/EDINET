@@ -18,10 +18,11 @@ import time
 from datetime import date, timedelta
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from sqlalchemy import func as sa_func, select
 
 from app.database import async_session
+from app.deps import validate_sec_code
 from app.models import CompanyInfo, Filing
 
 logger = logging.getLogger(__name__)
@@ -252,31 +253,6 @@ async def _lookup_company_info(ticker: str) -> dict | None:
 def _lookup_edinet_code_list(ticker: str) -> str | None:
     """Look up company name from the EDINET code list cache."""
     return _edinet_code_list.get(ticker)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _normalise_sec_code(sec_code: str) -> str:
-    """Convert EDINET securities code to a 4-digit ticker.
-
-    EDINET codes are typically 5 digits (e.g. "39320") where the 5th digit
-    is a check digit that can be any value (not only "0").
-    Always take the first 4 digits of a 5-digit code.
-
-    Raises HTTPException(400) for invalid codes to prevent URL injection
-    and unbounded cache growth from arbitrary input strings.
-    """
-    sec_code = sec_code.strip()
-    if len(sec_code) == 5 and sec_code[:4].isdigit():
-        return sec_code[:4]
-    if len(sec_code) == 4 and sec_code.isdigit():
-        return sec_code
-    raise HTTPException(
-        status_code=400,
-        detail=f"Invalid securities code: {sec_code!r} (expected 4 or 5 digit code)",
-    )
 
 
 def _format_market_cap(value: float | int | None) -> str | None:
@@ -921,7 +897,7 @@ async def get_stock_data(sec_code: str) -> dict:
       4. _KNOWN_STOCKS fallback (ハードコード, 最終手段)
     """
     global _external_apis_failed_at
-    ticker = _normalise_sec_code(sec_code)
+    ticker = validate_sec_code(sec_code)
 
     # Check cache using normalized ticker so "3932" and "39320" share one entry
     cached = _cache_get(ticker)
@@ -1012,22 +988,14 @@ async def get_stock_data(sec_code: str) -> dict:
             or quote.get("name")
         )
 
-        market_cap = (
-            yahoo_summary.get("market_cap")
-            or yahoo_meta.get("market_cap")
-            or kabutan_data.get("market_cap")
-        )
         shares_outstanding = yahoo_summary.get("shares_outstanding")
         pbr = yahoo_summary.get("pbr")
 
-        # --- Market cap accuracy: EDINET shares × live price is best ---
-        # Priority for shares_outstanding:
-        #   1. EDINET CompanyInfo (有報/四半期, 金融庁 authoritative)
-        #   2. Yahoo Finance quoteSummary
+        # Market cap: EDINET shares × live price is most accurate
         best_shares = edinet_shares or shares_outstanding
         if best_shares and current_price:
             market_cap = best_shares * current_price
-        elif not market_cap:
+        else:
             market_cap = (
                 yahoo_summary.get("market_cap")
                 or yahoo_meta.get("market_cap")

@@ -73,7 +73,6 @@ class Filing(Base):
     # Flags (API v2: all are string "0"/"1", stored as bool)
     xbrl_flag: Mapped[bool] = mapped_column(Boolean, default=False)
     pdf_flag: Mapped[bool] = mapped_column(Boolean, default=False)
-    csv_flag: Mapped[bool] = mapped_column(Boolean, default=False)  # API v2 new
     attach_doc_flag: Mapped[bool] = mapped_column(Boolean, default=False)
     english_doc_flag: Mapped[bool] = mapped_column(Boolean, default=False)
     is_amendment: Mapped[bool] = mapped_column(Boolean, default=False)
