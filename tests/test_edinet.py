@@ -302,6 +302,22 @@ class TestDownloadPDF:
 
         assert result == raw_pdf
 
+
+    @pytest.mark.asyncio
+    async def test_download_pdf_raw_pdf_with_leading_whitespace(self):
+        """Should accept raw PDF even if upstream prepends whitespace/BOM."""
+        raw_pdf = b"\xef\xbb\xbf\n%PDF-1.4 raw pdf content"
+        mock_response = _mock_response(200, content=raw_pdf)
+
+        with patch.object(self.client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(return_value=mock_response)
+            mock_get.return_value = mock_http
+
+            result = await self.client.download_pdf("S100TEST")
+
+        assert result == raw_pdf
+
     @pytest.mark.asyncio
     async def test_download_pdf_non_zip_non_pdf(self):
         """Should return None for non-ZIP, non-PDF responses (e.g. HTML error)."""

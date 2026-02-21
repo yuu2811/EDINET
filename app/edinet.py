@@ -19,6 +19,15 @@ XBRL_NS = {
 }
 
 
+def _looks_like_pdf(content: bytes) -> bool:
+    """Return True when bytes appear to contain a PDF header.
+
+    Some upstream servers prepend whitespace/BOM bytes before "%PDF".
+    The PDF signature is allowed to appear within the first 1024 bytes.
+    """
+    return b"%PDF" in content[:1024]
+
+
 class EdinetClient:
     """Async client for the EDINET API v2."""
 
@@ -157,7 +166,7 @@ class EdinetClient:
                 return zf.read(pdf_files[0])
         except zipfile.BadZipFile:
             # Some older docs may return raw PDF directly
-            if resp.content[:5].startswith(b"%PDF"):
+            if _looks_like_pdf(resp.content):
                 return resp.content
             logger.warning(
                 "EDINET returned neither valid ZIP nor PDF for %s (%d bytes)",
