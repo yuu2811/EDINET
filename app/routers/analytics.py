@@ -196,9 +196,9 @@ async def company_profile(sec_code: str) -> dict:
         # Match on target_sec_code or sec_code (both the raw value and
         # common variants with/without trailing 0)
         code_variants = [sec_code]
-        stripped = sec_code.rstrip("0")
-        if stripped != sec_code:
-            code_variants.append(stripped)
+        # 5-digit EDINET codes have a trailing check digit — strip it
+        if len(sec_code) == 5:
+            code_variants.append(sec_code[:4])
         if len(sec_code) == 4:
             code_variants.append(sec_code + "0")
 

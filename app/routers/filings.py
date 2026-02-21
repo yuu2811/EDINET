@@ -149,7 +149,7 @@ async def proxy_document_pdf(doc_id: str) -> Response:
     try:
         async with _httpx.AsyncClient(timeout=15.0) as hc:
             resp = await hc.get(dl_url)
-            if resp.status_code == 200 and resp.content[:5].startswith(b"%PDF"):
+            if resp.status_code == 200 and len(resp.content) >= 5 and resp.content[:5].startswith(b"%PDF"):
                 logger.info("Served %s via disclosure2dl fallback", doc_id)
                 return Response(
                     content=resp.content,
