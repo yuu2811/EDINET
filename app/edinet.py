@@ -2,6 +2,7 @@
 
 import io
 import logging
+import re
 import zipfile
 from datetime import date
 
@@ -17,6 +18,9 @@ XBRL_NS = {
     "xbrli": "http://www.xbrl.org/2003/instance",
     "xlink": "http://www.w3.org/1999/xlink",
 }
+
+# Inline XBRL namespace
+IX_NS = "http://www.xbrl.org/2013/inlineXBRL"
 
 
 def _looks_like_pdf(content: bytes) -> bool:
@@ -129,10 +133,34 @@ class EdinetClient:
         try:
             resp = await client.get(url, params=params)
             resp.raise_for_status()
-            return resp.content
+        except httpx.HTTPStatusError as e:
+            logger.warning(
+                "EDINET API returned HTTP %s for XBRL download of %s",
+                e.response.status_code, doc_id,
+            )
+            return None
         except Exception as e:
             logger.error("Failed to download XBRL for %s: %s", doc_id, e)
             return None
+
+        # EDINET API may return HTTP 200 with a JSON error body
+        ct = resp.headers.get("content-type", "")
+        if "json" in ct or "text/html" in ct:
+            body_preview = resp.content[:500].decode("utf-8", errors="replace")
+            logger.warning(
+                "EDINET API returned non-ZIP Content-Type '%s' for XBRL %s: %s",
+                ct, doc_id, body_preview,
+            )
+            return None
+
+        if len(resp.content) < 100:
+            logger.warning(
+                "EDINET XBRL response too small for %s (%d bytes)",
+                doc_id, len(resp.content),
+            )
+            return None
+
+        return resp.content
 
     async def download_pdf(self, doc_id: str) -> bytes | None:
         """Download the PDF for a given document ID (type=2).
@@ -203,6 +231,10 @@ class EdinetClient:
     def parse_xbrl_for_holding_data(self, zip_content: bytes) -> dict:
         """Parse XBRL ZIP to extract shareholding data.
 
+        Handles both traditional XBRL (.xbrl) and inline XBRL (.htm/.xhtml)
+        formats.  EDINET large shareholding reports (docTypeCode 350/360)
+        typically use inline XBRL since ~2019.
+
         Returns a dict with keys:
         - holding_ratio: float | None
         - previous_holding_ratio: float | None
@@ -224,19 +256,56 @@ class EdinetClient:
 
         try:
             with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
+                all_files = zf.namelist()
+                logger.debug("XBRL ZIP contains %d files: %s",
+                             len(all_files),
+                             [f for f in all_files if "PublicDoc" in f])
+
+                # --- Try 1: traditional XBRL instance (.xbrl) ---
                 xbrl_files = [
-                    f
-                    for f in zf.namelist()
+                    f for f in all_files
                     if f.endswith(".xbrl") and "PublicDoc" in f
                 ]
+                if xbrl_files:
+                    xbrl_content = zf.read(xbrl_files[0])
+                    result = self._extract_from_xbrl(xbrl_content)
+                    if result["holding_ratio"] is not None:
+                        logger.debug("Extracted data from traditional XBRL: %s", xbrl_files[0])
+                        return result
 
-                if not xbrl_files:
-                    logger.debug("No XBRL files found in ZIP")
-                    return result
+                # --- Try 2: inline XBRL (.htm / .xhtml) ---
+                htm_files = [
+                    f for f in all_files
+                    if "PublicDoc" in f
+                    and (f.endswith(".htm") or f.endswith(".xhtml"))
+                ]
+                if htm_files:
+                    logger.debug("Trying inline XBRL from %d .htm files", len(htm_files))
+                    for htm_file in htm_files:
+                        htm_content = zf.read(htm_file)
+                        inline_result = self._extract_from_inline_xbrl(htm_content)
+                        if inline_result["holding_ratio"] is not None:
+                            logger.debug("Extracted data from inline XBRL: %s", htm_file)
+                            return inline_result
+                    # Use best result from inline parsing (might have partial data)
+                    if htm_files:
+                        # Merge results: take first non-None value from any .htm file
+                        merged = dict(result)
+                        for htm_file in htm_files:
+                            htm_content = zf.read(htm_file)
+                            partial = self._extract_from_inline_xbrl(htm_content)
+                            for key in merged:
+                                if merged[key] is None and partial[key] is not None:
+                                    merged[key] = partial[key]
+                        if any(v is not None for v in merged.values()):
+                            logger.debug("Merged partial inline XBRL data from %d files", len(htm_files))
+                            return merged
 
-                # Parse the first (usually only) public XBRL instance
-                xbrl_content = zf.read(xbrl_files[0])
-                result = self._extract_from_xbrl(xbrl_content)
+                if not xbrl_files and not htm_files:
+                    logger.warning(
+                        "No XBRL (.xbrl) or inline XBRL (.htm) files in PublicDoc/. "
+                        "ZIP contents: %s", all_files[:20],
+                    )
 
         except zipfile.BadZipFile:
             logger.warning("Invalid ZIP file received from EDINET")
@@ -426,6 +495,195 @@ class EdinetClient:
         logger.debug("Extracted XBRL data: %s", result)
         return result
 
+    def _extract_from_inline_xbrl(self, htm_bytes: bytes) -> dict:
+        """Extract holding data from inline XBRL (iXBRL) .htm files.
+
+        Inline XBRL embeds structured data in XHTML using ix: namespace
+        tags.  Numeric values use <ix:nonFraction name="ns:ElementName">
+        and text values use <ix:nonNumeric name="ns:ElementName">.
+        """
+        result = {
+            "holding_ratio": None,
+            "previous_holding_ratio": None,
+            "holder_name": None,
+            "target_company_name": None,
+            "target_sec_code": None,
+            "shares_held": None,
+            "purpose_of_holding": None,
+        }
+
+        try:
+            # Use HTML parser for robustness (inline XBRL is XHTML but may
+            # not be strictly well-formed XML)
+            parser = etree.HTMLParser(encoding="utf-8")
+            tree = etree.fromstring(htm_bytes, parser)
+        except Exception as e:
+            logger.warning("Inline XBRL parse error: %s", e)
+            return result
+
+        if tree is None:
+            return result
+
+        # Find all ix:nonFraction (numeric) and ix:nonNumeric (text) elements.
+        # HTMLParser lowercases tag names, so look for both casings.
+        # We search by iterating all elements and checking tag/attributes.
+        all_elements = tree.iter()
+
+        for elem in all_elements:
+            tag = elem.tag if isinstance(elem.tag, str) else ""
+            # HTMLParser may strip namespaces; check local tag name
+            local_tag = tag.rsplit("}", 1)[-1].lower() if "}" in tag else tag.lower()
+
+            # Match ix:nonfraction / ix:nonnumeric (lowered by HTML parser)
+            is_nonfraction = local_tag in ("nonfraction", "ix:nonfraction")
+            is_nonnumeric = local_tag in ("nonnumeric", "ix:nonnumeric")
+
+            if not is_nonfraction and not is_nonnumeric:
+                continue
+
+            name_attr = elem.get("name", "")
+            context_ref = elem.get("contextref", "") or elem.get("contextRef", "")
+            # Get full text content (including nested spans)
+            text = "".join(elem.itertext()).strip()
+
+            if not name_attr or not text:
+                continue
+
+            # Extract local element name from "prefix:ElementName"
+            local_name = name_attr.split(":")[-1] if ":" in name_attr else name_attr
+
+            # --- Holding ratio ---
+            if is_nonfraction and _matches_ratio_pattern(local_name):
+                try:
+                    val = _parse_ix_number(elem, text)
+                    if val is not None:
+                        # Auto-detect decimal vs percentage
+                        if 0 < val < 1.0:
+                            val = round(val * 100, 4)
+                        if "Prior" in context_ref or "Previous" in context_ref:
+                            if result["previous_holding_ratio"] is None:
+                                result["previous_holding_ratio"] = val
+                        else:
+                            if result["holding_ratio"] is None:
+                                result["holding_ratio"] = val
+                except (ValueError, AttributeError):
+                    continue
+
+            # --- Shares held ---
+            elif is_nonfraction and _matches_shares_pattern(local_name):
+                try:
+                    val = _parse_ix_number(elem, text)
+                    if val is not None:
+                        ival = int(val)
+                        if "Prior" not in context_ref and "Previous" not in context_ref:
+                            if result["shares_held"] is None:
+                                result["shares_held"] = ival
+                except (ValueError, AttributeError):
+                    continue
+
+            # --- Text fields (nonNumeric) ---
+            elif is_nonnumeric:
+                if _matches_holder_pattern(local_name):
+                    if not result["holder_name"]:
+                        result["holder_name"] = text
+                elif _matches_target_pattern(local_name):
+                    if not result["target_company_name"]:
+                        result["target_company_name"] = text
+                elif _matches_sec_code_pattern(local_name):
+                    if not result["target_sec_code"]:
+                        result["target_sec_code"] = text
+                elif _matches_purpose_pattern(local_name):
+                    if not result["purpose_of_holding"]:
+                        result["purpose_of_holding"] = text
+
+        logger.debug("Extracted inline XBRL data: %s", result)
+        return result
+
+    def diagnose_xbrl(self, zip_content: bytes) -> dict:
+        """Diagnostic: return detailed info about XBRL ZIP contents and parsing.
+
+        Used by the debug endpoint to troubleshoot XBRL parsing issues.
+        """
+        info = {
+            "zip_valid": False,
+            "files": [],
+            "xbrl_files": [],
+            "htm_files": [],
+            "xbrl_sample_elements": [],
+            "htm_sample_elements": [],
+            "parse_result": None,
+        }
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
+                info["zip_valid"] = True
+                info["files"] = zf.namelist()
+                info["xbrl_files"] = [
+                    f for f in info["files"]
+                    if f.endswith(".xbrl") and "PublicDoc" in f
+                ]
+                info["htm_files"] = [
+                    f for f in info["files"]
+                    if "PublicDoc" in f
+                    and (f.endswith(".htm") or f.endswith(".xhtml"))
+                ]
+
+                # Sample elements from .xbrl files
+                for xf in info["xbrl_files"][:1]:
+                    try:
+                        tree = etree.fromstring(zf.read(xf))
+                        elements = []
+                        for elem in tree.iter():
+                            local = elem.xpath("local-name()")
+                            if any(kw in local for kw in (
+                                "Shareholding", "Ratio", "Issuer", "Holder",
+                                "Filer", "Security", "Share", "Purpose",
+                            )):
+                                elements.append({
+                                    "tag": local,
+                                    "text": (elem.text or "")[:100],
+                                    "contextRef": elem.get("contextRef", ""),
+                                })
+                        info["xbrl_sample_elements"] = elements[:50]
+                    except Exception as e:
+                        info["xbrl_sample_elements"] = [{"error": str(e)}]
+
+                # Sample elements from .htm files (inline XBRL)
+                for hf in info["htm_files"][:1]:
+                    try:
+                        parser = etree.HTMLParser(encoding="utf-8")
+                        tree = etree.fromstring(zf.read(hf), parser)
+                        elements = []
+                        for elem in tree.iter():
+                            tag = elem.tag if isinstance(elem.tag, str) else ""
+                            local_tag = tag.rsplit("}", 1)[-1].lower() if "}" in tag else tag.lower()
+                            if local_tag in ("nonfraction", "ix:nonfraction",
+                                             "nonnumeric", "ix:nonnumeric"):
+                                name = elem.get("name", "")
+                                text = "".join(elem.itertext()).strip()
+                                elements.append({
+                                    "tag": local_tag,
+                                    "name": name,
+                                    "text": text[:200],
+                                    "contextRef": elem.get("contextref", "")
+                                                  or elem.get("contextRef", ""),
+                                    "format": elem.get("format", ""),
+                                    "scale": elem.get("scale", ""),
+                                })
+                        info["htm_sample_elements"] = elements[:80]
+                    except Exception as e:
+                        info["htm_sample_elements"] = [{"error": str(e)}]
+
+                # Run actual parse
+                info["parse_result"] = self.parse_xbrl_for_holding_data(zip_content)
+
+        except zipfile.BadZipFile:
+            info["zip_valid"] = False
+        except Exception as e:
+            info["error"] = str(e)
+
+        return info
+
     # ------------------------------------------------------------------
     # 有価証券報告書 / 四半期報告書 parsing for company fundamentals
     # ------------------------------------------------------------------
@@ -575,6 +833,105 @@ class EdinetClient:
 
         logger.debug("Extracted company info: %s", result)
         return result
+
+
+# ---------------------------------------------------------------------------
+# Helper functions for inline XBRL element name matching
+# ---------------------------------------------------------------------------
+
+def _matches_ratio_pattern(name: str) -> bool:
+    """Check if element name matches a shareholding ratio pattern."""
+    patterns = (
+        "TotalShareholdingRatio",
+        "RatioOfShareholdingToTotalIssuedShares",
+        "ShareholdingRatio",
+    )
+    # Exclude per-shareholder entries and abstract elements
+    if any(skip in name for skip in ("Abstract", "EachLargeShareholder", "JointHolder")):
+        return False
+    return any(p in name for p in patterns)
+
+
+def _matches_shares_pattern(name: str) -> bool:
+    patterns = (
+        "TotalNumberOfShareCertificatesEtcHeld",
+        "TotalNumberOfSharesHeld",
+        "NumberOfShareCertificatesEtc",
+    )
+    if "Abstract" in name:
+        return False
+    return any(p in name for p in patterns)
+
+
+def _matches_holder_pattern(name: str) -> bool:
+    patterns = (
+        "NameOfLargeShareholdingReporter",
+        "NameOfFiler",
+        "ReporterName",
+        "LargeShareholderName",
+    )
+    return any(p in name for p in patterns)
+
+
+def _matches_target_pattern(name: str) -> bool:
+    patterns = (
+        "IssuerNameLargeShareholding",
+        "IssuerName",
+        "NameOfIssuer",
+        "TargetCompanyName",
+    )
+    return any(p in name for p in patterns)
+
+
+def _matches_sec_code_pattern(name: str) -> bool:
+    patterns = (
+        "SecurityCodeOfIssuer",
+        "IssuerSecuritiesCode",
+        "SecurityCode",
+    )
+    return any(p in name for p in patterns)
+
+
+def _matches_purpose_pattern(name: str) -> bool:
+    patterns = (
+        "PurposeOfHolding",
+    )
+    return any(p in name for p in patterns)
+
+
+def _parse_ix_number(elem, text: str) -> float | None:
+    """Parse a numeric value from an inline XBRL element.
+
+    Handles:
+    - scale attribute (e.g. scale="6" means multiply by 10^6)
+    - sign attribute (e.g. sign="-")
+    - format attribute (number formatting with commas)
+    - Japanese number formats
+    """
+    # Clean text: remove commas, spaces, Japanese characters
+    cleaned = re.sub(r"[,、\s　株%％]", "", text)
+    if not cleaned or cleaned == "-" or cleaned == "―":
+        return None
+
+    try:
+        val = float(cleaned)
+    except ValueError:
+        return None
+
+    # Apply scale attribute (e.g. scale="6" means * 10^6)
+    scale = elem.get("scale", "")
+    if scale:
+        try:
+            val *= 10 ** int(scale)
+        except ValueError:
+            pass
+
+    # Apply sign
+    sign = elem.get("sign", "")
+    if sign == "-":
+        val = -val
+
+    return val
 
 
 # Singleton client

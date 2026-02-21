@@ -108,6 +108,32 @@ def _make_pdf_response(content: bytes, doc_id: str) -> Response:
     )
 
 
+@documents_router.get("/{doc_id}/debug-xbrl")
+async def debug_xbrl(doc_id: str) -> dict:
+    """Diagnostic endpoint: download XBRL and show parsing details.
+
+    Returns ZIP contents, element names found, and parse results
+    to help debug XBRL extraction issues.
+    """
+    from app.config import settings
+    from app.edinet import edinet_client
+
+    if not doc_id.isalnum():
+        return JSONResponse({"error": "Invalid document ID"}, status_code=400)
+
+    if not settings.EDINET_API_KEY:
+        return {"error": "EDINET_API_KEY not configured"}
+
+    zip_content = await edinet_client.download_xbrl(doc_id)
+    if not zip_content:
+        return {
+            "error": "XBRL download failed or returned empty",
+            "doc_id": doc_id,
+        }
+
+    return edinet_client.diagnose_xbrl(zip_content)
+
+
 @documents_router.get("/{doc_id}/pdf")
 async def proxy_document_pdf(doc_id: str) -> Response:
     """Proxy EDINET PDF download with multi-stage fallback.
