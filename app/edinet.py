@@ -378,10 +378,12 @@ class EdinetClient:
                             val = round(val * 100, 4)
                         context_ref = elem.get("contextRef", "")
                         # Detect "previous" ratio by element name or context:
+                        # - Element name contains "PerLastReport" (real EDINET: HoldingRatioOfShareCertificatesEtcPerLastReport)
                         # - Element name contains "Previous" (e.g. PreviousHoldingRatioOfShareCertificatesEtc)
                         # - contextRef contains "Prior" or "Previous" (e.g. PriorFilingDateInstant)
                         is_previous = (
-                            "Previous" in local
+                            "PerLastReport" in local
+                            or "Previous" in local
                             or "Prior" in context_ref
                             or "Previous" in context_ref
                         )
@@ -414,7 +416,8 @@ class EdinetClient:
                         val = round(val * 100, 4)
                     context_ref = elem.get("contextRef", "")
                     is_previous = (
-                        "Previous" in local
+                        "PerLastReport" in local
+                        or "Previous" in local
                         or "Prior" in context_ref
                         or "Previous" in context_ref
                     )
@@ -626,7 +629,8 @@ class EdinetClient:
                         if 0 < val < 1.0:
                             val = round(val * 100, 4)
                         is_previous = (
-                            "Previous" in local_name
+                            "PerLastReport" in local_name
+                            or "Previous" in local_name
                             or "Prior" in context_ref
                             or "Previous" in context_ref
                         )
@@ -756,7 +760,8 @@ class EdinetClient:
             if 0 < val < 1.0:
                 val = round(val * 100, 4)
             is_previous = (
-                "Previous" in local_name
+                "PerLastReport" in local_name
+                or "Previous" in local_name
                 or "Prior" in ctx
                 or "Previous" in ctx
             )
