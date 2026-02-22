@@ -36,6 +36,7 @@ const state = {
 let eventSource = null;
 let audioCtx = null;
 let pollCountdownInterval = null;
+let clockInterval = null;
 let lastPollTime = Date.now();
 let currentModalDocId = null; // tracks which filing is shown in the modal
 let filingsAbortController = null; // AbortController for date navigation race condition
@@ -95,18 +96,19 @@ function showToast(message, type = 'error') {
     if (!container) {
         container = document.createElement('div');
         container.id = 'toast-container';
-        container.style.cssText = 'position:fixed;top:12px;right:12px;z-index:10000;display:flex;flex-direction:column;gap:8px;pointer-events:none;';
         document.body.appendChild(container);
     }
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.style.cssText = 'padding:10px 16px;border-radius:6px;font-size:13px;font-family:monospace;color:#fff;opacity:0;transition:opacity 0.3s;max-width:320px;pointer-events:auto;' +
-        (type === 'error' ? 'background:rgba(255,23,68,0.92);border:1px solid rgba(255,23,68,0.5);' : 'background:rgba(0,230,118,0.92);border:1px solid rgba(0,230,118,0.5);');
     toast.textContent = message;
     container.appendChild(toast);
-    requestAnimationFrame(() => { toast.style.opacity = '1'; });
+    // Trigger slide-in animation
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => { toast.classList.add('toast-visible'); });
+    });
     setTimeout(() => {
-        toast.style.opacity = '0';
+        toast.classList.remove('toast-visible');
+        toast.classList.add('toast-exit');
         setTimeout(() => toast.remove(), 300);
     }, 4000);
 }
@@ -131,7 +133,7 @@ function savePreferences() {
             filterMode: state.filterMode,
             sortMode: state.sortMode,
             selectedDate: state.selectedDate,
-            searchQuery: state.searchQuery,
+            // M3: searchQuery intentionally NOT persisted (stale queries cause confusion)
             soundEnabled: state.soundEnabled,
             notificationsEnabled: state.notificationsEnabled,
             viewMode: state.viewMode,
@@ -171,12 +173,8 @@ function loadPreferences() {
             if (pickerEl) pickerEl.value = prefs.selectedDate;
         }
 
-        // Restore search text
-        if (prefs.searchQuery) {
-            state.searchQuery = prefs.searchQuery;
-            const searchEl = document.getElementById('feed-search');
-            if (searchEl) searchEl.value = prefs.searchQuery;
-        }
+        // M3: Do NOT restore search query — stale queries from days ago
+        // cause confusing "no results" on next visit. Search is session-only.
 
         // Restore sound preference
         if (typeof prefs.soundEnabled === 'boolean') {
@@ -240,6 +238,22 @@ document.addEventListener('DOMContentLoaded', () => {
     setVH();
     window.addEventListener('resize', setVH);
 
+    // M11: Redraw stock charts on window resize
+    let resizeTimer = null;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+            document.querySelectorAll('canvas[id$="-canvas"]').forEach(canvas => {
+                if (canvas._chartMeta && canvas._chartMeta.prices) {
+                    const options = canvas.id === 'stock-view-canvas'
+                        ? { height: 400, showSMA: true }
+                        : { showSMA: true };
+                    renderStockChart(canvas, canvas._chartMeta.prices, options);
+                }
+            });
+        }, 250);
+    });
+
     loadPreferences();
     initClock();
     initPollCountdown();
@@ -272,6 +286,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initClock() {
     const clockEl = document.getElementById('current-time');
+    if (!clockEl) return;
     function update() {
         const now = new Date();
         clockEl.textContent = now.toLocaleString('ja-JP', {
@@ -287,7 +302,8 @@ function initClock() {
         if (mobileClockEl) mobileClockEl.textContent = clockEl.textContent;
     }
     update();
-    setInterval(update, 1000);
+    if (clockInterval) clearInterval(clockInterval);
+    clockInterval = setInterval(update, 1000);
 }
 
 function initPollCountdown() {
@@ -434,9 +450,24 @@ function initEventListeners() {
             closeModal();
             closeConfirmDialog();
         }
-        // Arrow key navigation in modal (uses filtered list, not full list)
+        // Arrow key / Tab navigation in modal (uses filtered list, not full list)
         const modal = document.getElementById('detail-modal');
         if (modal && !modal.classList.contains('hidden')) {
+            // L5: Focus trap — keep Tab within the modal
+            if (e.key === 'Tab') {
+                const focusable = modal.querySelectorAll('a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])');
+                if (focusable.length > 0) {
+                    const first = focusable[0];
+                    const last = focusable[focusable.length - 1];
+                    if (e.shiftKey && document.activeElement === first) {
+                        e.preventDefault();
+                        last.focus();
+                    } else if (!e.shiftKey && document.activeElement === last) {
+                        e.preventDefault();
+                        first.focus();
+                    }
+                }
+            }
             const idx = parseInt(modal.dataset.filingIndex, 10);
             if (isNaN(idx) || idx < 0) return;
             if (e.key === 'ArrowLeft' && idx > 0) {
@@ -552,6 +583,7 @@ async function loadFilings() {
 
     // H1: Show loading indicator
     const container = document.getElementById('feed-list');
+    if (!container) return;
     if (state.filings.length === 0) {
         container.innerHTML = '<div class="feed-empty"><div class="empty-icon" style="animation:pulse 1s infinite">&#8987;</div><div class="empty-text">読み込み中...</div></div>';
     }
@@ -563,6 +595,7 @@ async function loadFilings() {
             params.set('date_to', state.selectedDate);
         }
         const resp = await fetch(`/api/filings?${params}`, { signal });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         state.filings = data.filings || [];
         renderFeed();
@@ -609,6 +642,7 @@ async function loadStats() {
     try {
         const params = state.selectedDate ? `?date=${state.selectedDate}` : '';
         const resp = await fetch(`/api/stats${params}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         state.stats = await resp.json();
         renderStats();
     } catch (e) {
@@ -620,6 +654,7 @@ async function loadStats() {
 async function loadWatchlist() {
     try {
         const resp = await fetch('/api/watchlist');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         state.watchlist = data.watchlist || [];
         renderWatchlist();
@@ -683,6 +718,7 @@ function handleNewFiling(filing) {
 
 function renderFeed() {
     const container = document.getElementById('feed-list');
+    if (!container) return;
     let filtered = [...state.filings];
 
     // Apply filter
@@ -730,12 +766,24 @@ function renderFeed() {
     _filteredFilings = filtered;
 
     if (filtered.length === 0) {
-        const emptyMsg = state.searchQuery
-            ? '検索条件に一致する報告書がありません'
-            : '報告書が見つかりません';
+        let emptyIcon = '&#128196;';
+        let emptyMsg = '報告書が見つかりません';
+        let emptyHint = '';
+        if (state.searchQuery) {
+            emptyMsg = `「${escapeHtml(state.searchQuery)}」に一致する報告書がありません`;
+            emptyHint = '<div class="empty-hint">検索条件を変更してください</div>';
+        } else if (state.filterMode !== 'all') {
+            emptyMsg = 'この条件に一致する報告書がありません';
+            emptyHint = '<div class="empty-hint">フィルターを「すべて」に変更してください</div>';
+        } else if (state.filings.length === 0) {
+            emptyIcon = '&#8987;';
+            emptyMsg = 'この日のデータはまだ取得されていません';
+            emptyHint = '<div class="empty-hint">FETCHボタンで取得できます</div>';
+        }
         container.innerHTML = `<div class="feed-empty">
-            <div class="empty-icon">&#128196;</div>
+            <div class="empty-icon">${emptyIcon}</div>
             <div class="empty-text">${emptyMsg}</div>
+            ${emptyHint}
         </div>`;
         return;
     }
@@ -1208,15 +1256,17 @@ function createMobileFeedCard(f) {
 
 function renderStats() {
     const s = state.stats;
-    document.getElementById('stat-total').textContent = s.today_total ?? '-';
+    const fmt = v => v != null ? Number(v).toLocaleString() : '-';
+    const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setEl('stat-total', fmt(s.today_total));
     // Update header filing count badges (desktop + mobile)
     const badge = document.getElementById('filing-count-badge');
-    if (badge) badge.textContent = s.today_total ?? '0';
+    if (badge) badge.textContent = fmt(s.today_total);
     const badgeMobile = document.getElementById('filing-count-badge-mobile');
-    if (badgeMobile) badgeMobile.textContent = s.today_total ?? '0';
-    document.getElementById('stat-new').textContent = s.today_new_reports ?? '-';
-    document.getElementById('stat-amendments').textContent = s.today_amendments ?? '-';
-    document.getElementById('stat-clients').textContent = s.connected_clients ?? '-';
+    if (badgeMobile) badgeMobile.textContent = fmt(s.today_total);
+    setEl('stat-new', fmt(s.today_new_reports));
+    setEl('stat-amendments', fmt(s.today_amendments));
+    setEl('stat-clients', fmt(s.connected_clients));
 
     // Update panel title to show the selected date
     const isToday = state.selectedDate === toLocalDateStr(new Date());
@@ -1227,6 +1277,7 @@ function renderStats() {
 
     // Top filers
     const filersList = document.getElementById('top-filers-list');
+    if (!filersList) return;
     if (s.top_filers && s.top_filers.length > 0) {
         filersList.innerHTML = s.top_filers.map(f => {
             const name = f.name || '(不明)';
@@ -1323,6 +1374,7 @@ function renderSummary() {
 
 function renderWatchlist() {
     const container = document.getElementById('watchlist-items');
+    if (!container) return;
     if (state.watchlist.length === 0) {
         container.innerHTML = `<div class="watchlist-empty">
             <div class="empty-icon">&#9734;</div>
@@ -1459,18 +1511,28 @@ async function saveWatchItem() {
             document.getElementById('watch-code').value = '';
             document.getElementById('watchlist-form').classList.add('hidden');
             await loadWatchlist();
+        } else {
+            const errData = await resp.json().catch(() => ({}));
+            showToast(errData.error || 'ウォッチリスト登録に失敗しました');
         }
     } catch (e) {
         console.error('Failed to save watchlist item:', e);
+        showToast('ウォッチリスト登録に失敗しました');
     }
 }
 
 async function deleteWatchItem(id) {
     try {
-        await fetch(`/api/watchlist/${id}`, { method: 'DELETE' });
+        const resp = await fetch(`/api/watchlist/${id}`, { method: 'DELETE' });
+        if (!resp.ok) {
+            const errData = await resp.json().catch(() => ({}));
+            showToast(errData.error || 'ウォッチリスト削除に失敗しました');
+            return;
+        }
         await loadWatchlist();
     } catch (e) {
         console.error('Failed to delete watchlist item:', e);
+        showToast('ウォッチリスト削除に失敗しました');
     }
 }
 
@@ -1652,7 +1714,7 @@ function renderStockChart(canvas, prices, options = {}) {
 
         // Price label
         const price = maxPrice - (maxPrice - minPrice) * (i / gridLines);
-        ctx.fillStyle = '#707088';
+        ctx.fillStyle = '#8a8aa8';
         ctx.font = '10px monospace';
         ctx.textAlign = 'left';
         ctx.fillText(price.toFixed(0), W - padding.right + 5, y + 3);
@@ -1725,7 +1787,7 @@ function renderStockChart(canvas, prices, options = {}) {
     }
 
     // Date labels (show every ~3 months)
-    ctx.fillStyle = '#707088';
+    ctx.fillStyle = '#8a8aa8';
     ctx.font = '9px monospace';
     ctx.textAlign = 'center';
     let lastMonth = '';
@@ -1759,21 +1821,20 @@ function renderStockChart(canvas, prices, options = {}) {
 }
 
 /**
- * Attach hover tooltip to a chart canvas (call once after first render).
+ * Attach hover/touch tooltip to a chart canvas (call once after first render).
  */
 function attachChartTooltip(canvas, tooltipEl) {
     if (canvas._tooltipAttached) return;
     canvas._tooltipAttached = true;
 
-    canvas.addEventListener('mousemove', (e) => {
+    function showTooltipAt(clientX, clientY) {
         const meta = canvas._chartMeta;
         if (!meta) return;
 
         const rect = canvas.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
+        const mx = clientX - rect.left;
 
-        const { prices, padding, gap, minPrice, maxPrice, priceH } = meta;
+        const { prices, padding, gap } = meta;
         const idx = Math.floor((mx - padding.left) / gap);
 
         if (idx < 0 || idx >= prices.length) {
@@ -1797,23 +1858,44 @@ function attachChartTooltip(canvas, tooltipEl) {
 
         tooltipEl.style.display = 'block';
 
-        // Position tooltip near cursor but keep within bounds
         const tooltipW = tooltipEl.offsetWidth;
         const tooltipH = tooltipEl.offsetHeight;
         const containerRect = canvas.parentElement.getBoundingClientRect();
-        let left = e.clientX - containerRect.left + 12;
-        let top = e.clientY - containerRect.top - tooltipH / 2;
+        let left = clientX - containerRect.left + 12;
+        let top = clientY - containerRect.top - tooltipH / 2;
 
         if (left + tooltipW > containerRect.width - 5) {
-            left = e.clientX - containerRect.left - tooltipW - 12;
+            left = clientX - containerRect.left - tooltipW - 12;
         }
         top = Math.max(4, Math.min(top, containerRect.height - tooltipH - 4));
 
         tooltipEl.style.left = left + 'px';
         tooltipEl.style.top = top + 'px';
+    }
+
+    // Mouse events (desktop)
+    canvas.addEventListener('mousemove', (e) => {
+        showTooltipAt(e.clientX, e.clientY);
     });
 
     canvas.addEventListener('mouseleave', () => {
+        tooltipEl.style.display = 'none';
+    });
+
+    // H7: Touch events (mobile)
+    canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        showTooltipAt(touch.clientX, touch.clientY);
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        showTooltipAt(touch.clientX, touch.clientY);
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', () => {
         tooltipEl.style.display = 'none';
     });
 }
@@ -2147,6 +2229,8 @@ async function batchRetryXbrl() {
 }
 
 function openModal(filing) {
+    // L5: Save current focus for restoration on close
+    if (!_preFocusedElement) _preFocusedElement = document.activeElement;
     currentModalDocId = filing.doc_id;
     const body = document.getElementById('modal-body');
 
@@ -2402,11 +2486,25 @@ function openModal(filing) {
         history.pushState({ modal: true }, '');
     }
     modal.classList.remove('hidden');
+
+    // L5: Focus trap — focus the modal close button
+    requestAnimationFrame(() => {
+        const closeBtn = modal.querySelector('.modal-close');
+        if (closeBtn) closeBtn.focus();
+    });
 }
+
+let _preFocusedElement = null; // L5: Store element to restore focus on modal close
 
 function closeModal() {
     currentModalDocId = null;
-    document.getElementById('detail-modal').classList.add('hidden');
+    const modal = document.getElementById('detail-modal');
+    modal.classList.add('hidden');
+    // L5: Restore focus
+    if (_preFocusedElement) {
+        _preFocusedElement.focus();
+        _preFocusedElement = null;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2417,6 +2515,7 @@ async function openFilerProfile(edinetCode) {
     if (!edinetCode) return;
     const body = document.getElementById('modal-body');
     const modal = document.getElementById('detail-modal');
+    if (!body || !modal) return;
     currentModalDocId = null;
     body.innerHTML = '<div class="stock-loading">提出者プロフィール読み込み中...</div>';
     modal.classList.remove('hidden');
@@ -2486,6 +2585,7 @@ async function openCompanyProfile(secCode) {
     if (!secCode) return;
     const body = document.getElementById('modal-body');
     const modal = document.getElementById('detail-modal');
+    if (!body || !modal) return;
     currentModalDocId = null;
     body.innerHTML = '<div class="stock-loading">企業プロフィール読み込み中...</div>';
     modal.classList.remove('hidden');
@@ -3102,6 +3202,7 @@ function initDateNav() {
 
     picker.value = state.selectedDate;
     picker.max = toLocalDateStr(new Date());
+    picker.min = EDINET_MIN_DATE;
 
     picker.addEventListener('change', (e) => {
         state.selectedDate = e.target.value;
@@ -3127,18 +3228,32 @@ function initDateNav() {
         fetchBtn.disabled = true;
         const origText = fetchBtn.textContent;
         fetchBtn.textContent = 'FETCHING...';
+        const prevCount = state.filings.length;
         try {
             await fetch(`/api/poll?date=${state.selectedDate}`, { method: 'POST' });
-            // Wait for the poll to process, then reload
-            setTimeout(async () => {
+            // M9: Poll for completion — check every 1.5s for new data (max 20s)
+            let attempts = 0;
+            const maxAttempts = 13;
+            const checkInterval = setInterval(async () => {
+                attempts++;
                 await loadFilings();
                 await loadStats();
-                await loadAnalytics();
-                fetchBtn.disabled = false;
-                fetchBtn.textContent = origText;
-            }, 5000);
+                const newCount = state.filings.length;
+                if (newCount !== prevCount || attempts >= maxAttempts) {
+                    clearInterval(checkInterval);
+                    await loadAnalytics();
+                    fetchBtn.disabled = false;
+                    fetchBtn.textContent = newCount > prevCount
+                        ? `${newCount - prevCount}件取得`
+                        : origText;
+                    if (newCount > prevCount) {
+                        setTimeout(() => { fetchBtn.textContent = origText; }, 3000);
+                    }
+                }
+            }, 1500);
         } catch (e) {
             console.error('Fetch failed:', e);
+            showToast('データ取得に失敗しました');
             fetchBtn.disabled = false;
             fetchBtn.textContent = origText;
         }
@@ -3146,12 +3261,16 @@ function initDateNav() {
 
 }
 
+// M10: EDINET API v2 data starts from 2019-03-01
+const EDINET_MIN_DATE = '2019-03-01';
+
 function navigateDate(days) {
     const d = new Date(state.selectedDate + 'T00:00:00');
     d.setDate(d.getDate() + days);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     if (d > today) return;
+    if (toLocalDateStr(d) < EDINET_MIN_DATE) return;
 
     state.selectedDate = toLocalDateStr(d);
     document.getElementById('date-picker').value = state.selectedDate;
@@ -3175,6 +3294,9 @@ async function loadAnalytics() {
             fetch('/api/analytics/sectors'),
             fetch(`/api/analytics/movements?date=${state.selectedDate}`),
         ]);
+        if (!rankingsResp.ok || !sectorsResp.ok || !movementsResp.ok) {
+            throw new Error('Analytics API returned non-OK status');
+        }
         const rankings = await rankingsResp.json();
         const sectors = await sectorsResp.json();
         const movements = await movementsResp.json();
@@ -3337,7 +3459,7 @@ function renderSectors(data) {
 
         if (!data.sectors || data.sectors.length === 0) {
             container.innerHTML = '<div class="summary-empty">データなし</div>';
-            return;
+            continue;
         }
 
         const maxCount = Math.max(...data.sectors.map(s => s.filing_count));

@@ -64,7 +64,8 @@ class TestSSEBroadcaster:
         await b.broadcast("new_filing", {"doc_id": "X1"})
 
         msg = q.get_nowait()
-        assert msg.startswith("event: new_filing\n")
+        assert "id: " in msg
+        assert "event: new_filing\n" in msg
         assert "data:" in msg
         assert '"doc_id": "X1"' in msg
         assert msg.endswith("\n\n")

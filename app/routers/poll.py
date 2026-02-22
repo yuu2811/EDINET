@@ -29,7 +29,7 @@ async def trigger_poll(
         if now - _poll_last_called < _POLL_COOLDOWN:
             remaining = int(_POLL_COOLDOWN - (now - _poll_last_called))
             return JSONResponse(
-                {"error": f"Rate limited. Try again in {remaining}s"},
+                {"error": f"レート制限中です。{remaining}秒後に再試行してください"},
                 status_code=429,
             )
         _poll_last_called = now
@@ -41,7 +41,7 @@ async def trigger_poll(
         try:
             target_date = date_type.fromisoformat(date)
         except ValueError:
-            return JSONResponse({"error": "Invalid date format"}, status_code=400)
+            return JSONResponse({"error": "無効な日付形式です"}, status_code=400)
 
     task = asyncio.create_task(poll_edinet(target_date))
     _background_tasks.add(task)

@@ -3,7 +3,7 @@
 import logging
 from datetime import date
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import desc, func, or_, select
 
@@ -88,7 +88,7 @@ async def get_filing(doc_id: str) -> dict:
         )
         filing = result.scalar_one_or_none()
         if not filing:
-            return JSONResponse({"error": "Filing not found"}, status_code=404)
+            raise HTTPException(status_code=404, detail="書類が見つかりません")
         return filing.to_dict()
 
 
@@ -117,7 +117,7 @@ async def retry_xbrl_enrichment(doc_id: str) -> dict:
     from sqlalchemy import select as sa_select
 
     if not doc_id.isalnum():
-        return JSONResponse({"error": "Invalid document ID"}, status_code=400)
+        raise HTTPException(status_code=400, detail="無効な書類IDです")
 
     async with get_async_session()() as session:
         result = await session.execute(
@@ -226,7 +226,7 @@ async def debug_xbrl(doc_id: str) -> dict:
     from app.edinet import edinet_client
 
     if not doc_id.isalnum():
-        return JSONResponse({"error": "Invalid document ID"}, status_code=400)
+        raise HTTPException(status_code=400, detail="無効な書類IDです")
 
     if not settings.EDINET_API_KEY:
         return {"error": "EDINET_API_KEY not configured"}
@@ -257,7 +257,7 @@ async def proxy_document_pdf(doc_id: str) -> Response:
 
     # Sanitise doc_id to prevent path traversal
     if not doc_id.isalnum():
-        return JSONResponse({"error": "Invalid document ID"}, status_code=400)
+        return JSONResponse({"error": "無効な書類IDです"}, status_code=400)
 
     # --- Stage 1: EDINET API v2 ---
     if settings.EDINET_API_KEY:

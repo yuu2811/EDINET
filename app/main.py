@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.database import async_session, init_db  # noqa: F401 – deps.py resolves async_session here
+from app.database import async_session, engine, init_db  # noqa: F401 – deps.py resolves async_session here
 from app.edinet import edinet_client
 from app.errors import register_error_handlers
 from app.logging_config import setup_logging
@@ -35,6 +35,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
     await edinet_client.close()
+    await engine.dispose()
     logger.info("Shutdown complete")
 
 

@@ -32,7 +32,8 @@ class SSEBroadcaster:
     """Manages SSE client connections and broadcasts events.
 
     Thread-safe broadcaster using asyncio.Lock with bounded queues,
-    client ID tracking, and stale client cleanup.
+    client ID tracking, stale client cleanup, and event IDs for
+    reconnection support (Last-Event-ID).
     """
 
     _CLIENT_MAX_AGE = 3600  # 1 hour in seconds
@@ -41,6 +42,7 @@ class SSEBroadcaster:
         self._lock = asyncio.Lock()
         self._clients: dict[int, tuple[asyncio.Queue, float]] = {}
         self._next_id: int = 0
+        self._event_id: int = 0  # monotonic event ID for SSE reconnection
 
     async def subscribe(self) -> tuple[int, asyncio.Queue]:
         """Register a new SSE client.
@@ -69,10 +71,12 @@ class SSEBroadcaster:
     async def broadcast(self, event: str, data: dict):
         """Broadcast an event to all connected SSE clients.
 
+        Each event gets a unique monotonic ID for reconnection support.
         If a client's queue is full, the client is dropped with a warning.
         """
+        self._event_id += 1
         payload = json.dumps(data, cls=JsonEncoder, ensure_ascii=False)
-        message = f"event: {event}\ndata: {payload}\n\n"
+        message = f"id: {self._event_id}\nevent: {event}\ndata: {payload}\n\n"
         dead: list[int] = []
         async with self._lock:
             for client_id, (q, _connected_at) in self._clients.items():
@@ -366,7 +370,11 @@ async def _retry_xbrl_enrichment():
         except asyncio.TimeoutError:
             logger.warning("XBRL retry batch timed out")
 
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception as exc:
+            logger.error("XBRL retry batch commit failed: %s", exc)
+            await session.rollback()
 
 
 async def _poll_company_info(target_date: date) -> None:
