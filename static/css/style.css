@@ -1789,6 +1789,7 @@ body {
     .m-badge-change { background: var(--amber-dim); }
     .m-badge-amend { background: #8855dd; }
     .m-badge-watch { background: var(--purple); margin-left: 1px; }
+    .m-badge-special { background: var(--purple); margin-left: 1px; }
     .m-badge-english { background: var(--blue); margin-left: 1px; font-size: 8px; }
     .m-badge-withdrawn { background: #666; margin-left: 1px; text-decoration: line-through; opacity: 0.7; }
 

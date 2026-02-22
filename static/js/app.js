@@ -103,6 +103,7 @@ function savePreferences() {
         const prefs = {
             filterMode: state.filterMode,
             sortMode: state.sortMode,
+            selectedDate: state.selectedDate,
             searchQuery: state.searchQuery,
             soundEnabled: state.soundEnabled,
             notificationsEnabled: state.notificationsEnabled,
@@ -133,6 +134,14 @@ function loadPreferences() {
             state.sortMode = prefs.sortMode;
             const sortEl = document.getElementById('feed-sort');
             if (sortEl) sortEl.value = prefs.sortMode;
+        }
+
+        // Restore selected date (only if valid and not in the future)
+        if (prefs.selectedDate && /^\d{4}-\d{2}-\d{2}$/.test(prefs.selectedDate)
+            && prefs.selectedDate <= toLocalDateStr(new Date())) {
+            state.selectedDate = prefs.selectedDate;
+            const pickerEl = document.getElementById('date-picker');
+            if (pickerEl) pickerEl.value = prefs.selectedDate;
         }
 
         // Restore search text
@@ -387,6 +396,17 @@ function initEventListeners() {
             } else if (e.key === 'ArrowRight' && idx < state.filings.length - 1) {
                 openModal(state.filings[idx + 1]);
             }
+            return;
+        }
+        // Date navigation shortcuts (only when no input focused)
+        const tag = document.activeElement?.tagName;
+        if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+        if (e.key === '[' || e.key === 'ArrowLeft') { navigateDate(-1); }
+        else if (e.key === ']' || e.key === 'ArrowRight') { navigateDate(1); }
+        else if (e.key === 't' || e.key === 'T') {
+            state.selectedDate = toLocalDateStr(new Date());
+            document.getElementById('date-picker').value = state.selectedDate;
+            savePreferences(); loadFilings(); loadStats(); loadAnalytics();
         }
     });
 }
@@ -788,8 +808,8 @@ function renderFeedTable(container, filings) {
 
         html += `<tr class="${rowClass}" data-doc-id="${escapeHtml(f.doc_id)}">
             ${phone ? '' : `<td class="col-type">${typeBadge}</td>`}
-            <td class="col-filer" title="${filer}">${filer}</td>
-            <td class="col-target" title="${target}">${target}${codeDisplay ? ' ' + codeDisplay : ''}</td>
+            <td class="col-filer" title="${escapeHtml(filerName)}">${filer}</td>
+            <td class="col-target" title="${escapeHtml(targetName)}">${target}${codeDisplay ? ' ' + codeDisplay : ''}</td>
             <td class="col-ratio">${ratioHtml}</td>
             <td class="col-change">${changeHtml}</td>
             <td class="col-mcap">${mcap}</td>
@@ -852,10 +872,17 @@ function createFeedCard(f) {
         ? f.submit_date_time.split(' ').pop() || f.submit_date_time
         : '-';
 
-    // Filer / Target
-    const filer = f.holder_name || f.filer_name || '(不明)';
-    const target = f.target_company_name || extractTargetFromDescription(f.doc_description) || '(対象不明)';
-    const targetCode = (f.target_sec_code || f.sec_code) ? `[${f.target_sec_code || f.sec_code}]` : '';
+    // Filer / Target (clickable if codes available)
+    const filerName = f.holder_name || f.filer_name || '(不明)';
+    const filerHtml = f.edinet_code
+        ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeHtml(f.edinet_code)}')">${escapeHtml(filerName)}</a>`
+        : escapeHtml(filerName);
+    const targetName = f.target_company_name || extractTargetFromDescription(f.doc_description) || '(対象不明)';
+    const cardSecCode = f.target_sec_code || f.sec_code || '';
+    const targetCode = cardSecCode ? `[${cardSecCode}]` : '';
+    const targetHtml = cardSecCode
+        ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(cardSecCode)}')">${escapeHtml(targetName)} ${escapeHtml(targetCode)}</a>`
+        : `${escapeHtml(targetName)} ${escapeHtml(targetCode)}`;
 
     // Ratio with before→after flow display
     let ratioHtml = '';
@@ -928,10 +955,9 @@ function createFeedCard(f) {
     }
 
     // Market data from cache (desktop only)
-    const secCode = f.target_sec_code || f.sec_code;
     let marketDataHtml = '';
-    if (secCode) {
-        const code = secCode.length === 5 ? secCode.slice(0, 4) : secCode;
+    if (cardSecCode) {
+        const code = cardSecCode.length === 5 ? cardSecCode.slice(0, 4) : cardSecCode;
         const cached = stockCache[code];
         if (cached && cached.data) {
             const sd = cached.data;
@@ -952,9 +978,9 @@ function createFeedCard(f) {
                 <span class="card-time">${escapeHtml(time)}</span>
             </div>
             <div class="card-main">
-                <span class="card-filer">${escapeHtml(filer)}</span>
+                <span class="card-filer">${filerHtml}</span>
                 <span class="card-arrow">&#x2192;</span>
-                <span class="card-target">${escapeHtml(target)} ${escapeHtml(targetCode)}</span>
+                <span class="card-target">${targetHtml}</span>
                 <div class="card-desc">${escapeHtml(f.doc_description || '')}</div>
                 ${marketDataHtml}
             </div>
@@ -986,6 +1012,9 @@ function createMobileFeedCard(f) {
     } else {
         badge = '<span class="m-badge m-badge-new">新規</span>';
     }
+    if (f.is_special_exemption) {
+        badge += '<span class="m-badge m-badge-special">特例</span>';
+    }
     if (f.english_doc_flag) {
         badge += '<span class="m-badge m-badge-english">EN</span>';
     }
@@ -1001,15 +1030,20 @@ function createMobileFeedCard(f) {
         ? f.submit_date_time.split(' ').pop() || f.submit_date_time
         : '';
 
-    // Target company = headline (most important on mobile)
-    // Fall back to extracting from doc_description when XBRL wasn't parsed
+    // Target company = headline (clickable if sec_code available)
     const target = f.target_company_name
         || extractTargetFromDescription(f.doc_description)
         || '(対象不明)';
     const secCode = f.target_sec_code || f.sec_code;
     const targetCode = secCode ? `[${secCode}]` : '';
-    // Filer = secondary
+    const mTargetHtml = secCode
+        ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${escapeHtml(target)}</a>`
+        : escapeHtml(target);
+    // Filer = secondary (clickable if edinet_code available)
     const filer = f.holder_name || f.filer_name || '(不明)';
+    const mFilerHtml = f.edinet_code
+        ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeHtml(f.edinet_code)}')">${escapeHtml(filer)}</a>`
+        : escapeHtml(filer);
 
     // Ratio metrics — compact flow: prev → curr  change
     const ratioClass = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : 'neutral';
@@ -1077,7 +1111,7 @@ function createMobileFeedCard(f) {
     return `<div class="m-card ${cardClass}" data-doc-id="${escapeHtml(f.doc_id)}">
     <div class="m-card-head">
         ${badge}
-        <span class="m-target">${escapeHtml(target)}</span>
+        <span class="m-target">${mTargetHtml}</span>
         <span class="m-code">${escapeHtml(targetCode)}</span>
         <span class="m-time">${escapeHtml(time)}</span>
     </div>
@@ -1087,7 +1121,7 @@ function createMobileFeedCard(f) {
         ${sep}${mcapHtml}${priceHtml}${pbrHtml}
     </div>
     <div class="m-card-foot">
-        <span class="m-filer">${escapeHtml(filer)}</span>
+        <span class="m-filer">${mFilerHtml}</span>
         ${prevHtml}
         ${linkHtml}
     </div>
@@ -2248,7 +2282,7 @@ function openModal(filing) {
 
             // Price source indicator (small, for transparency)
             if (stockData.price_source && stockData.price_source !== 'fallback') {
-                infoHtml += `<div style="text-align:right;font-size:10px;opacity:0.4;margin-top:2px">source: ${stockData.price_source}</div>`;
+                infoHtml += `<div style="text-align:right;font-size:10px;opacity:0.4;margin-top:2px">source: ${escapeHtml(stockData.price_source)}</div>`;
             }
 
             stockSection.innerHTML = infoHtml + '<div class="stock-chart-container"><canvas id="stock-chart-canvas"></canvas><div id="modal-chart-tooltip" class="chart-tooltip"></div></div>';
@@ -2969,8 +3003,10 @@ function initDateNav() {
 
     picker.addEventListener('change', (e) => {
         state.selectedDate = e.target.value;
+        savePreferences();
         loadFilings();
         loadStats();
+        loadAnalytics();
     });
 
     prevBtn.addEventListener('click', () => navigateDate(-1));
@@ -2979,8 +3015,10 @@ function initDateNav() {
     todayBtn.addEventListener('click', () => {
         state.selectedDate = toLocalDateStr(new Date());
         picker.value = state.selectedDate;
+        savePreferences();
         loadFilings();
         loadStats();
+        loadAnalytics();
     });
 
     fetchBtn.addEventListener('click', async () => {
@@ -2993,6 +3031,7 @@ function initDateNav() {
             setTimeout(async () => {
                 await loadFilings();
                 await loadStats();
+                await loadAnalytics();
                 fetchBtn.disabled = false;
                 fetchBtn.textContent = origText;
             }, 5000);
@@ -3014,8 +3053,10 @@ function navigateDate(days) {
 
     state.selectedDate = toLocalDateStr(d);
     document.getElementById('date-picker').value = state.selectedDate;
+    savePreferences();
     loadFilings();
     loadStats();
+    loadAnalytics();
 }
 
 // ---------------------------------------------------------------------------
@@ -3143,6 +3184,39 @@ function renderRankings(rankings, movements) {
                 html += `<div class="filer-row">
                     <span class="filer-name">${escapeHtml(d.date || '')}</span>
                     <span class="filer-count">${d.filing_count}件</span>
+                </div>`;
+            }
+            html += '</div>';
+        }
+
+        // Sector movements
+        if (movements && movements.sector_movements && movements.sector_movements.length > 0) {
+            html += '<div class="rankings-section"><div class="rankings-section-title">セクター動向</div>';
+            for (const s of movements.sector_movements.slice(0, 5)) {
+                const avgCls = s.avg_change > 0 ? 'positive' : s.avg_change < 0 ? 'negative' : '';
+                const avgText = s.avg_change != null ? `${s.avg_change > 0 ? '+' : ''}${s.avg_change.toFixed(2)}%` : '';
+                html += `<div class="filer-row">
+                    <span class="filer-name">${escapeHtml(s.sector)} <span class="text-dim">(${s.count}件)</span></span>
+                    <span class="filer-count ${avgCls}">${avgText}</span>
+                </div>`;
+            }
+            html += '</div>';
+        }
+
+        // Notable moves
+        if (movements && movements.notable_moves && movements.notable_moves.length > 0) {
+            html += '<div class="rankings-section"><div class="rankings-section-title">注目変動</div>';
+            for (const m of movements.notable_moves.slice(0, 5)) {
+                const name = m.target_company_name || m.filer_name || '?';
+                const change = m.ratio_change != null ? `${m.ratio_change > 0 ? '+' : ''}${m.ratio_change.toFixed(2)}%` : '';
+                const cls = m.ratio_change > 0 ? 'positive' : m.ratio_change < 0 ? 'negative' : '';
+                const secCode = m.target_sec_code || m.sec_code;
+                const nameHtml = secCode
+                    ? `<a href="#" class="filer-link ${cls}" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${escapeHtml(name)}</a>`
+                    : escapeHtml(name);
+                html += `<div class="filer-row">
+                    <span class="filer-name ${cls}" title="${escapeHtml(name)}">${nameHtml}</span>
+                    <span class="filer-count ${cls}">${change}</span>
                 </div>`;
             }
             html += '</div>';
