@@ -349,6 +349,7 @@ class EdinetClient:
         # Must match both jpcrp_cor and jplvh_cor taxonomy:
         #   jpcrp_cor: TotalShareholdingRatioOfShareCertificatesEtc
         #   jplvh_cor: HoldingRatioOfShareCertificatesEtc
+        #   jplvh_cor: RatioOfShareCertificatesEtcAtTimeOfPreviousReport (前回保有割合)
         # Priority: specific > generic.  Exclude abstract elements
         # and individual shareholder entries (EachLargeShareholder1, etc.)
         ratio_patterns = [
@@ -356,6 +357,7 @@ class EdinetClient:
             "TotalShareholdingRatioOfShareCertificatesEtc",  # jpcrp_cor
             "TotalShareholdingRatio",
             "RatioOfShareholdingToTotalIssuedShares",
+            "RatioOfShareCertificatesEtcAtTimeOfPreviousReport",  # jplvh_cor 前回保有割合
         ]
         for pattern in ratio_patterns:
             elements = tree.xpath(
@@ -376,10 +378,12 @@ class EdinetClient:
                             val = round(val * 100, 4)
                         context_ref = elem.get("contextRef", "")
                         # Detect "previous" ratio by element name or context:
+                        # - Element name contains "PerLastReport" (real EDINET: HoldingRatioOfShareCertificatesEtcPerLastReport)
                         # - Element name contains "Previous" (e.g. PreviousHoldingRatioOfShareCertificatesEtc)
                         # - contextRef contains "Prior" or "Previous" (e.g. PriorFilingDateInstant)
                         is_previous = (
-                            "Previous" in local
+                            "PerLastReport" in local
+                            or "Previous" in local
                             or "Prior" in context_ref
                             or "Previous" in context_ref
                         )
@@ -391,7 +395,7 @@ class EdinetClient:
                                 result["holding_ratio"] = val
                     except (ValueError, AttributeError):
                         continue
-                if result["holding_ratio"] is not None:
+                if result["holding_ratio"] is not None and result["previous_holding_ratio"] is not None:
                     break
 
         # Fallback: broader search if specific patterns didn't match
@@ -412,7 +416,8 @@ class EdinetClient:
                         val = round(val * 100, 4)
                     context_ref = elem.get("contextRef", "")
                     is_previous = (
-                        "Previous" in local
+                        "PerLastReport" in local
+                        or "Previous" in local
                         or "Prior" in context_ref
                         or "Previous" in context_ref
                     )
@@ -624,7 +629,8 @@ class EdinetClient:
                         if 0 < val < 1.0:
                             val = round(val * 100, 4)
                         is_previous = (
-                            "Previous" in local_name
+                            "PerLastReport" in local_name
+                            or "Previous" in local_name
                             or "Prior" in context_ref
                             or "Previous" in context_ref
                         )
@@ -754,7 +760,8 @@ class EdinetClient:
             if 0 < val < 1.0:
                 val = round(val * 100, 4)
             is_previous = (
-                "Previous" in local_name
+                "PerLastReport" in local_name
+                or "Previous" in local_name
                 or "Prior" in ctx
                 or "Previous" in ctx
             )
@@ -1043,11 +1050,13 @@ def _matches_ratio_pattern(name: str) -> bool:
     Must match both jpcrp_cor (有報) and jplvh_cor (大量保有) taxonomy:
       jpcrp_cor: TotalShareholdingRatioOfShareCertificatesEtc
       jplvh_cor: HoldingRatioOfShareCertificatesEtc
+      jplvh_cor: RatioOfShareCertificatesEtcAtTimeOfPreviousReport (前回保有割合)
     """
     patterns = (
         "HoldingRatio",         # matches both jplvh "HoldingRatio..." and jpcrp "ShareholdingRatio..."
         "ShareholdingRatio",    # explicit jpcrp_cor match
         "RatioOfShareholdingToTotalIssuedShares",
+        "RatioOfShareCertificatesEtc",  # jplvh_cor 前回保有割合 element
     )
     # Exclude per-shareholder entries and abstract elements
     if any(skip in name for skip in ("Abstract", "EachLargeShareholder", "JointHolder")):

@@ -146,7 +146,12 @@ async def retry_xbrl_enrichment(doc_id: str) -> dict:
 
 @documents_router.post("/batch-retry-xbrl")
 async def batch_retry_xbrl() -> dict:
-    """Re-parse XBRL for all filings that have xbrl_flag but no holding_ratio.
+    """Re-parse XBRL for filings missing data.
+
+    Targets filings where:
+    - xbrl_parsed is False (never parsed), OR
+    - holding_ratio is None (parse failed), OR
+    - previous_holding_ratio is None (parser improvement — re-extract)
 
     This is useful after parser improvements — re-processes filings whose
     XBRL was previously downloaded but failed to parse correctly.
@@ -165,6 +170,7 @@ async def batch_retry_xbrl() -> dict:
                 or_(
                     FilingModel.xbrl_parsed.is_(False),
                     FilingModel.holding_ratio.is_(None),
+                    FilingModel.previous_holding_ratio.is_(None),
                 ),
             )
             .order_by(desc(FilingModel.id))
