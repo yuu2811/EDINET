@@ -116,6 +116,7 @@ class Filing(Base):
             "pdf_flag": self.pdf_flag,
             "english_doc_flag": self.english_doc_flag,
             "parent_doc_id": self.parent_doc_id,
+            "withdrawal_status": self.withdrawal_status,
             "is_amendment": self.is_amendment,
             "is_special_exemption": self.is_special_exemption,
             "created_at": self.created_at.isoformat() if self.created_at else None,

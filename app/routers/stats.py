@@ -59,15 +59,20 @@ async def get_stats(
         ).scalar()
 
         top_filers_q = (
-            select(Filing.filer_name, func.count(Filing.id).label("cnt"))
+            select(
+                Filing.filer_name,
+                Filing.edinet_code,
+                func.count(Filing.id).label("cnt"),
+            )
             .where(Filing.submit_date_time.startswith(today_str))
-            .group_by(Filing.filer_name)
+            .group_by(Filing.filer_name, Filing.edinet_code)
             .order_by(desc("cnt"))
             .limit(10)
         )
         top_filers_result = await session.execute(top_filers_q)
         top_filers = [
-            {"name": row[0], "count": row[1]} for row in top_filers_result
+            {"name": row[0], "edinet_code": row[1], "count": row[2]}
+            for row in top_filers_result
         ]
 
         return {

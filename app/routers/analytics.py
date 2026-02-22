@@ -34,11 +34,16 @@ def _sec_code_to_sector(sec_code: str | None) -> str:
     return _SECTOR_MAP.get(norm[:2], "その他")
 
 
+_VALID_PERIODS = {"7d", "30d", "90d", "all"}
+
+
 def _period_start_date(period: str) -> str | None:
     """Compute the start date string for a given period filter.
 
     Returns None for 'all' (no date filter).
     """
+    if period not in _VALID_PERIODS:
+        period = "30d"
     today = date.today()
     if period == "7d":
         start = today - timedelta(days=7)
@@ -376,15 +381,25 @@ async def sector_breakdown() -> dict:
 @router.get("/filer/{edinet_code}")
 async def filer_profile(
     edinet_code: str = Path(..., description="Filer EDINET code (e.g. E12345)"),
+    limit: int = Query(200, ge=1, le=1000, description="Max filings to fetch"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
 ) -> dict:
     """Return a filer's full history, target companies, and activity summary."""
     async with get_async_session()() as session:
-        # All filings by this filer
+        # Total count for this filer
+        total_result = await session.execute(
+            select(func.count(Filing.id))
+            .where(Filing.edinet_code == edinet_code)
+        )
+        total_count = total_result.scalar() or 0
+
+        # All filings by this filer (paginated)
         result = await session.execute(
             select(Filing)
             .where(Filing.edinet_code == edinet_code)
             .order_by(desc(Filing.submit_date_time))
-            .limit(200)
+            .offset(offset)
+            .limit(limit)
         )
         filings = result.scalars().all()
 
@@ -432,12 +447,14 @@ async def filer_profile(
             "edinet_code": edinet_code,
             "filer_name": filer_name,
             "summary": {
-                "total_filings": total_filings,
+                "total_filings": total_count,
+                "fetched_filings": len(filings),
                 "unique_targets": unique_targets,
                 "avg_holding_ratio": avg_ratio,
                 "first_filing": first_date,
                 "last_filing": last_date,
             },
+            "has_more": offset + len(filings) < total_count,
             "targets": sorted_targets,
             "recent_filings": [f.to_dict() for f in filings[:20]],
         }
@@ -450,6 +467,8 @@ async def filer_profile(
 @router.get("/company/{sec_code}")
 async def company_profile(
     sec_code: str = Path(..., description="Securities code (4 or 5 digit)"),
+    limit: int = Query(200, ge=1, le=1000, description="Max filings to fetch"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
 ) -> dict:
     """Return all large shareholding data for a specific company."""
     normalized = validate_sec_code(sec_code)
@@ -457,6 +476,16 @@ async def company_profile(
     codes = [normalized, normalized + "0"]
 
     async with get_async_session()() as session:
+        # Total count
+        total_result = await session.execute(
+            select(func.count(Filing.id))
+            .where(
+                (Filing.target_sec_code.in_(codes))
+                | (Filing.sec_code.in_(codes))
+            )
+        )
+        total_count = total_result.scalar() or 0
+
         result = await session.execute(
             select(Filing)
             .where(
@@ -464,7 +493,8 @@ async def company_profile(
                 | (Filing.sec_code.in_(codes))
             )
             .order_by(desc(Filing.submit_date_time))
-            .limit(200)
+            .offset(offset)
+            .limit(limit)
         )
         filings = result.scalars().all()
 
@@ -512,7 +542,9 @@ async def company_profile(
             "company_name": company_name,
             "sector": sector,
             "holder_count": len(holders),
-            "total_filings": len(filings),
+            "total_filings": total_count,
+            "fetched_filings": len(filings),
+            "has_more": offset + len(filings) < total_count,
             "holders": sorted_holders,
             "recent_filings": [f.to_dict() for f in filings[:20]],
         }

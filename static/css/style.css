@@ -678,6 +678,28 @@ body {
     letter-spacing: 0.5px;
 }
 
+.badge-withdrawn {
+    background: linear-gradient(135deg, #555 0%, #888 100%);
+    color: #fff;
+    margin-left: 4px;
+    text-decoration: line-through;
+    opacity: 0.7;
+}
+
+.filer-link {
+    color: inherit;
+    text-decoration: none;
+    transition: color var(--duration-fast) ease;
+}
+.filer-link:hover {
+    color: var(--cyan);
+    text-decoration: underline;
+}
+.filer-link.positive { color: var(--green); }
+.filer-link.positive:hover { color: #50ffaa; }
+.filer-link.negative { color: var(--red); }
+.filer-link.negative:hover { color: #ff5577; }
+
 .card-main {
     margin-bottom: 4px;
 }
@@ -1019,6 +1041,20 @@ body {
     flex: 1;
     margin-right: 8px;
 }
+
+.filer-link {
+    color: inherit;
+    text-decoration: none;
+    transition: color var(--duration-fast) ease;
+}
+.filer-link:hover {
+    color: var(--cyan);
+    text-decoration: underline;
+}
+.filer-link.positive { color: var(--green); }
+.filer-link.positive:hover { color: #50ffaa; }
+.filer-link.negative { color: var(--red); }
+.filer-link.negative:hover { color: #ff5577; }
 
 .filer-count {
     color: var(--amber);
@@ -1753,7 +1789,9 @@ body {
     .m-badge-change { background: var(--amber-dim); }
     .m-badge-amend { background: #8855dd; }
     .m-badge-watch { background: var(--purple); margin-left: 1px; }
+    .m-badge-special { background: var(--purple); margin-left: 1px; }
     .m-badge-english { background: var(--blue); margin-left: 1px; font-size: 8px; }
+    .m-badge-withdrawn { background: #666; margin-left: 1px; text-decoration: line-through; opacity: 0.7; }
 
     .m-target {
         font-size: 12px;
@@ -2813,6 +2851,47 @@ body {
     padding: 8px 16px 4px;
     border-top: 1px solid var(--border-primary);
     margin-top: 8px;
+}
+
+.profile-filings {
+    padding: 0 8px 8px;
+}
+.profile-filing-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 4px 8px;
+    font-size: var(--font-size-sm);
+    font-family: var(--font-mono);
+    border-bottom: 1px solid var(--border-primary);
+    cursor: pointer;
+    transition: background var(--duration-fast) ease;
+}
+.profile-filing-row:hover {
+    background: var(--bg-card-hover);
+}
+.profile-filing-date {
+    color: var(--text-dim);
+    flex-shrink: 0;
+    width: 75px;
+}
+.profile-filing-desc {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-secondary);
+}
+.profile-filing-ratio {
+    flex-shrink: 0;
+    width: 50px;
+    text-align: right;
+    color: var(--text-primary);
+}
+.profile-filing-change {
+    flex-shrink: 0;
+    width: 60px;
+    text-align: right;
 }
 
 .stock-no-data {

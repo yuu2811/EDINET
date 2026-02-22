@@ -11,6 +11,7 @@ router = APIRouter(tags=["Poll"])
 
 _poll_last_called: float = 0.0
 _POLL_COOLDOWN = 10.0
+_poll_lock = asyncio.Lock()
 
 # Store references to background tasks so they are not garbage-collected mid-execution.
 _background_tasks: set[asyncio.Task] = set()
@@ -23,14 +24,15 @@ async def trigger_poll(
     """Manually trigger an EDINET poll (rate-limited to once per 10s)."""
     global _poll_last_called
 
-    now = time.monotonic()
-    if now - _poll_last_called < _POLL_COOLDOWN:
-        remaining = int(_POLL_COOLDOWN - (now - _poll_last_called))
-        return JSONResponse(
-            {"error": f"Rate limited. Try again in {remaining}s"},
-            status_code=429,
-        )
-    _poll_last_called = now
+    async with _poll_lock:
+        now = time.monotonic()
+        if now - _poll_last_called < _POLL_COOLDOWN:
+            remaining = int(_POLL_COOLDOWN - (now - _poll_last_called))
+            return JSONResponse(
+                {"error": f"Rate limited. Try again in {remaining}s"},
+                status_code=429,
+            )
+        _poll_last_called = now
 
     from app.poller import poll_edinet
 
