@@ -715,10 +715,19 @@ function renderFeedTable(container, filings) {
         if (f.is_special_exemption) {
             typeBadge += ' <span class="badge-special tbl-badge">特例</span>';
         }
+        if (f.english_doc_flag) {
+            typeBadge += ' <span class="badge-english tbl-badge">EN</span>';
+        }
 
-        const filer = escapeHtml(f.holder_name || f.filer_name || '(不明)');
-        const target = escapeHtml(f.target_company_name || extractTargetFromDescription(f.doc_description) || '(対象不明)');
+        const filerName = f.holder_name || f.filer_name || '(不明)';
+        const filer = f.edinet_code
+            ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeHtml(f.edinet_code)}')">${escapeHtml(filerName)}</a>`
+            : escapeHtml(filerName);
+        const targetName = f.target_company_name || extractTargetFromDescription(f.doc_description) || '(対象不明)';
         const secCode = f.target_sec_code || f.sec_code || '';
+        const target = secCode
+            ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${escapeHtml(targetName)}</a>`
+            : escapeHtml(targetName);
         const codeDisplay = secCode ? `<span class="tbl-code">${escapeHtml(secCode)}</span>` : '';
 
         // Ratio
@@ -1090,12 +1099,16 @@ function renderStats() {
     // Top filers
     const filersList = document.getElementById('top-filers-list');
     if (s.top_filers && s.top_filers.length > 0) {
-        filersList.innerHTML = s.top_filers.map(f =>
-            `<div class="filer-row">
-                <span class="filer-name" title="${escapeHtml(f.name || '')}">${escapeHtml(f.name || '(不明)')}</span>
+        filersList.innerHTML = s.top_filers.map(f => {
+            const name = f.name || '(不明)';
+            const nameHtml = f.edinet_code
+                ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeHtml(f.edinet_code)}')">${escapeHtml(name)}</a>`
+                : escapeHtml(name);
+            return `<div class="filer-row">
+                <span class="filer-name" title="${escapeHtml(name)}">${nameHtml}</span>
                 <span class="filer-count">${f.count}</span>
-            </div>`
-        ).join('');
+            </div>`;
+        }).join('');
     } else {
         filersList.innerHTML = '<div class="filers-empty">本日の提出なし</div>';
     }
@@ -1150,21 +1163,29 @@ function renderSummary() {
 
     if (largestIncrease && largestIncrease.ratio_change > 0) {
         const name = largestIncrease.target_company_name || largestIncrease.filer_name || '不明';
+        const secCode = largestIncrease.target_sec_code || largestIncrease.sec_code;
+        const nameHtml = secCode
+            ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${escapeHtml(name)}</a>`
+            : escapeHtml(name);
         html += `
         <div class="summary-highlight">
             <div class="summary-highlight-label">最大増加</div>
             <div class="summary-highlight-value positive">+${largestIncrease.ratio_change.toFixed(2)}%</div>
-            <div class="summary-highlight-company">${escapeHtml(name)}</div>
+            <div class="summary-highlight-company">${nameHtml}</div>
         </div>`;
     }
 
     if (largestDecrease && largestDecrease.ratio_change < 0) {
         const name = largestDecrease.target_company_name || largestDecrease.filer_name || '不明';
+        const secCode = largestDecrease.target_sec_code || largestDecrease.sec_code;
+        const nameHtml = secCode
+            ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${escapeHtml(name)}</a>`
+            : escapeHtml(name);
         html += `
         <div class="summary-highlight">
             <div class="summary-highlight-label">最大減少</div>
             <div class="summary-highlight-value negative">${largestDecrease.ratio_change.toFixed(2)}%</div>
-            <div class="summary-highlight-company">${escapeHtml(name)}</div>
+            <div class="summary-highlight-company">${nameHtml}</div>
         </div>`;
     }
 
@@ -2983,8 +3004,11 @@ function renderRankings(rankings, movements) {
             html += '<div class="rankings-section"><div class="rankings-section-title">活発な提出者</div>';
             for (const f of rankings.most_active_filers.slice(0, 5)) {
                 const name = f.filer_name || '(不明)';
+                const nameHtml = f.edinet_code
+                    ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeHtml(f.edinet_code)}')">${escapeHtml(name)}</a>`
+                    : escapeHtml(name);
                 html += `<div class="filer-row" data-edinet="${escapeHtml(f.edinet_code || '')}">
-                    <span class="filer-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                    <span class="filer-name" title="${escapeHtml(name)}">${nameHtml}</span>
                     <span class="filer-count">${f.filing_count}</span>
                 </div>`;
             }
@@ -2997,8 +3021,11 @@ function renderRankings(rankings, movements) {
             for (const c of rankings.most_targeted_companies.slice(0, 5)) {
                 const name = c.company_name || '(不明)';
                 const code = c.sec_code ? `[${c.sec_code}]` : '';
+                const nameHtml = c.sec_code
+                    ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(c.sec_code)}')">${escapeHtml(name)} ${escapeHtml(code)}</a>`
+                    : `${escapeHtml(name)} ${escapeHtml(code)}`;
                 html += `<div class="filer-row">
-                    <span class="filer-name" title="${escapeHtml(name)}">${escapeHtml(name)} ${escapeHtml(code)}</span>
+                    <span class="filer-name" title="${escapeHtml(name)}">${nameHtml}</span>
                     <span class="filer-count">${c.filing_count}</span>
                 </div>`;
             }
@@ -3011,8 +3038,12 @@ function renderRankings(rankings, movements) {
             for (const f of rankings.largest_increases.slice(0, 3)) {
                 const name = f.target_company_name || f.filer_name || '?';
                 const change = f.ratio_change != null ? `+${f.ratio_change.toFixed(2)}%` : '';
+                const secCode = f.target_sec_code || f.sec_code;
+                const nameHtml = secCode
+                    ? `<a href="#" class="filer-link positive" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${escapeHtml(name)}</a>`
+                    : escapeHtml(name);
                 html += `<div class="filer-row">
-                    <span class="filer-name positive" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                    <span class="filer-name positive" title="${escapeHtml(name)}">${nameHtml}</span>
                     <span class="filer-count positive">${change}</span>
                 </div>`;
             }
@@ -3025,8 +3056,12 @@ function renderRankings(rankings, movements) {
             for (const f of rankings.largest_decreases.slice(0, 3)) {
                 const name = f.target_company_name || f.filer_name || '?';
                 const change = f.ratio_change != null ? `${f.ratio_change.toFixed(2)}%` : '';
+                const secCode = f.target_sec_code || f.sec_code;
+                const nameHtml = secCode
+                    ? `<a href="#" class="filer-link negative" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${escapeHtml(name)}</a>`
+                    : escapeHtml(name);
                 html += `<div class="filer-row">
-                    <span class="filer-name negative" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                    <span class="filer-name negative" title="${escapeHtml(name)}">${nameHtml}</span>
                     <span class="filer-count negative">${change}</span>
                 </div>`;
             }
