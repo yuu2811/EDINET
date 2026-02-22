@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup/shutdown lifecycle."""
+    logger.info(
+        "Starting EDINET Monitor — DB: %s, poll: %ds",
+        "in-memory" if ":memory:" in settings.DATABASE_URL
+        else settings.DATABASE_URL.split("///")[-1],
+        settings.POLL_INTERVAL,
+    )
     await init_db()
     logger.info("Database initialized")
     poller_task = asyncio.create_task(run_poller())

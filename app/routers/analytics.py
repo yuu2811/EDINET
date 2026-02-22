@@ -7,7 +7,7 @@ _JST = timezone(timedelta(hours=9))
 from fastapi import APIRouter, HTTPException, Path, Query
 from sqlalchemy import asc, desc, func, select
 
-from app.deps import get_async_session, normalize_sec_code, validate_sec_code
+from app.deps import get_async_session, normalize_sec_code, validate_edinet_code, validate_sec_code
 from app.models import Filing
 
 router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
@@ -387,6 +387,7 @@ async def filer_profile(
     offset: int = Query(0, ge=0, description="Offset for pagination"),
 ) -> dict:
     """Return a filer's full history, target companies, and activity summary."""
+    edinet_code = validate_edinet_code(edinet_code)
     async with get_async_session()() as session:
         # Total count for this filer
         total_result = await session.execute(

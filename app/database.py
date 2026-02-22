@@ -1,9 +1,13 @@
+import logging
 import os
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Ensure the directory for the SQLite database exists
 db_url = settings.DATABASE_URL
@@ -23,5 +27,38 @@ class Base(DeclarativeBase):
 
 
 async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """Initialize the database, with corruption recovery for SQLite on /tmp.
+
+    On Render Free plan the SQLite DB lives in /tmp which is ephemeral.
+    If the DB file is corrupted (e.g. after a crash), delete it and
+    recreate from scratch so the app can still start.
+    """
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        # Quick integrity check for SQLite
+        if "sqlite" in settings.DATABASE_URL:
+            async with engine.connect() as conn:
+                result = await conn.execute(text("PRAGMA integrity_check"))
+                status = result.scalar()
+                if status != "ok":
+                    raise RuntimeError(f"SQLite integrity check failed: {status}")
+    except Exception as exc:
+        if "sqlite" not in settings.DATABASE_URL:
+            raise
+        # SQLite on /tmp — attempt recovery by deleting and recreating
+        file_path = settings.DATABASE_URL.split("///")[-1]
+        if file_path and os.path.exists(file_path):
+            logger.warning(
+                "Database corrupted or unreadable (%s), removing %s and recreating",
+                exc, file_path,
+            )
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+            # Dispose the engine so it reconnects to a fresh DB
+            await engine.dispose()
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database recreated after corruption recovery")

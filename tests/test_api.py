@@ -168,9 +168,16 @@ class TestFilingsAPI:
 
     @pytest.mark.asyncio
     async def test_get_filing_not_found(self, client):
-        resp = await client.get("/api/filings/NONEXISTENT")
+        resp = await client.get("/api/filings/S100NOTFOUND")
         assert resp.status_code == 404
         assert resp.json()["error"] == "書類が見つかりません"
+
+    @pytest.mark.asyncio
+    async def test_get_filing_invalid_doc_id(self, client):
+        """Should reject malformed doc IDs."""
+        resp = await client.get("/api/filings/bad-id!")
+        assert resp.status_code == 400
+        assert "無効な書類ID" in resp.json()["error"]
 
     @pytest.mark.asyncio
     async def test_filter_by_invalid_date(self, client):

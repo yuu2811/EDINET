@@ -12,6 +12,10 @@ class Filing(Base):
     __tablename__ = "filings"
     __table_args__ = (
         Index("ix_filings_submit_amendment", "submit_date_time", "is_amendment"),
+        # XBRL retry query: WHERE xbrl_flag=True AND xbrl_parsed=False ORDER BY id
+        Index("ix_filings_xbrl_retry", "xbrl_flag", "xbrl_parsed", "id"),
+        # Watchlist matching: target_sec_code lookups with submit_date_time ordering
+        Index("ix_filings_target_sec_submit", "target_sec_code", "submit_date_time"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

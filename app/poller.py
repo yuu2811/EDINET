@@ -481,8 +481,15 @@ async def _poll_company_info(target_date: date) -> None:
 
 async def run_poller():
     """Run the polling loop."""
+    if not settings.EDINET_API_KEY:
+        logger.warning(
+            "EDINET_API_KEY is not set — poller will start but API calls will fail. "
+            "Set EDINET_API_KEY in .env or environment variables to enable data fetching."
+        )
     logger.info(
-        "Starting EDINET poller (interval: %ds)...", settings.POLL_INTERVAL
+        "Starting EDINET poller (interval: %ds, API key: %s)...",
+        settings.POLL_INTERVAL,
+        "configured" if settings.EDINET_API_KEY else "NOT SET",
     )
     while True:
         try:
