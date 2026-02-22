@@ -671,9 +671,9 @@ async function loadWatchlist() {
 function handleNewFiling(filing) {
     lastPollTime = Date.now();
 
-    // C2: Only inject into feed if viewing today's date
-    const today = toLocalDateStr(new Date());
-    if (state.selectedDate !== today) {
+    // Only inject into feed if viewing the same date as the filing
+    const filingDate = (filing.submit_date_time || '').slice(0, 10);
+    if (state.selectedDate !== filingDate) {
         loadStats();
         return;
     }
@@ -3230,27 +3230,63 @@ function initDateNav() {
         fetchBtn.textContent = 'FETCHING...';
         const prevCount = state.filings.length;
         try {
-            await fetch(`/api/poll?date=${state.selectedDate}`, { method: 'POST' });
-            // M9: Poll for completion — check every 1.5s for new data (max 20s)
-            let attempts = 0;
-            const maxAttempts = 13;
-            const checkInterval = setInterval(async () => {
-                attempts++;
-                await loadFilings();
-                await loadStats();
+            const resp = await fetch(`/api/poll?date=${state.selectedDate}`, { method: 'POST' });
+            if (!resp.ok) {
+                const body = await resp.json().catch(() => ({}));
+                showToast(body.error || 'データ取得に失敗しました');
+                fetchBtn.disabled = false;
+                fetchBtn.textContent = origText;
+                return;
+            }
+            // Wait for SSE stats_update (poll complete) or timeout after 60s.
+            // Individual filings arrive via SSE new_filing events and are
+            // rendered one-by-one by handleNewFiling.
+            const fetchDate = state.selectedDate;
+            const onComplete = () => {
                 const newCount = state.filings.length;
-                if (newCount !== prevCount || attempts >= maxAttempts) {
-                    clearInterval(checkInterval);
-                    await loadAnalytics();
-                    fetchBtn.disabled = false;
-                    fetchBtn.textContent = newCount > prevCount
-                        ? `${newCount - prevCount}件取得`
-                        : origText;
-                    if (newCount > prevCount) {
-                        setTimeout(() => { fetchBtn.textContent = origText; }, 3000);
-                    }
+                loadStats();
+                loadAnalytics();
+                fetchBtn.disabled = false;
+                fetchBtn.textContent = newCount > prevCount
+                    ? `${newCount - prevCount}件取得`
+                    : origText;
+                if (newCount > prevCount) {
+                    setTimeout(() => { fetchBtn.textContent = origText; }, 3000);
                 }
-            }, 1500);
+            };
+            // Listen for stats_update from SSE
+            const statsHandler = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    if (data.date === fetchDate) {
+                        clearTimeout(timeout);
+                        eventSource.removeEventListener('stats_update', statsHandler);
+                        onComplete();
+                    }
+                } catch (_) { /* ignore parse errors */ }
+            };
+            // Timeout fallback: if no stats_update arrives within 60s,
+            // reload filings and finish.
+            const timeout = setTimeout(async () => {
+                eventSource.removeEventListener('stats_update', statsHandler);
+                await loadFilings();
+                onComplete();
+            }, 60000);
+            if (eventSource && eventSource.readyState !== EventSource.CLOSED) {
+                eventSource.addEventListener('stats_update', statsHandler);
+            } else {
+                // SSE not connected — fall back to polling
+                clearTimeout(timeout);
+                const checkInterval = setInterval(async () => {
+                    await loadFilings();
+                    const newCount = state.filings.length;
+                    if (newCount !== prevCount) {
+                        clearInterval(checkInterval);
+                        onComplete();
+                    }
+                }, 2000);
+                setTimeout(() => { clearInterval(checkInterval); onComplete(); }, 60000);
+            }
         } catch (e) {
             console.error('Fetch failed:', e);
             showToast('データ取得に失敗しました');
