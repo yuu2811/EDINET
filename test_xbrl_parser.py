@@ -1,4 +1,12 @@
-"""Test XBRL parser with sample data matching EDINET structures."""
+"""Test XBRL parser with sample data matching EDINET structures.
+
+テストカバレッジ:
+  Test 1-5:  jpcrp_cor namespace — contextRef (Prior/Previous) で今回/前回を区別
+  Test 6-7:  jplvh_cor namespace — contextRef で区別 (PriorFilingDateInstant)
+  Test 8-9:  jplvh_cor — PreviousHoldingRatioOfShareCertificatesEtc 要素 (同一contextRef)
+  Test 10-11: jplvh_cor — RatioOfShareCertificatesEtcAtTimeOfPreviousReport 要素
+  Test 12-13: jplvh_cor — HoldingRatioOfShareCertificatesEtcPerLastReport 要素 (実EDINET確認済み)
+"""
 import io
 import zipfile
 from app.edinet import EdinetClient
