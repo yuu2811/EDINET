@@ -1,5 +1,7 @@
 """Shared dependencies and utilities used across routers."""
 
+import re
+
 from fastapi import HTTPException
 
 
@@ -37,3 +39,39 @@ def validate_sec_code(sec_code: str) -> str:
             detail=f"Invalid securities code: {sec_code!r} (expected 4 or 5 digit code)",
         )
     return result
+
+
+_EDINET_CODE_RE = re.compile(r"^E\d{5}$")
+
+
+def validate_edinet_code(edinet_code: str) -> str:
+    """Validate an EDINET code from user input.
+
+    EDINET codes follow the format 'E' + 5 digits (e.g. E12345).
+    Raises HTTPException(400) for invalid codes.
+    """
+    code = edinet_code.strip()
+    if not _EDINET_CODE_RE.match(code):
+        raise HTTPException(
+            status_code=400,
+            detail=f"無効なEDINETコードです: {edinet_code!r} (例: E12345)",
+        )
+    return code
+
+
+_DOC_ID_RE = re.compile(r"^S\w{7,12}$")
+
+
+def validate_doc_id(doc_id: str) -> str:
+    """Validate an EDINET document ID from user input.
+
+    Document IDs follow the format 'S' + 7-12 alphanumeric chars (e.g. S100ABC1).
+    Raises HTTPException(400) for invalid IDs.
+    """
+    did = doc_id.strip()
+    if not _DOC_ID_RE.match(did):
+        raise HTTPException(
+            status_code=400,
+            detail=f"無効な書類IDです: {doc_id!r}",
+        )
+    return did

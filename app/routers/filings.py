@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import desc, func, or_, select
 
-from app.deps import get_async_session
+from app.deps import get_async_session, validate_doc_id
 from app.models import Filing
 
 logger = logging.getLogger(__name__)
@@ -82,6 +82,7 @@ async def list_filings(
 @router.get("/{doc_id}")
 async def get_filing(doc_id: str) -> dict:
     """Get a single filing by document ID."""
+    doc_id = validate_doc_id(doc_id)
     async with get_async_session()() as session:
         result = await session.execute(
             select(Filing).where(Filing.doc_id == doc_id)
@@ -112,12 +113,10 @@ def _make_pdf_response(content: bytes, doc_id: str) -> Response:
 async def retry_xbrl_enrichment(doc_id: str) -> dict:
     """Re-download and re-parse XBRL for a specific filing."""
     from app.edinet import edinet_client
-    from app.deps import get_async_session
     from app.models import Filing as FilingModel
     from sqlalchemy import select as sa_select
 
-    if not doc_id.isalnum():
-        raise HTTPException(status_code=400, detail="無効な書類IDです")
+    doc_id = validate_doc_id(doc_id)
 
     async with get_async_session()() as session:
         result = await session.execute(
@@ -225,8 +224,7 @@ async def debug_xbrl(doc_id: str) -> dict:
     from app.config import settings
     from app.edinet import edinet_client
 
-    if not doc_id.isalnum():
-        raise HTTPException(status_code=400, detail="無効な書類IDです")
+    doc_id = validate_doc_id(doc_id)
 
     if not settings.EDINET_API_KEY:
         return {"error": "EDINET_API_KEY not configured"}
@@ -255,9 +253,7 @@ async def proxy_document_pdf(doc_id: str) -> Response:
     from app.config import settings
     from app.edinet import _looks_like_pdf, edinet_client
 
-    # Sanitise doc_id to prevent path traversal
-    if not doc_id.isalnum():
-        return JSONResponse({"error": "無効な書類IDです"}, status_code=400)
+    doc_id = validate_doc_id(doc_id)
 
     # --- Stage 1: EDINET API v2 ---
     if settings.EDINET_API_KEY:
