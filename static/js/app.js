@@ -102,6 +102,7 @@ function savePreferences() {
     try {
         const prefs = {
             filterMode: state.filterMode,
+            sortMode: state.sortMode,
             searchQuery: state.searchQuery,
             soundEnabled: state.soundEnabled,
             notificationsEnabled: state.notificationsEnabled,
@@ -125,6 +126,13 @@ function loadPreferences() {
             state.filterMode = prefs.filterMode;
             const filterEl = document.getElementById('feed-filter');
             if (filterEl) filterEl.value = prefs.filterMode;
+        }
+
+        // Restore sort mode
+        if (prefs.sortMode) {
+            state.sortMode = prefs.sortMode;
+            const sortEl = document.getElementById('feed-sort');
+            if (sortEl) sortEl.value = prefs.sortMode;
         }
 
         // Restore search text
@@ -718,6 +726,9 @@ function renderFeedTable(container, filings) {
         if (f.english_doc_flag) {
             typeBadge += ' <span class="badge-english tbl-badge">EN</span>';
         }
+        if (f.withdrawal_status === '1') {
+            typeBadge += ' <span class="badge-withdrawn tbl-badge">取下</span>';
+        }
 
         const filerName = f.holder_name || f.filer_name || '(不明)';
         const filer = f.edinet_code
@@ -826,6 +837,9 @@ function createFeedCard(f) {
 
     if (f.english_doc_flag) {
         badge += '<span class="card-badge badge-english">EN</span>';
+    }
+    if (f.withdrawal_status === '1') {
+        badge += '<span class="card-badge badge-withdrawn">取下</span>';
     }
 
     // Watchlist match badge
@@ -974,6 +988,9 @@ function createMobileFeedCard(f) {
     }
     if (f.english_doc_flag) {
         badge += '<span class="m-badge m-badge-english">EN</span>';
+    }
+    if (f.withdrawal_status === '1') {
+        badge += '<span class="m-badge m-badge-withdrawn">取下</span>';
     }
     if (isWatchlistMatch(f)) {
         badge += '<span class="m-badge m-badge-watch">&#9733;</span>';
@@ -2323,7 +2340,13 @@ async function openFilerProfile(edinetCode) {
             html += '</tbody></table></div>';
         }
 
+        // Recent filings
+        if (data.recent_filings && data.recent_filings.length > 0) {
+            html += renderProfileFilings(data.recent_filings);
+        }
+
         body.innerHTML = html;
+        attachProfileFilingHandlers();
     } catch (e) {
         console.error('Filer profile error:', e);
         body.innerHTML = '<div class="stock-no-data">プロフィールの読み込みに失敗しました</div>';
@@ -2378,7 +2401,13 @@ async function openCompanyProfile(secCode) {
             html += '</tbody></table></div>';
         }
 
+        // Recent filings
+        if (data.recent_filings && data.recent_filings.length > 0) {
+            html += renderProfileFilings(data.recent_filings);
+        }
+
         body.innerHTML = html;
+        attachProfileFilingHandlers();
     } catch (e) {
         console.error('Company profile error:', e);
         body.innerHTML = '<div class="stock-no-data">プロフィールの読み込みに失敗しました</div>';
@@ -2399,6 +2428,45 @@ function miniSparkline(values) {
     }).join(' ');
     const color = values[values.length - 1] >= values[0] ? 'var(--green)' : 'var(--red)';
     return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="vertical-align:middle"><polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+/** Render a compact recent filings list for profile views. */
+function renderProfileFilings(filings) {
+    // Store filings for click access
+    window._profileFilings = filings;
+    let html = '<div class="profile-section-title">最近の報告書</div>';
+    html += '<div class="profile-filings">';
+    for (let i = 0; i < Math.min(filings.length, 10); i++) {
+        const f = filings[i];
+        const date = f.submit_date_time ? f.submit_date_time.slice(0, 10) : '-';
+        const desc = f.doc_description || '';
+        const ratio = f.holding_ratio != null ? f.holding_ratio.toFixed(2) + '%' : '-';
+        let changeHtml = '';
+        if (f.ratio_change != null && f.ratio_change !== 0) {
+            const cls = f.ratio_change > 0 ? 'positive' : 'negative';
+            const sign = f.ratio_change > 0 ? '+' : '';
+            changeHtml = `<span class="${cls}">${sign}${f.ratio_change.toFixed(2)}%</span>`;
+        }
+        html += `<div class="profile-filing-row" data-pf-idx="${i}">
+            <span class="profile-filing-date">${escapeHtml(date)}</span>
+            <span class="profile-filing-desc" title="${escapeHtml(desc)}">${escapeHtml(desc)}</span>
+            <span class="profile-filing-ratio">${ratio}</span>
+            <span class="profile-filing-change">${changeHtml}</span>
+        </div>`;
+    }
+    html += '</div>';
+    return html;
+}
+
+/** Attach click handlers for profile filing rows (called after innerHTML set). */
+function attachProfileFilingHandlers() {
+    document.querySelectorAll('.profile-filing-row[data-pf-idx]').forEach(row => {
+        row.addEventListener('click', () => {
+            const idx = parseInt(row.dataset.pfIdx, 10);
+            const f = window._profileFilings && window._profileFilings[idx];
+            if (f) openModal(f);
+        });
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -3063,6 +3131,18 @@ function renderRankings(rankings, movements) {
                 html += `<div class="filer-row">
                     <span class="filer-name negative" title="${escapeHtml(name)}">${nameHtml}</span>
                     <span class="filer-count negative">${change}</span>
+                </div>`;
+            }
+            html += '</div>';
+        }
+
+        // Busiest days
+        if (rankings.busiest_days && rankings.busiest_days.length > 0) {
+            html += '<div class="rankings-section"><div class="rankings-section-title">活発な日</div>';
+            for (const d of rankings.busiest_days.slice(0, 5)) {
+                html += `<div class="filer-row">
+                    <span class="filer-name">${escapeHtml(d.date || '')}</span>
+                    <span class="filer-count">${d.filing_count}件</span>
                 </div>`;
             }
             html += '</div>';
