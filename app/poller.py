@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import time
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 
@@ -15,6 +15,8 @@ from app.edinet import edinet_client
 from app.models import CompanyInfo, Filing
 
 logger = logging.getLogger(__name__)
+
+_JST = timezone(timedelta(hours=9))
 
 
 class JsonEncoder(json.JSONEncoder):
@@ -108,7 +110,7 @@ broadcaster = SSEBroadcaster()
 
 async def poll_edinet(target_date=None):
     """Poll EDINET for new large shareholding filings."""
-    today = target_date or date.today()
+    today = target_date or datetime.now(_JST).date()
 
     logger.info("Polling EDINET for date %s...", today)
 
@@ -476,7 +478,7 @@ async def run_poller():
     )
     while True:
         try:
-            today = date.today()
+            today = datetime.now(_JST).date()
             await poll_edinet(today)
             # Also retry enrichment for previously failed XBRL parses
             await _retry_xbrl_enrichment()

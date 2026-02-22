@@ -38,6 +38,8 @@ let audioCtx = null;
 let pollCountdownInterval = null;
 let lastPollTime = Date.now();
 let currentModalDocId = null; // tracks which filing is shown in the modal
+let filingsAbortController = null; // AbortController for date navigation race condition
+let _filteredFilings = []; // filtered list for modal arrow navigation
 const POLL_INTERVAL_MS = 60000; // matches server default
 
 // ---------------------------------------------------------------------------
@@ -82,6 +84,31 @@ function extractTargetFromDescription(desc) {
     if (!desc) return null;
     const m = desc.match(/[（(]([^）)]+?)(?:株式|株券)[）)]/);
     return m ? m[1] : null;
+}
+
+// ---------------------------------------------------------------------------
+// Toast Notifications
+// ---------------------------------------------------------------------------
+
+function showToast(message, type = 'error') {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.style.cssText = 'position:fixed;top:12px;right:12px;z-index:10000;display:flex;flex-direction:column;gap:8px;pointer-events:none;';
+        document.body.appendChild(container);
+    }
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.style.cssText = 'padding:10px 16px;border-radius:6px;font-size:13px;font-family:monospace;color:#fff;opacity:0;transition:opacity 0.3s;max-width:320px;pointer-events:auto;' +
+        (type === 'error' ? 'background:rgba(255,23,68,0.92);border:1px solid rgba(255,23,68,0.5);' : 'background:rgba(0,230,118,0.92);border:1px solid rgba(0,230,118,0.5);');
+    toast.textContent = message;
+    container.appendChild(toast);
+    requestAnimationFrame(() => { toast.style.opacity = '1'; });
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +250,24 @@ document.addEventListener('DOMContentLoaded', () => {
     initMobileNav();
     initPullToRefresh();
     initStockView();
+
+    // C4: Initialize AudioContext on first user gesture to avoid browser autoplay restrictions
+    document.addEventListener('click', () => {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+    }, { once: true });
+
+    // H5: Mobile back button closes modal
+    window.addEventListener('popstate', () => {
+        const modal = document.getElementById('detail-modal');
+        if (modal && !modal.classList.contains('hidden')) {
+            closeModal();
+        }
+    });
 });
 
 function initClock() {
@@ -281,6 +326,9 @@ function initEventListeners() {
         }
         const perm = await Notification.requestPermission();
         state.notificationsEnabled = perm === 'granted';
+        if (perm === 'denied') {
+            showToast('通知が拒否されました。ブラウザの設定から許可してください。');
+        }
         const btn = document.getElementById('btn-notify');
         btn.classList.toggle('active', state.notificationsEnabled);
         btn.title = state.notificationsEnabled ? '通知 ON' : '通知 OFF';
@@ -386,15 +434,15 @@ function initEventListeners() {
             closeModal();
             closeConfirmDialog();
         }
-        // Arrow key navigation in modal
+        // Arrow key navigation in modal (uses filtered list, not full list)
         const modal = document.getElementById('detail-modal');
         if (modal && !modal.classList.contains('hidden')) {
             const idx = parseInt(modal.dataset.filingIndex, 10);
             if (isNaN(idx) || idx < 0) return;
             if (e.key === 'ArrowLeft' && idx > 0) {
-                openModal(state.filings[idx - 1]);
-            } else if (e.key === 'ArrowRight' && idx < state.filings.length - 1) {
-                openModal(state.filings[idx + 1]);
+                openModal(_filteredFilings[idx - 1]);
+            } else if (e.key === 'ArrowRight' && idx < _filteredFilings.length - 1) {
+                openModal(_filteredFilings[idx + 1]);
             }
             return;
         }
@@ -497,20 +545,33 @@ async function loadInitialData() {
 }
 
 async function loadFilings() {
+    // H2: Cancel any in-flight request to prevent race conditions
+    if (filingsAbortController) filingsAbortController.abort();
+    filingsAbortController = new AbortController();
+    const signal = filingsAbortController.signal;
+
+    // H1: Show loading indicator
+    const container = document.getElementById('feed-list');
+    if (state.filings.length === 0) {
+        container.innerHTML = '<div class="feed-empty"><div class="empty-icon" style="animation:pulse 1s infinite">&#8987;</div><div class="empty-text">読み込み中...</div></div>';
+    }
+
     try {
         const params = new URLSearchParams({ limit: '500' });
         if (state.selectedDate) {
             params.set('date_from', state.selectedDate);
             params.set('date_to', state.selectedDate);
         }
-        const resp = await fetch(`/api/filings?${params}`);
+        const resp = await fetch(`/api/filings?${params}`, { signal });
         const data = await resp.json();
         state.filings = data.filings || [];
         renderFeed();
         updateTicker();
         preloadStockData();
     } catch (e) {
+        if (e.name === 'AbortError') return; // Superseded by newer request
         console.error('Failed to load filings:', e);
+        showToast('報告書の読み込みに失敗しました');
     }
 }
 
@@ -552,6 +613,7 @@ async function loadStats() {
         renderStats();
     } catch (e) {
         console.error('Failed to load stats:', e);
+        showToast('統計データの読み込みに失敗しました');
     }
 }
 
@@ -563,6 +625,7 @@ async function loadWatchlist() {
         renderWatchlist();
     } catch (e) {
         console.error('Failed to load watchlist:', e);
+        showToast('ウォッチリストの読み込みに失敗しました');
     }
 }
 
@@ -572,6 +635,14 @@ async function loadWatchlist() {
 
 function handleNewFiling(filing) {
     lastPollTime = Date.now();
+
+    // C2: Only inject into feed if viewing today's date
+    const today = toLocalDateStr(new Date());
+    if (state.selectedDate !== today) {
+        loadStats();
+        return;
+    }
+
     // Add to top of list
     state.filings.unshift(filing);
 
@@ -591,8 +662,9 @@ function handleNewFiling(filing) {
         }
     }, 50);
 
-    // Play sound
-    if (state.soundEnabled) {
+    // Play sound — watchlist match gets a different tone, skip normal alert for those
+    const isWatch = isWatchlistMatch(filing);
+    if (state.soundEnabled && !isWatch) {
         playAlertSound();
     }
 
@@ -654,10 +726,16 @@ function renderFeed() {
         }
     });
 
+    // Store filtered list for modal arrow navigation (H3)
+    _filteredFilings = filtered;
+
     if (filtered.length === 0) {
+        const emptyMsg = state.searchQuery
+            ? '検索条件に一致する報告書がありません'
+            : '報告書が見つかりません';
         container.innerHTML = `<div class="feed-empty">
             <div class="empty-icon">&#128196;</div>
-            <div class="empty-text">報告書が見つかりません</div>
+            <div class="empty-text">${emptyMsg}</div>
         </div>`;
         return;
     }
@@ -1364,7 +1442,11 @@ async function saveWatchItem() {
     const name = document.getElementById('watch-name').value.trim();
     const code = document.getElementById('watch-code').value.trim();
 
-    if (!name) return;
+    if (!name) {
+        showToast('企業名を入力してください');
+        document.getElementById('watch-name').focus();
+        return;
+    }
 
     try {
         const resp = await fetch('/api/watchlist', {
@@ -1427,8 +1509,9 @@ function checkWatchlistMatch(filing) {
             }
         }
     }
+    // M7: Play watchlist-specific sound (higher tone) — normal alert is
+    // suppressed in handleNewFiling when this is a watchlist match to avoid double beep
     if (state.soundEnabled) {
-        // Play a different (higher) alert for watchlist
         playAlertSound(880);
     }
 }
@@ -1806,9 +1889,11 @@ function initStockView() {
 
     const doSearch = () => {
         const code = searchInput.value.trim();
-        if (code.length >= 4) {
-            loadStockView(code);
+        if (code.length < 4) {
+            showToast('4桁以上の証券コードを入力してください');
+            return;
         }
+        loadStockView(code);
     };
 
     searchBtn.addEventListener('click', doSearch);
@@ -2001,8 +2086,12 @@ async function retryXbrl(docId) {
 }
 
 function exportFilingsCSV() {
-    const filings = state.filings;
-    if (!filings || filings.length === 0) return;
+    // H4: Export filtered/searched results, not full list
+    const filings = _filteredFilings.length > 0 ? _filteredFilings : state.filings;
+    if (!filings || filings.length === 0) {
+        showToast('エクスポートするデータがありません');
+        return;
+    }
 
     const headers = ['提出日時','提出者','対象企業','証券コード','保有割合(%)','前回保有割合(%)','変動(%)','保有株数','保有目的','書類種別','書類ID'];
     const rows = filings.map(f => [
@@ -2303,10 +2392,16 @@ function openModal(filing) {
         });
     }
 
-    // Store current filing index for keyboard navigation
-    const currentIndex = state.filings.findIndex(f => f.doc_id === filing.doc_id);
+    // Store current filing index for keyboard navigation (uses filtered list)
+    const currentIndex = _filteredFilings.findIndex(f => f.doc_id === filing.doc_id);
     document.getElementById('detail-modal').dataset.filingIndex = currentIndex;
-    document.getElementById('detail-modal').classList.remove('hidden');
+
+    // H5: Push history state for mobile back button support
+    const modal = document.getElementById('detail-modal');
+    if (modal.classList.contains('hidden')) {
+        history.pushState({ modal: true }, '');
+    }
+    modal.classList.remove('hidden');
 }
 
 function closeModal() {
@@ -2511,6 +2606,10 @@ function playAlertSound(freq = 660) {
     try {
         if (!audioCtx) {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        // C4: Resume if suspended by browser autoplay policy
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
         }
 
         const oscillator = audioCtx.createOscillator();
@@ -2871,6 +2970,9 @@ function initMobileNav() {
             }
             const perm = await Notification.requestPermission();
             state.notificationsEnabled = perm === 'granted';
+            if (perm === 'denied') {
+                showToast('通知が拒否されました。ブラウザの設定から許可してください。');
+            }
 
             // Update mobile button
             mobileNotifyBtn.classList.toggle('active', state.notificationsEnabled);
@@ -2943,9 +3045,9 @@ function initPullToRefresh() {
                 feedList.parentNode.insertBefore(indicator, feedList);
             }
             if (diff > 60) {
-                indicator.textContent = 'Release to refresh';
+                indicator.textContent = '離すと更新';
             } else {
-                indicator.textContent = 'Pull to refresh...';
+                indicator.textContent = '引っ張って更新...';
             }
             indicator.style.opacity = Math.min(diff / 60, 1);
         }
@@ -2959,11 +3061,11 @@ function initPullToRefresh() {
         if (diff > 60 && feedList.scrollTop === 0) {
             // Trigger refresh
             if (indicator) {
-                indicator.textContent = 'Refreshing...';
+                indicator.textContent = '更新中...';
             }
             loadInitialData().then(() => {
                 if (indicator) {
-                    indicator.textContent = 'Updated!';
+                    indicator.textContent = '更新完了！';
                     setTimeout(() => {
                         if (indicator && indicator.parentNode) {
                             indicator.parentNode.removeChild(indicator);
@@ -3082,6 +3184,7 @@ async function loadAnalytics() {
         _analyticsLoaded = true;
     } catch (e) {
         console.warn('Analytics load failed:', e);
+        showToast('分析データの読み込みに失敗しました');
     }
 }
 

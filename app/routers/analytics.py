@@ -1,6 +1,8 @@
 """Rich analytics endpoints for the EDINET Large Shareholding Monitor."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+
+_JST = timezone(timedelta(hours=9))
 
 from fastapi import APIRouter, HTTPException, Path, Query
 from sqlalchemy import asc, desc, func, select
@@ -44,7 +46,7 @@ def _period_start_date(period: str) -> str | None:
     """
     if period not in _VALID_PERIODS:
         period = "30d"
-    today = date.today()
+    today = datetime.now(_JST).date()
     if period == "7d":
         start = today - timedelta(days=7)
     elif period == "90d":
@@ -181,9 +183,9 @@ async def market_movements(
         try:
             parsed = date.fromisoformat(target_date)
         except ValueError:
-            parsed = date.today()
+            parsed = datetime.now(_JST).date()
     else:
-        parsed = date.today()
+        parsed = datetime.now(_JST).date()
     date_str = parsed.isoformat()
 
     async with get_async_session()() as session:
