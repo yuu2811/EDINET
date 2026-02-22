@@ -151,10 +151,10 @@ async def batch_retry_xbrl() -> dict:
     Targets filings where:
     - xbrl_parsed is False (never parsed), OR
     - holding_ratio is None (parse failed), OR
-    - previous_holding_ratio is None (parser improvement — re-extract)
+    - previous_holding_ratio is None (パーサー改善後の再抽出対象)
 
-    This is useful after parser improvements — re-processes filings whose
-    XBRL was previously downloaded but failed to parse correctly.
+    パーサー改善後に呼び出すことで、以前は抽出できなかった
+    previous_holding_ratio を再取得できる。最大50件ずつ処理。
     """
     import asyncio
 

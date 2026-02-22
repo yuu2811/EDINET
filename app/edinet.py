@@ -1,4 +1,22 @@
-"""EDINET API v2 client for fetching large shareholding reports."""
+"""EDINET API v2 client for fetching large shareholding reports.
+
+XBRL前回保有割合 (previous_holding_ratio) の検出ロジック:
+
+EDINET大量保有報告書のXBRLでは、今回と前回の保有割合を**同じcontextRef**
+(FilingDateInstant) で記録し、**要素名**で区別する。
+contextRefの "Prior"/"Previous" による区別はフォールバックとして残存。
+
+対応する要素名パターン (jplvh_cor namespace):
+  1. HoldingRatioOfShareCertificatesEtcPerLastReport  — 実EDINET確認済み
+  2. PreviousHoldingRatioOfShareCertificatesEtc        — EdinetUtility確認済み
+  3. RatioOfShareCertificatesEtcAtTimeOfPreviousReport  — タクソノミ命名規則
+
+is_previous 判定 (全抽出パスで共通):
+  - "PerLastReport" in element_name
+  - "Previous" in element_name
+  - "Prior" in contextRef
+  - "Previous" in contextRef
+"""
 
 import io
 import logging
@@ -325,7 +343,14 @@ class EdinetClient:
         return result
 
     def _extract_from_xbrl(self, xbrl_bytes: bytes) -> dict:
-        """Extract holding data from XBRL instance XML."""
+        """Extract holding data from XBRL instance XML.
+
+        前回保有割合の検出:
+          要素名に PerLastReport / Previous を含むか、
+          contextRef に Prior / Previous を含む場合は previous_holding_ratio に格納。
+          ratio_patterns を全てスキャンし、holding_ratio と previous_holding_ratio の
+          両方が見つかるまでループを継続する。
+        """
         result = {
             "holding_ratio": None,
             "previous_holding_ratio": None,
@@ -583,7 +608,11 @@ class EdinetClient:
         return result
 
     def _extract_inline_via_xml(self, tree) -> dict:
-        """Extract inline XBRL data using namespace-aware XML tree."""
+        """Extract inline XBRL data using namespace-aware XML tree.
+
+        ix:nonFraction 要素の name 属性からローカル名を取得し、
+        _matches_ratio_pattern() でマッチした要素について is_previous 判定を行う。
+        """
         result = {
             "holding_ratio": None,
             "previous_holding_ratio": None,
@@ -742,7 +771,11 @@ class EdinetClient:
         return result
 
     def _apply_nonfraction_regex(self, result: dict, name_attr: str, ctx: str, val_text: str):
-        """Apply a regex-matched nonFraction value to the result dict."""
+        """Apply a regex-matched nonFraction value to the result dict.
+
+        正規表現フォールバックで抽出した ix:nonFraction の値を、
+        要素名とcontextRefから is_previous 判定して result に格納する。
+        """
         local_name = name_attr.split(":")[-1]
         # Strip HTML tags
         clean_val = re.sub(r'<[^>]+>', '', val_text).strip()
@@ -1047,10 +1080,14 @@ class EdinetClient:
 def _matches_ratio_pattern(name: str) -> bool:
     """Check if element name matches a shareholding ratio pattern.
 
-    Must match both jpcrp_cor (有報) and jplvh_cor (大量保有) taxonomy:
+    今回・前回の両方にマッチする。前回かどうかの判定は呼び出し元の is_previous で行う。
+
+    対象タクソノミ要素:
       jpcrp_cor: TotalShareholdingRatioOfShareCertificatesEtc
-      jplvh_cor: HoldingRatioOfShareCertificatesEtc
-      jplvh_cor: RatioOfShareCertificatesEtcAtTimeOfPreviousReport (前回保有割合)
+      jplvh_cor: HoldingRatioOfShareCertificatesEtc (今回)
+      jplvh_cor: HoldingRatioOfShareCertificatesEtcPerLastReport (前回)
+      jplvh_cor: PreviousHoldingRatioOfShareCertificatesEtc (前回)
+      jplvh_cor: RatioOfShareCertificatesEtcAtTimeOfPreviousReport (前回)
     """
     patterns = (
         "HoldingRatio",         # matches both jplvh "HoldingRatio..." and jpcrp "ShareholdingRatio..."
