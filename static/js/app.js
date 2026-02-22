@@ -672,7 +672,7 @@ function renderFeed() {
 
         container.querySelectorAll('.m-card').forEach(card => {
             card.addEventListener('click', (e) => {
-                if (e.target.tagName === 'A') return;
+                if (e.target.closest('a')) return;
                 const docId = card.dataset.docId;
                 const filing = state.filings.find(f => f.doc_id === docId);
                 if (filing) openModal(filing);
@@ -685,7 +685,7 @@ function renderFeed() {
         container.querySelectorAll('.feed-card').forEach(card => {
             card.addEventListener('click', (e) => {
                 // Don't open modal if clicking a link
-                if (e.target.tagName === 'A') return;
+                if (e.target.closest('a')) return;
                 const docId = card.dataset.docId;
                 const filing = state.filings.find(f => f.doc_id === docId);
                 if (filing) openModal(filing);
@@ -827,7 +827,7 @@ function renderFeedTable(container, filings) {
     // Row click handler
     container.querySelectorAll('.feed-table tbody tr').forEach(row => {
         row.addEventListener('click', (e) => {
-            if (e.target.tagName === 'A') return;
+            if (e.target.closest('a')) return;
             const docId = row.dataset.docId;
             const filing = state.filings.find(f => f.doc_id === docId);
             if (filing) openModal(filing);
