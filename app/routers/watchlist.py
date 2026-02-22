@@ -24,11 +24,27 @@ async def get_watchlist() -> dict:
 
 @router.post("")
 async def add_to_watchlist(body: WatchlistCreate) -> dict:
-    """Add a company to the watchlist."""
+    """Add a company to the watchlist (with duplicate detection)."""
     async with get_async_session()() as session:
+        name = body.company_name.strip()
+        sec_code = body.sec_code.strip() if body.sec_code else None
+
+        # M5: Check for duplicates by company_name or sec_code
+        conditions = [Watchlist.company_name == name]
+        if sec_code:
+            conditions.append(Watchlist.sec_code == sec_code)
+        existing = await session.execute(
+            select(Watchlist).where(or_(*conditions))
+        )
+        if existing.scalar_one_or_none():
+            return JSONResponse(
+                {"error": "この銘柄は既にウォッチリストに登録されています"},
+                status_code=409,
+            )
+
         item = Watchlist(
-            company_name=body.company_name.strip(),
-            sec_code=body.sec_code.strip() if body.sec_code else None,
+            company_name=name,
+            sec_code=sec_code,
             edinet_code=body.edinet_code.strip() if body.edinet_code else None,
         )
         session.add(item)
@@ -88,7 +104,7 @@ async def remove_from_watchlist(item_id: int) -> dict:
         )
         item = result.scalar_one_or_none()
         if not item:
-            return JSONResponse({"error": "Not found"}, status_code=404)
+            return JSONResponse({"error": "ウォッチリスト項目が見つかりません"}, status_code=404)
         await session.delete(item)
         await session.commit()
         return {"status": "deleted"}

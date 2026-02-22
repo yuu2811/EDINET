@@ -17,6 +17,7 @@ async def sse_stream(request: Request) -> StreamingResponse:
     async def event_generator():
         client_id, queue = await broadcaster.subscribe()
         try:
+            yield "retry: 5000\n\n"
             yield "event: connected\ndata: {\"status\": \"connected\"}\n\n"
 
             while True:
