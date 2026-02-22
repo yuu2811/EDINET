@@ -43,12 +43,21 @@ def _cache_get(key: str) -> dict | None:
         return None
     ts, value = entry
     if time.monotonic() - ts > _CACHE_TTL:
-        del _cache[key]
+        _cache.pop(key, None)
         return None
     return value
 
 
+_CACHE_MAX_SIZE = 500
+
+
 def _cache_set(key: str, value: dict) -> None:
+    # Evict expired entries when cache grows too large
+    if len(_cache) >= _CACHE_MAX_SIZE:
+        now = time.monotonic()
+        expired_keys = [k for k, (ts, _) in _cache.items() if now - ts > _CACHE_TTL]
+        for k in expired_keys:
+            _cache.pop(k, None)
     _cache[key] = (time.monotonic(), value)
 
 
@@ -871,13 +880,20 @@ async def get_stock_data(sec_code: str) -> dict:
             google_task = asyncio.create_task(_fetch_google_finance(client, ticker))
             kabutan_task = asyncio.create_task(_fetch_kabutan_quote(client, ticker))
 
-            (
-                history, quote, yahoo_meta, yahoo_summary,
-                google_data, kabutan_data,
-            ) = await asyncio.gather(
+            _gather_results = await asyncio.gather(
                 history_task, quote_task, yahoo_meta_task, yahoo_summary_task,
                 google_task, kabutan_task,
+                return_exceptions=True,
             )
+            # Replace any failed tasks with safe empty defaults
+            _defaults = ([], {}, {}, {}, {}, {})
+            history, quote, yahoo_meta, yahoo_summary, google_data, kabutan_data = (
+                r if not isinstance(r, BaseException) else d
+                for r, d in zip(_gather_results, _defaults)
+            )
+            for _i, _r in enumerate(_gather_results):
+                if isinstance(_r, BaseException):
+                    logger.warning("Stock data source %d failed for %s: %s", _i, ticker, _r)
 
         # Merge results – prefer Yahoo for market cap / PBR, stooq for prices,
         # Google Finance and Kabutan as additional price sources

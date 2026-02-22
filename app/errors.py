@@ -3,6 +3,7 @@
 import logging
 
 from fastapi import FastAPI, HTTPException, Request
+from sqlalchemy.exc import IntegrityError
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -33,6 +34,16 @@ def register_error_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": exc.detail},
+        )
+
+    @app.exception_handler(IntegrityError)
+    async def integrity_error_handler(
+        request: Request, exc: IntegrityError
+    ) -> JSONResponse:
+        logger.warning("IntegrityError on %s %s: %s", request.method, request.url.path, exc.orig)
+        return JSONResponse(
+            status_code=409,
+            content={"error": "Duplicate or constraint violation", "detail": str(exc.orig)},
         )
 
     @app.exception_handler(Exception)

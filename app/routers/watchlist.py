@@ -1,8 +1,7 @@
 """Watchlist CRUD and watchlist-filings endpoints."""
 
-from fastapi import APIRouter
-from fastapi.responses import JSONResponse
-from sqlalchemy import desc, or_, select
+from fastapi import APIRouter, HTTPException
+from sqlalchemy import desc, func, or_, select
 
 from app.deps import get_async_session
 from app.models import Filing, Watchlist
@@ -30,16 +29,16 @@ async def add_to_watchlist(body: WatchlistCreate) -> dict:
         sec_code = body.sec_code.strip() if body.sec_code else None
 
         # M5: Check for duplicates by company_name or sec_code
-        conditions = [Watchlist.company_name == name]
+        conditions = [func.lower(Watchlist.company_name) == name.lower()]
         if sec_code:
             conditions.append(Watchlist.sec_code == sec_code)
         existing = await session.execute(
             select(Watchlist).where(or_(*conditions))
         )
         if existing.scalar_one_or_none():
-            return JSONResponse(
-                {"error": "この銘柄は既にウォッチリストに登録されています"},
+            raise HTTPException(
                 status_code=409,
+                detail="この銘柄は既にウォッチリストに登録されています",
             )
 
         item = Watchlist(
@@ -104,7 +103,7 @@ async def remove_from_watchlist(item_id: int) -> dict:
         )
         item = result.scalar_one_or_none()
         if not item:
-            return JSONResponse({"error": "ウォッチリスト項目が見つかりません"}, status_code=404)
+            raise HTTPException(status_code=404, detail="ウォッチリスト項目が見つかりません")
         await session.delete(item)
         await session.commit()
         return {"status": "deleted"}

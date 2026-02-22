@@ -370,7 +370,11 @@ async def _retry_xbrl_enrichment():
         except asyncio.TimeoutError:
             logger.warning("XBRL retry batch timed out")
 
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception as exc:
+            logger.error("XBRL retry batch commit failed: %s", exc)
+            await session.rollback()
 
 
 async def _poll_company_info(target_date: date) -> None:

@@ -36,6 +36,7 @@ const state = {
 let eventSource = null;
 let audioCtx = null;
 let pollCountdownInterval = null;
+let clockInterval = null;
 let lastPollTime = Date.now();
 let currentModalDocId = null; // tracks which filing is shown in the modal
 let filingsAbortController = null; // AbortController for date navigation race condition
@@ -285,6 +286,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initClock() {
     const clockEl = document.getElementById('current-time');
+    if (!clockEl) return;
     function update() {
         const now = new Date();
         clockEl.textContent = now.toLocaleString('ja-JP', {
@@ -300,7 +302,8 @@ function initClock() {
         if (mobileClockEl) mobileClockEl.textContent = clockEl.textContent;
     }
     update();
-    setInterval(update, 1000);
+    if (clockInterval) clearInterval(clockInterval);
+    clockInterval = setInterval(update, 1000);
 }
 
 function initPollCountdown() {
@@ -580,6 +583,7 @@ async function loadFilings() {
 
     // H1: Show loading indicator
     const container = document.getElementById('feed-list');
+    if (!container) return;
     if (state.filings.length === 0) {
         container.innerHTML = '<div class="feed-empty"><div class="empty-icon" style="animation:pulse 1s infinite">&#8987;</div><div class="empty-text">読み込み中...</div></div>';
     }
@@ -591,6 +595,7 @@ async function loadFilings() {
             params.set('date_to', state.selectedDate);
         }
         const resp = await fetch(`/api/filings?${params}`, { signal });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         state.filings = data.filings || [];
         renderFeed();
@@ -637,6 +642,7 @@ async function loadStats() {
     try {
         const params = state.selectedDate ? `?date=${state.selectedDate}` : '';
         const resp = await fetch(`/api/stats${params}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         state.stats = await resp.json();
         renderStats();
     } catch (e) {
@@ -648,6 +654,7 @@ async function loadStats() {
 async function loadWatchlist() {
     try {
         const resp = await fetch('/api/watchlist');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         state.watchlist = data.watchlist || [];
         renderWatchlist();
@@ -711,6 +718,7 @@ function handleNewFiling(filing) {
 
 function renderFeed() {
     const container = document.getElementById('feed-list');
+    if (!container) return;
     let filtered = [...state.filings];
 
     // Apply filter
@@ -1249,15 +1257,16 @@ function createMobileFeedCard(f) {
 function renderStats() {
     const s = state.stats;
     const fmt = v => v != null ? Number(v).toLocaleString() : '-';
-    document.getElementById('stat-total').textContent = fmt(s.today_total);
+    const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setEl('stat-total', fmt(s.today_total));
     // Update header filing count badges (desktop + mobile)
     const badge = document.getElementById('filing-count-badge');
     if (badge) badge.textContent = fmt(s.today_total);
     const badgeMobile = document.getElementById('filing-count-badge-mobile');
     if (badgeMobile) badgeMobile.textContent = fmt(s.today_total);
-    document.getElementById('stat-new').textContent = fmt(s.today_new_reports);
-    document.getElementById('stat-amendments').textContent = fmt(s.today_amendments);
-    document.getElementById('stat-clients').textContent = fmt(s.connected_clients);
+    setEl('stat-new', fmt(s.today_new_reports));
+    setEl('stat-amendments', fmt(s.today_amendments));
+    setEl('stat-clients', fmt(s.connected_clients));
 
     // Update panel title to show the selected date
     const isToday = state.selectedDate === toLocalDateStr(new Date());
@@ -1268,6 +1277,7 @@ function renderStats() {
 
     // Top filers
     const filersList = document.getElementById('top-filers-list');
+    if (!filersList) return;
     if (s.top_filers && s.top_filers.length > 0) {
         filersList.innerHTML = s.top_filers.map(f => {
             const name = f.name || '(不明)';
@@ -1364,6 +1374,7 @@ function renderSummary() {
 
 function renderWatchlist() {
     const container = document.getElementById('watchlist-items');
+    if (!container) return;
     if (state.watchlist.length === 0) {
         container.innerHTML = `<div class="watchlist-empty">
             <div class="empty-icon">&#9734;</div>
@@ -1512,10 +1523,16 @@ async function saveWatchItem() {
 
 async function deleteWatchItem(id) {
     try {
-        await fetch(`/api/watchlist/${id}`, { method: 'DELETE' });
+        const resp = await fetch(`/api/watchlist/${id}`, { method: 'DELETE' });
+        if (!resp.ok) {
+            const errData = await resp.json().catch(() => ({}));
+            showToast(errData.error || 'ウォッチリスト削除に失敗しました');
+            return;
+        }
         await loadWatchlist();
     } catch (e) {
         console.error('Failed to delete watchlist item:', e);
+        showToast('ウォッチリスト削除に失敗しました');
     }
 }
 
@@ -2498,6 +2515,7 @@ async function openFilerProfile(edinetCode) {
     if (!edinetCode) return;
     const body = document.getElementById('modal-body');
     const modal = document.getElementById('detail-modal');
+    if (!body || !modal) return;
     currentModalDocId = null;
     body.innerHTML = '<div class="stock-loading">提出者プロフィール読み込み中...</div>';
     modal.classList.remove('hidden');
@@ -2567,6 +2585,7 @@ async function openCompanyProfile(secCode) {
     if (!secCode) return;
     const body = document.getElementById('modal-body');
     const modal = document.getElementById('detail-modal');
+    if (!body || !modal) return;
     currentModalDocId = null;
     body.innerHTML = '<div class="stock-loading">企業プロフィール読み込み中...</div>';
     modal.classList.remove('hidden');
@@ -3275,6 +3294,9 @@ async function loadAnalytics() {
             fetch('/api/analytics/sectors'),
             fetch(`/api/analytics/movements?date=${state.selectedDate}`),
         ]);
+        if (!rankingsResp.ok || !sectorsResp.ok || !movementsResp.ok) {
+            throw new Error('Analytics API returned non-OK status');
+        }
         const rankings = await rankingsResp.json();
         const sectors = await sectorsResp.json();
         const movements = await movementsResp.json();
@@ -3437,7 +3459,7 @@ function renderSectors(data) {
 
         if (!data.sectors || data.sectors.length === 0) {
             container.innerHTML = '<div class="summary-empty">データなし</div>';
-            return;
+            continue;
         }
 
         const maxCount = Math.max(...data.sectors.map(s => s.filing_count));
