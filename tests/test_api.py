@@ -170,7 +170,7 @@ class TestFilingsAPI:
     async def test_get_filing_not_found(self, client):
         resp = await client.get("/api/filings/NONEXISTENT")
         assert resp.status_code == 404
-        assert resp.json()["error"] == "Filing not found"
+        assert resp.json()["error"] == "書類が見つかりません"
 
     @pytest.mark.asyncio
     async def test_filter_by_invalid_date(self, client):
@@ -353,7 +353,7 @@ class TestPollEndpoint:
 
         resp2 = await client.post("/api/poll")
         assert resp2.status_code == 429
-        assert "Rate limited" in resp2.json()["error"]
+        assert "レート制限" in resp2.json()["error"]
 
 
 class TestPDFProxyEndpoint:
@@ -377,7 +377,7 @@ class TestPDFProxyEndpoint:
         """Should reject doc IDs with non-alphanumeric characters."""
         resp = await client.get("/api/documents/bad-id!/pdf")
         assert resp.status_code == 400
-        assert "Invalid" in resp.json()["error"]
+        assert "無効な書類ID" in resp.json()["error"]
 
     @pytest.mark.asyncio
     async def test_pdf_proxy_disclosure2dl_with_leading_whitespace(self, client):
