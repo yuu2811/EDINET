@@ -95,18 +95,19 @@ function showToast(message, type = 'error') {
     if (!container) {
         container = document.createElement('div');
         container.id = 'toast-container';
-        container.style.cssText = 'position:fixed;top:12px;right:12px;z-index:10000;display:flex;flex-direction:column;gap:8px;pointer-events:none;';
         document.body.appendChild(container);
     }
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.style.cssText = 'padding:10px 16px;border-radius:6px;font-size:13px;font-family:monospace;color:#fff;opacity:0;transition:opacity 0.3s;max-width:320px;pointer-events:auto;' +
-        (type === 'error' ? 'background:rgba(255,23,68,0.92);border:1px solid rgba(255,23,68,0.5);' : 'background:rgba(0,230,118,0.92);border:1px solid rgba(0,230,118,0.5);');
     toast.textContent = message;
     container.appendChild(toast);
-    requestAnimationFrame(() => { toast.style.opacity = '1'; });
+    // Trigger slide-in animation
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => { toast.classList.add('toast-visible'); });
+    });
     setTimeout(() => {
-        toast.style.opacity = '0';
+        toast.classList.remove('toast-visible');
+        toast.classList.add('toast-exit');
         setTimeout(() => toast.remove(), 300);
     }, 4000);
 }
@@ -757,12 +758,24 @@ function renderFeed() {
     _filteredFilings = filtered;
 
     if (filtered.length === 0) {
-        const emptyMsg = state.searchQuery
-            ? '検索条件に一致する報告書がありません'
-            : '報告書が見つかりません';
+        let emptyIcon = '&#128196;';
+        let emptyMsg = '報告書が見つかりません';
+        let emptyHint = '';
+        if (state.searchQuery) {
+            emptyMsg = `「${escapeHtml(state.searchQuery)}」に一致する報告書がありません`;
+            emptyHint = '<div class="empty-hint">検索条件を変更してください</div>';
+        } else if (state.filterMode !== 'all') {
+            emptyMsg = 'この条件に一致する報告書がありません';
+            emptyHint = '<div class="empty-hint">フィルターを「すべて」に変更してください</div>';
+        } else if (state.filings.length === 0) {
+            emptyIcon = '&#8987;';
+            emptyMsg = 'この日のデータはまだ取得されていません';
+            emptyHint = '<div class="empty-hint">FETCHボタンで取得できます</div>';
+        }
         container.innerHTML = `<div class="feed-empty">
-            <div class="empty-icon">&#128196;</div>
+            <div class="empty-icon">${emptyIcon}</div>
             <div class="empty-text">${emptyMsg}</div>
+            ${emptyHint}
         </div>`;
         return;
     }
@@ -1235,15 +1248,16 @@ function createMobileFeedCard(f) {
 
 function renderStats() {
     const s = state.stats;
-    document.getElementById('stat-total').textContent = s.today_total ?? '-';
+    const fmt = v => v != null ? Number(v).toLocaleString() : '-';
+    document.getElementById('stat-total').textContent = fmt(s.today_total);
     // Update header filing count badges (desktop + mobile)
     const badge = document.getElementById('filing-count-badge');
-    if (badge) badge.textContent = s.today_total ?? '0';
+    if (badge) badge.textContent = fmt(s.today_total);
     const badgeMobile = document.getElementById('filing-count-badge-mobile');
-    if (badgeMobile) badgeMobile.textContent = s.today_total ?? '0';
-    document.getElementById('stat-new').textContent = s.today_new_reports ?? '-';
-    document.getElementById('stat-amendments').textContent = s.today_amendments ?? '-';
-    document.getElementById('stat-clients').textContent = s.connected_clients ?? '-';
+    if (badgeMobile) badgeMobile.textContent = fmt(s.today_total);
+    document.getElementById('stat-new').textContent = fmt(s.today_new_reports);
+    document.getElementById('stat-amendments').textContent = fmt(s.today_amendments);
+    document.getElementById('stat-clients').textContent = fmt(s.connected_clients);
 
     // Update panel title to show the selected date
     const isToday = state.selectedDate === toLocalDateStr(new Date());
@@ -1683,7 +1697,7 @@ function renderStockChart(canvas, prices, options = {}) {
 
         // Price label
         const price = maxPrice - (maxPrice - minPrice) * (i / gridLines);
-        ctx.fillStyle = '#707088';
+        ctx.fillStyle = '#8a8aa8';
         ctx.font = '10px monospace';
         ctx.textAlign = 'left';
         ctx.fillText(price.toFixed(0), W - padding.right + 5, y + 3);
@@ -1756,7 +1770,7 @@ function renderStockChart(canvas, prices, options = {}) {
     }
 
     // Date labels (show every ~3 months)
-    ctx.fillStyle = '#707088';
+    ctx.fillStyle = '#8a8aa8';
     ctx.font = '9px monospace';
     ctx.textAlign = 'center';
     let lastMonth = '';

@@ -34,6 +34,9 @@
     --blue: #448aff;
     --purple: #b388ff;
     --yellow: #ffea00;
+    --green-bright: #50ffaa;
+    --red-bright: #ff5577;
+    --cyan-bright: #50e8ff;
 
     --font-mono: 'SF Mono', 'Cascadia Code', 'Consolas', 'Monaco', 'Menlo', monospace;
     --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
@@ -78,7 +81,7 @@ body {
     font-size: var(--font-size-md);
     background: var(--bg-primary);
     color: var(--text-primary);
-    line-height: 1.4;
+    line-height: 1.5;
     overflow: hidden;
     height: 100vh;
     display: flex;
@@ -191,7 +194,7 @@ body {
 
 .poll-countdown {
     font-size: 10px;
-    color: #707088;
+    color: var(--text-dim);
     font-variant-numeric: tabular-nums;
 }
 
@@ -463,8 +466,14 @@ body {
     transition: border-color var(--duration-fast) ease;
 }
 
+.filter-select:hover {
+    border-color: var(--border-accent);
+    background: var(--bg-card);
+}
+
 .filter-select:focus {
     border-color: var(--cyan);
+    box-shadow: 0 0 0 2px rgba(24, 208, 232, 0.08);
 }
 
 .feed-list {
@@ -696,9 +705,9 @@ body {
     text-decoration: underline;
 }
 .filer-link.positive { color: var(--green); }
-.filer-link.positive:hover { color: #50ffaa; }
+.filer-link.positive:hover { color: var(--green-bright); }
 .filer-link.negative { color: var(--red); }
-.filer-link.negative:hover { color: #ff5577; }
+.filer-link.negative:hover { color: var(--red-bright); }
 
 .card-main {
     margin-bottom: 4px;
@@ -720,6 +729,10 @@ body {
     color: var(--cyan);
     font-weight: bold;
     text-shadow: 0 0 16px rgba(24, 208, 232, 0.15);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 300px;
 }
 
 .card-desc {
@@ -784,11 +797,14 @@ body {
     font-size: var(--font-size-xs);
     color: var(--cyan-dim);
     text-decoration: none;
-    padding: 2px 8px;
+    padding: 4px 10px;
     border: 1px solid var(--border-primary);
     border-radius: var(--radius-sm);
     transition: all var(--duration-fast) ease;
     background: var(--bg-primary);
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
 }
 
 .card-link:hover {
@@ -958,10 +974,11 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px 10px;
+    padding: 8px 10px;
     border-bottom: 1px solid var(--border-primary);
     font-size: var(--font-size-sm);
     transition: all var(--duration-fast) ease;
+    border-radius: var(--radius-sm);
 }
 
 .watch-item:hover {
@@ -977,6 +994,10 @@ body {
 
 .watch-name {
     color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 180px;
 }
 
 .watch-code {
@@ -990,8 +1011,13 @@ body {
     color: var(--text-dim);
     cursor: pointer;
     font-size: var(--font-size-sm);
-    padding: 2px 6px;
-    border-radius: 2px;
+    padding: 4px 8px;
+    min-width: 28px;
+    min-height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
     transition: all 0.15s;
 }
 
@@ -1022,10 +1048,11 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 5px 10px;
+    padding: 6px 10px;
     font-size: var(--font-size-sm);
     border-bottom: 1px solid rgba(30, 30, 52, 0.5);
     transition: all var(--duration-fast) ease;
+    border-radius: var(--radius-sm);
 }
 
 .filer-row:hover {
@@ -1052,9 +1079,9 @@ body {
     text-decoration: underline;
 }
 .filer-link.positive { color: var(--green); }
-.filer-link.positive:hover { color: #50ffaa; }
+.filer-link.positive:hover { color: var(--green-bright); }
 .filer-link.negative { color: var(--red); }
-.filer-link.negative:hover { color: #ff5577; }
+.filer-link.negative:hover { color: var(--red-bright); }
 
 .filer-count {
     color: var(--amber);
@@ -1199,7 +1226,7 @@ body {
 
 .detail-value a:hover {
     text-decoration: underline;
-    color: #50e8ff;
+    color: var(--cyan-bright);
 }
 
 .detail-value.large {
@@ -2336,9 +2363,10 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 5px 8px;
+    padding: 6px 10px;
     border-bottom: 1px solid rgba(30, 30, 52, 0.5);
     transition: background var(--duration-fast) ease;
+    border-radius: var(--radius-sm);
 }
 
 .summary-row:last-child {
@@ -2405,7 +2433,7 @@ body {
 }
 
 .summary-empty {
-    color: #707088;
+    color: var(--text-dim);
     text-align: center;
     padding: 16px 10px;
     font-size: 11px;
@@ -3736,19 +3764,242 @@ body {
     .status-dot { animation: none !important; }
 }
 
-/* Toast notification styling */
-#toast-container {
-    z-index: 10000;
+/* ==========================================================================
+   UI Polish — Button States, Focus, Touch Targets
+   ========================================================================== */
+
+/* Disabled button states */
+.btn-icon:disabled,
+.btn-small:disabled,
+.date-nav-btn:disabled,
+.dialog-btn:disabled,
+.btn-batch-retry:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+    pointer-events: none;
+    filter: grayscale(0.3);
 }
 
-/* Keyboard shortcut hint (shown on hover over date nav) */
-.keyboard-hint {
-    font-size: 9px;
-    color: var(--text-dim);
-    opacity: 0;
-    transition: opacity 0.2s;
+/* Focus-visible for card-like elements */
+.feed-card:focus-visible,
+.watch-item:focus-visible,
+.filer-row:focus-visible,
+.summary-row:focus-visible {
+    outline: 2px solid var(--cyan);
+    outline-offset: -2px;
+    background: var(--bg-card-hover);
+}
+
+/* Mobile touch target minimum */
+@media (max-width: 480px) {
+    .btn-icon,
+    .btn-small,
+    .card-link,
+    .watch-delete,
+    .date-nav-btn {
+        min-height: 36px;
+        min-width: 36px;
+    }
+}
+
+/* ==========================================================================
+   UI Polish — Toast Notification
+   ========================================================================== */
+
+#toast-container {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
     pointer-events: none;
 }
-.date-nav:hover .keyboard-hint {
+
+.toast {
+    padding: 12px 18px;
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    font-family: var(--font-mono);
+    color: #fff;
+    max-width: 340px;
+    pointer-events: auto;
+    transform: translateX(20px);
+    opacity: 0;
+    transition: all 0.3s var(--ease-out);
+    box-shadow: var(--shadow-md);
+}
+
+.toast.toast-visible {
+    transform: translateX(0);
     opacity: 1;
+}
+
+.toast.toast-exit {
+    transform: translateX(20px);
+    opacity: 0;
+}
+
+.toast-error {
+    background: rgba(255, 23, 68, 0.95);
+    border: 1px solid rgba(255, 23, 68, 0.4);
+}
+
+.toast-success {
+    background: rgba(0, 230, 118, 0.95);
+    border: 1px solid rgba(0, 230, 118, 0.4);
+}
+
+/* ==========================================================================
+   UI Polish — Scrollbar Consistency
+   ========================================================================== */
+
+.watchlist-items,
+.modal-body,
+.overlay-body,
+.top-filers-list {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-accent) transparent;
+}
+
+.watchlist-items::-webkit-scrollbar,
+.modal-body::-webkit-scrollbar,
+.overlay-body::-webkit-scrollbar,
+.top-filers-list::-webkit-scrollbar {
+    width: 5px;
+}
+
+.watchlist-items::-webkit-scrollbar-track,
+.modal-body::-webkit-scrollbar-track,
+.overlay-body::-webkit-scrollbar-track,
+.top-filers-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.watchlist-items::-webkit-scrollbar-thumb,
+.modal-body::-webkit-scrollbar-thumb,
+.overlay-body::-webkit-scrollbar-thumb,
+.top-filers-list::-webkit-scrollbar-thumb {
+    background: var(--border-accent);
+    border-radius: 4px;
+}
+
+/* ==========================================================================
+   UI Polish — Click Feedback & Micro-interactions
+   ========================================================================== */
+
+/* Scale-down feedback on tap for mobile cards */
+.m-card:active,
+.feed-card:active {
+    transform: scale(0.99);
+}
+
+/* Stat item subtle lift on hover */
+.stat-item {
+    transition: all var(--duration-fast) ease;
+}
+
+.stat-item:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+}
+
+/* Fade-in animation for loaded content */
+@keyframes fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.feed-card,
+.m-card {
+    animation: fade-in 0.2s var(--ease-out) both;
+}
+
+/* Stagger cards slightly for visual flow */
+.feed-card:nth-child(n+2),
+.m-card:nth-child(n+2) {
+    animation-delay: 0.02s;
+}
+
+.feed-card:nth-child(n+4),
+.m-card:nth-child(n+4) {
+    animation-delay: 0.04s;
+}
+
+/* Modal body text line height for readability */
+.modal-body {
+    line-height: 1.6;
+}
+
+.detail-row {
+    line-height: 1.6;
+}
+
+/* ==========================================================================
+   UI Polish — Empty States Consistency
+   ========================================================================== */
+
+.feed-empty,
+.watchlist-empty,
+.filers-empty,
+.summary-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 32px 20px;
+}
+
+.feed-empty .empty-icon,
+.watchlist-empty .empty-icon {
+    font-size: 32px;
+    opacity: 0.35;
+    line-height: 1;
+}
+
+.feed-empty .empty-text,
+.watchlist-empty .empty-text,
+.filers-empty,
+.summary-empty {
+    color: var(--text-dim);
+    font-size: var(--font-size-sm);
+    line-height: 1.6;
+    font-family: var(--font-ui);
+}
+
+.empty-hint {
+    color: var(--text-dim);
+    font-size: var(--font-size-xs);
+    opacity: 0.7;
+    font-family: var(--font-ui);
+}
+
+/* Loading pulse for empty state spinner */
+@keyframes pulse-soft {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 0.8; }
+}
+
+.feed-empty .empty-icon[style*="animation"] {
+    animation: pulse-soft 1.5s ease-in-out infinite !important;
+}
+
+/* ==========================================================================
+   UI Polish — Mobile Letter Spacing
+   ========================================================================== */
+
+@media (max-width: 480px) {
+    .panel-title {
+        letter-spacing: 0.8px;
+    }
+
+    .mobile-bottom-nav .nav-label {
+        letter-spacing: 0;
+    }
+
+    /* Tighter feed controls on small screens */
+    .search-input {
+        max-width: 140px;
+    }
 }
