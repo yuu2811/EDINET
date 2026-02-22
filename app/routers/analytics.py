@@ -2,10 +2,10 @@
 
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Query
-from sqlalchemy import desc, func, select
+from fastapi import APIRouter, HTTPException, Path, Query
+from sqlalchemy import asc, desc, func, select
 
-from app.deps import get_async_session, normalize_sec_code
+from app.deps import get_async_session, normalize_sec_code, validate_sec_code
 from app.models import Filing
 
 router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
@@ -367,3 +367,152 @@ async def sector_breakdown() -> dict:
             })
 
         return {"sectors": sectors}
+
+
+# ---------------------------------------------------------------------------
+# Filer Profile
+# ---------------------------------------------------------------------------
+
+@router.get("/filer/{edinet_code}")
+async def filer_profile(
+    edinet_code: str = Path(..., description="Filer EDINET code (e.g. E12345)"),
+) -> dict:
+    """Return a filer's full history, target companies, and activity summary."""
+    async with get_async_session()() as session:
+        # All filings by this filer
+        result = await session.execute(
+            select(Filing)
+            .where(Filing.edinet_code == edinet_code)
+            .order_by(desc(Filing.submit_date_time))
+            .limit(200)
+        )
+        filings = result.scalars().all()
+
+        if not filings:
+            raise HTTPException(status_code=404, detail="Filer not found")
+
+        filer_name = filings[0].filer_name or filings[0].holder_name or edinet_code
+
+        # Target companies with latest ratio
+        targets: dict[str, dict] = {}
+        for f in filings:
+            key = f.target_sec_code or f.target_company_name or f.doc_id
+            if key not in targets:
+                targets[key] = {
+                    "company_name": f.target_company_name,
+                    "sec_code": f.target_sec_code,
+                    "latest_ratio": f.holding_ratio,
+                    "latest_date": f.submit_date_time,
+                    "filing_count": 0,
+                    "history": [],
+                }
+            targets[key]["filing_count"] += 1
+            if f.holding_ratio is not None:
+                targets[key]["history"].append({
+                    "date": f.submit_date_time,
+                    "ratio": f.holding_ratio,
+                    "previous_ratio": f.previous_holding_ratio,
+                })
+
+        # Sort targets by filing count descending
+        sorted_targets = sorted(targets.values(), key=lambda t: -t["filing_count"])
+
+        # Activity summary
+        total_filings = len(filings)
+        ratios = [f.holding_ratio for f in filings if f.holding_ratio is not None]
+        avg_ratio = round(sum(ratios) / len(ratios), 2) if ratios else None
+        unique_targets = len(targets)
+
+        # Date range
+        dates = [f.submit_date_time for f in filings if f.submit_date_time]
+        first_date = min(dates) if dates else None
+        last_date = max(dates) if dates else None
+
+        return {
+            "edinet_code": edinet_code,
+            "filer_name": filer_name,
+            "summary": {
+                "total_filings": total_filings,
+                "unique_targets": unique_targets,
+                "avg_holding_ratio": avg_ratio,
+                "first_filing": first_date,
+                "last_filing": last_date,
+            },
+            "targets": sorted_targets,
+            "recent_filings": [f.to_dict() for f in filings[:20]],
+        }
+
+
+# ---------------------------------------------------------------------------
+# Company Profile
+# ---------------------------------------------------------------------------
+
+@router.get("/company/{sec_code}")
+async def company_profile(
+    sec_code: str = Path(..., description="Securities code (4 or 5 digit)"),
+) -> dict:
+    """Return all large shareholding data for a specific company."""
+    normalized = validate_sec_code(sec_code)
+    # Match both 4-digit and 5-digit (with trailing 0) sec codes
+    codes = [normalized, normalized + "0"]
+
+    async with get_async_session()() as session:
+        result = await session.execute(
+            select(Filing)
+            .where(
+                (Filing.target_sec_code.in_(codes))
+                | (Filing.sec_code.in_(codes))
+            )
+            .order_by(desc(Filing.submit_date_time))
+            .limit(200)
+        )
+        filings = result.scalars().all()
+
+        if not filings:
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        company_name = None
+        for f in filings:
+            if f.target_company_name:
+                company_name = f.target_company_name
+                break
+
+        # Major holders with latest data
+        holders: dict[str, dict] = {}
+        for f in filings:
+            key = f.edinet_code or f.filer_name or f.doc_id
+            if key not in holders:
+                holders[key] = {
+                    "filer_name": f.holder_name or f.filer_name,
+                    "edinet_code": f.edinet_code,
+                    "latest_ratio": f.holding_ratio,
+                    "latest_date": f.submit_date_time,
+                    "filing_count": 0,
+                    "history": [],
+                }
+            holders[key]["filing_count"] += 1
+            if f.holding_ratio is not None:
+                holders[key]["history"].append({
+                    "date": f.submit_date_time,
+                    "ratio": f.holding_ratio,
+                    "previous_ratio": f.previous_holding_ratio,
+                })
+
+        # Sort by latest ratio descending
+        sorted_holders = sorted(
+            holders.values(),
+            key=lambda h: h["latest_ratio"] if h["latest_ratio"] is not None else -1,
+            reverse=True,
+        )
+
+        sector = _sec_code_to_sector(normalized)
+
+        return {
+            "sec_code": normalized,
+            "company_name": company_name,
+            "sector": sector,
+            "holder_count": len(holders),
+            "total_filings": len(filings),
+            "holders": sorted_holders,
+            "recent_filings": [f.to_dict() for f in filings[:20]],
+        }

@@ -670,6 +670,14 @@ body {
     box-shadow: 0 1px 4px rgba(179, 136, 255, 0.2);
 }
 
+.badge-english {
+    background: linear-gradient(135deg, #1565c0 0%, var(--blue) 100%);
+    color: #fff;
+    margin-left: 4px;
+    font-size: 9px;
+    letter-spacing: 0.5px;
+}
+
 .card-main {
     margin-bottom: 4px;
 }
@@ -1745,6 +1753,7 @@ body {
     .m-badge-change { background: var(--amber-dim); }
     .m-badge-amend { background: #8855dd; }
     .m-badge-watch { background: var(--purple); margin-left: 1px; }
+    .m-badge-english { background: var(--blue); margin-left: 1px; font-size: 8px; }
 
     .m-target {
         font-size: 12px;
@@ -2746,6 +2755,64 @@ body {
 @keyframes pulse {
     0%, 100% { opacity: 0.4; }
     50% { opacity: 1; }
+}
+
+/* Profile views (filer / company) */
+.profile-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-primary);
+    margin-bottom: 12px;
+}
+.profile-name {
+    font-size: var(--font-size-xl);
+    font-weight: 800;
+    color: var(--amber);
+    font-family: var(--font-mono);
+}
+.profile-meta {
+    font-size: var(--font-size-sm);
+    color: var(--text-dim);
+    margin-top: 4px;
+}
+.profile-stats {
+    display: flex;
+    gap: 16px;
+    padding: 8px 16px;
+    margin-bottom: 8px;
+}
+.profile-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 70px;
+    padding: 8px 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+}
+.profile-stat-value {
+    font-size: var(--font-size-lg);
+    font-weight: 800;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+}
+.profile-stat-label {
+    font-size: var(--font-size-xs);
+    color: var(--text-dim);
+    margin-top: 2px;
+}
+.profile-period {
+    font-size: var(--font-size-xs);
+    color: var(--text-dim);
+    padding: 0 16px 8px;
+}
+.profile-section-title {
+    font-size: var(--font-size-md);
+    font-weight: 700;
+    color: var(--amber);
+    padding: 8px 16px 4px;
+    border-top: 1px solid var(--border-primary);
+    margin-top: 8px;
 }
 
 .stock-no-data {

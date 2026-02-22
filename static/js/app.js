@@ -815,6 +815,10 @@ function createFeedCard(f) {
         badge += '<span class="card-badge badge-special">特例</span>';
     }
 
+    if (f.english_doc_flag) {
+        badge += '<span class="card-badge badge-english">EN</span>';
+    }
+
     // Watchlist match badge
     if (isWatchlistMatch(f)) {
         badge += '<span class="card-badge badge-watchlist">WATCH</span>';
@@ -958,6 +962,9 @@ function createMobileFeedCard(f) {
         badge = '<span class="m-badge m-badge-change">変更</span>';
     } else {
         badge = '<span class="m-badge m-badge-new">新規</span>';
+    }
+    if (f.english_doc_flag) {
+        badge += '<span class="m-badge m-badge-english">EN</span>';
     }
     if (isWatchlistMatch(f)) {
         badge += '<span class="m-badge m-badge-watch">&#9733;</span>';
@@ -1921,6 +1928,38 @@ async function retryXbrl(docId) {
     }
 }
 
+function exportFilingsCSV() {
+    const filings = state.filings;
+    if (!filings || filings.length === 0) return;
+
+    const headers = ['提出日時','提出者','対象企業','証券コード','保有割合(%)','前回保有割合(%)','変動(%)','保有株数','保有目的','書類種別','書類ID'];
+    const rows = filings.map(f => [
+        f.submit_date_time || '',
+        f.holder_name || f.filer_name || '',
+        f.target_company_name || '',
+        f.target_sec_code || f.sec_code || '',
+        f.holding_ratio != null ? f.holding_ratio : '',
+        f.previous_holding_ratio != null ? f.previous_holding_ratio : '',
+        f.ratio_change != null ? f.ratio_change : '',
+        f.shares_held != null ? f.shares_held : '',
+        f.purpose_of_holding || '',
+        f.doc_description || '',
+        f.doc_id || '',
+    ]);
+
+    const csvContent = '\uFEFF' + [headers, ...rows].map(r =>
+        r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')
+    ).join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `edinet_filings_${state.selectedDate}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
 async function batchRetryXbrl() {
     const btn = document.getElementById('btn-batch-retry');
     if (!btn) return;
@@ -1950,19 +1989,32 @@ function openModal(filing) {
     currentModalDocId = filing.doc_id;
     const body = document.getElementById('modal-body');
 
+    // Clickable filer name -> filer profile
+    const filerDisplay = filing.edinet_code
+        ? { html: `<span class="detail-value"><a href="#" onclick="event.preventDefault();openFilerProfile('${escapeHtml(filing.edinet_code)}')">${escapeHtml(filing.filer_name || '-')}</a></span>` }
+        : (filing.filer_name || '-');
+
     const rows = [
         ['書類ID', filing.doc_id],
         ['書類種別', filing.doc_description || '-'],
         ['提出日時', filing.submit_date_time || '-'],
-        ['提出者', filing.filer_name || '-'],
+        ['提出者', filerDisplay],
     ];
     if (filing.holder_name && filing.holder_name !== filing.filer_name) {
         rows.push(['報告者 (XBRL)', filing.holder_name]);
     }
+
+    // Clickable target company -> company profile
+    const targetName = filing.target_company_name || extractTargetFromDescription(filing.doc_description) || '-';
+    const targetSecCode = filing.target_sec_code || filing.sec_code;
+    const targetDisplay = targetSecCode
+        ? { html: `<span class="detail-value"><a href="#" onclick="event.preventDefault();openCompanyProfile('${escapeHtml(targetSecCode)}')">${escapeHtml(targetName)}</a></span>` }
+        : targetName;
+
     rows.push(
         ['EDINET コード', filing.edinet_code || '-'],
-        ['対象会社', filing.target_company_name || extractTargetFromDescription(filing.doc_description) || '-'],
-        ['対象証券コード', filing.target_sec_code || filing.sec_code || '-'],
+        ['対象会社', targetDisplay],
+        ['対象証券コード', targetSecCode || '-'],
     );
 
     // Visual ratio gauge section with before/after comparison
@@ -2068,10 +2120,22 @@ function openModal(filing) {
         }
     }
 
+    // Amendment → original link
+    if (filing.is_amendment && filing.parent_doc_id) {
+        const parentUrl = `https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?${filing.parent_doc_id},,,`;
+        rows.push(['原本書類', {
+            html: `<span class="detail-value"><a href="${parentUrl}" target="_blank" rel="noopener" class="parent-doc-link">${escapeHtml(filing.parent_doc_id)}</a>
+                <a href="/api/documents/${escapeHtml(filing.parent_doc_id)}/pdf" target="_blank" rel="noopener" class="card-link" style="margin-left:8px">原本PDF</a></span>`,
+        }]);
+    }
+
     // Links
     const links = [];
     if (filing.pdf_url) {
         links.push(`<a href="${filing.pdf_url}" target="_blank" rel="noopener">PDF ダウンロード</a>`);
+    }
+    if (filing.english_doc_flag && filing.edinet_url) {
+        links.push(`<a href="${filing.edinet_url}" target="_blank" rel="noopener">英文書類 (EDINET)</a>`);
     }
     if (filing.edinet_url) {
         links.push(`<a href="${filing.edinet_url}" target="_blank" rel="noopener">EDINET で閲覧</a>`);
@@ -2176,6 +2240,144 @@ function openModal(filing) {
 function closeModal() {
     currentModalDocId = null;
     document.getElementById('detail-modal').classList.add('hidden');
+}
+
+// ---------------------------------------------------------------------------
+// Profile Views (Filer / Company)
+// ---------------------------------------------------------------------------
+
+async function openFilerProfile(edinetCode) {
+    if (!edinetCode) return;
+    const body = document.getElementById('modal-body');
+    const modal = document.getElementById('detail-modal');
+    currentModalDocId = null;
+    body.innerHTML = '<div class="stock-loading">提出者プロフィール読み込み中...</div>';
+    modal.classList.remove('hidden');
+
+    try {
+        const resp = await fetch(`/api/analytics/filer/${encodeURIComponent(edinetCode)}`);
+        if (!resp.ok) { body.innerHTML = '<div class="stock-no-data">提出者データが見つかりません</div>'; return; }
+        const data = await resp.json();
+
+        let html = `<div class="profile-header">
+            <div class="profile-name">${escapeHtml(data.filer_name)}</div>
+            <div class="profile-meta">${escapeHtml(data.edinet_code)}</div>
+        </div>`;
+
+        // Summary stats
+        const s = data.summary;
+        html += `<div class="profile-stats">
+            <div class="profile-stat"><span class="profile-stat-value">${s.total_filings}</span><span class="profile-stat-label">提出件数</span></div>
+            <div class="profile-stat"><span class="profile-stat-value">${s.unique_targets}</span><span class="profile-stat-label">対象企業数</span></div>
+            <div class="profile-stat"><span class="profile-stat-value">${s.avg_holding_ratio != null ? s.avg_holding_ratio + '%' : '-'}</span><span class="profile-stat-label">平均保有割合</span></div>
+        </div>`;
+        if (s.first_filing && s.last_filing) {
+            html += `<div class="profile-period">${escapeHtml(s.first_filing.slice(0,10))} 〜 ${escapeHtml(s.last_filing.slice(0,10))}</div>`;
+        }
+
+        // Target companies table
+        if (data.targets && data.targets.length > 0) {
+            html += `<div class="profile-section-title">保有銘柄一覧</div>`;
+            html += '<div class="feed-table-wrapper"><table class="feed-table"><thead><tr><th>対象企業</th><th>コード</th><th>最新割合</th><th>件数</th><th>推移</th></tr></thead><tbody>';
+            for (const t of data.targets) {
+                const ratio = t.latest_ratio != null ? t.latest_ratio.toFixed(2) + '%' : '-';
+                // Mini sparkline from history
+                let trend = '';
+                if (t.history && t.history.length >= 2) {
+                    const pts = t.history.slice().reverse().slice(-10);
+                    const vals = pts.map(p => p.ratio);
+                    trend = miniSparkline(vals);
+                }
+                const nameLink = t.sec_code
+                    ? `<a href="#" onclick="event.preventDefault();openCompanyProfile('${escapeHtml(t.sec_code)}')">${escapeHtml(t.company_name || '不明')}</a>`
+                    : escapeHtml(t.company_name || '不明');
+                html += `<tr>
+                    <td>${nameLink}</td>
+                    <td>${escapeHtml(t.sec_code || '-')}</td>
+                    <td>${ratio}</td>
+                    <td>${t.filing_count}</td>
+                    <td>${trend}</td>
+                </tr>`;
+            }
+            html += '</tbody></table></div>';
+        }
+
+        body.innerHTML = html;
+    } catch (e) {
+        console.error('Filer profile error:', e);
+        body.innerHTML = '<div class="stock-no-data">プロフィールの読み込みに失敗しました</div>';
+    }
+}
+
+async function openCompanyProfile(secCode) {
+    if (!secCode) return;
+    const body = document.getElementById('modal-body');
+    const modal = document.getElementById('detail-modal');
+    currentModalDocId = null;
+    body.innerHTML = '<div class="stock-loading">企業プロフィール読み込み中...</div>';
+    modal.classList.remove('hidden');
+
+    try {
+        const resp = await fetch(`/api/analytics/company/${encodeURIComponent(secCode)}`);
+        if (!resp.ok) { body.innerHTML = '<div class="stock-no-data">企業データが見つかりません</div>'; return; }
+        const data = await resp.json();
+
+        let html = `<div class="profile-header">
+            <div class="profile-name">${escapeHtml(data.company_name || secCode)}</div>
+            <div class="profile-meta">[${escapeHtml(data.sec_code)}] ${escapeHtml(data.sector || '')}</div>
+        </div>`;
+
+        html += `<div class="profile-stats">
+            <div class="profile-stat"><span class="profile-stat-value">${data.holder_count}</span><span class="profile-stat-label">大量保有者数</span></div>
+            <div class="profile-stat"><span class="profile-stat-value">${data.total_filings}</span><span class="profile-stat-label">報告件数</span></div>
+        </div>`;
+
+        // Holders table
+        if (data.holders && data.holders.length > 0) {
+            html += `<div class="profile-section-title">大量保有者一覧</div>`;
+            html += '<div class="feed-table-wrapper"><table class="feed-table"><thead><tr><th>保有者</th><th>最新割合</th><th>件数</th><th>推移</th></tr></thead><tbody>';
+            for (const h of data.holders) {
+                const ratio = h.latest_ratio != null ? h.latest_ratio.toFixed(2) + '%' : '-';
+                let trend = '';
+                if (h.history && h.history.length >= 2) {
+                    const pts = h.history.slice().reverse().slice(-10);
+                    const vals = pts.map(p => p.ratio);
+                    trend = miniSparkline(vals);
+                }
+                const nameLink = h.edinet_code
+                    ? `<a href="#" onclick="event.preventDefault();openFilerProfile('${escapeHtml(h.edinet_code)}')">${escapeHtml(h.filer_name || '不明')}</a>`
+                    : escapeHtml(h.filer_name || '不明');
+                html += `<tr>
+                    <td>${nameLink}</td>
+                    <td>${ratio}</td>
+                    <td>${h.filing_count}</td>
+                    <td>${trend}</td>
+                </tr>`;
+            }
+            html += '</tbody></table></div>';
+        }
+
+        body.innerHTML = html;
+    } catch (e) {
+        console.error('Company profile error:', e);
+        body.innerHTML = '<div class="stock-no-data">プロフィールの読み込みに失敗しました</div>';
+    }
+}
+
+/** Generate an inline SVG sparkline from an array of numbers. */
+function miniSparkline(values) {
+    if (!values || values.length < 2) return '';
+    const w = 80, h = 20, pad = 2;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min || 1;
+    const points = values.map((v, i) => {
+        const x = pad + (i / (values.length - 1)) * (w - 2 * pad);
+        const y = h - pad - ((v - min) / range) * (h - 2 * pad);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    const color = values[values.length - 1] >= values[0] ? 'var(--green)' : 'var(--red)';
+    return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="vertical-align:middle"><polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 }
 
 // ---------------------------------------------------------------------------
