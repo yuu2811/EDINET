@@ -4,6 +4,18 @@
  */
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Format a Date object as YYYY-MM-DD in **local** time (not UTC). */
+function toLocalDateStr(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
@@ -18,7 +30,7 @@ const state = {
     filterMode: 'all', // all | new | change | amendment
     sortMode: 'time-desc',
     viewMode: 'cards', // cards | table
-    selectedDate: new Date().toISOString().slice(0, 10), // YYYY-MM-DD
+    selectedDate: toLocalDateStr(new Date()), // YYYY-MM-DD
 };
 
 let eventSource = null;
@@ -1062,7 +1074,7 @@ function renderStats() {
     document.getElementById('stat-clients').textContent = s.connected_clients ?? '-';
 
     // Update panel title to show the selected date
-    const isToday = state.selectedDate === new Date().toISOString().slice(0, 10);
+    const isToday = state.selectedDate === toLocalDateStr(new Date());
     const statsTitle = document.querySelector('#stats-panel .panel-title');
     if (statsTitle) {
         statsTitle.textContent = isToday ? 'TODAY' : state.selectedDate;
@@ -2662,7 +2674,7 @@ function initDateNav() {
     if (!picker) return;
 
     picker.value = state.selectedDate;
-    picker.max = new Date().toISOString().slice(0, 10);
+    picker.max = toLocalDateStr(new Date());
 
     picker.addEventListener('change', (e) => {
         state.selectedDate = e.target.value;
@@ -2674,7 +2686,7 @@ function initDateNav() {
     nextBtn.addEventListener('click', () => navigateDate(1));
 
     todayBtn.addEventListener('click', () => {
-        state.selectedDate = new Date().toISOString().slice(0, 10);
+        state.selectedDate = toLocalDateStr(new Date());
         picker.value = state.selectedDate;
         loadFilings();
         loadStats();
@@ -2709,7 +2721,7 @@ function navigateDate(days) {
     today.setHours(0, 0, 0, 0);
     if (d > today) return;
 
-    state.selectedDate = d.toISOString().slice(0, 10);
+    state.selectedDate = toLocalDateStr(d);
     document.getElementById('date-picker').value = state.selectedDate;
     loadFilings();
     loadStats();
