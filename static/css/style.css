@@ -18,7 +18,7 @@
 
     --text-primary: #e8e8f0;
     --text-secondary: #a0a0b8;
-    --text-dim: #707088;
+    --text-dim: #8a8aa8;
 
     --amber: #ffab00;
     --amber-dim: #c67c00;
@@ -3718,4 +3718,37 @@ body {
     background: linear-gradient(90deg, var(--accent-amber, #ffa500), var(--green, #00e676));
     border-radius: 2px;
     transition: width 0.3s ease;
+}
+
+/* ==========================================================================
+   Accessibility & UX Enhancements
+   ========================================================================== */
+
+/* L3: Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+    .ticker-text { animation: none !important; }
+    .status-dot { animation: none !important; }
+}
+
+/* Toast notification styling */
+#toast-container {
+    z-index: 10000;
+}
+
+/* Keyboard shortcut hint (shown on hover over date nav) */
+.keyboard-hint {
+    font-size: 9px;
+    color: var(--text-dim);
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+}
+.date-nav:hover .keyboard-hint {
+    opacity: 1;
 }

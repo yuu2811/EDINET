@@ -124,7 +124,7 @@ class Filing(Base):
             # PDF proxy — tries EDINET API v2, then disclosure2dl,
             # then redirects to the EDINET viewer website.
             "pdf_url": f"/api/documents/{self.doc_id}/pdf"
-            if self.doc_id
+            if self.doc_id and self.pdf_flag
             else None,
             # Direct link to the EDINET viewer website
             "edinet_url": (
