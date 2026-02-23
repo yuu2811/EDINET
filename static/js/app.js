@@ -485,7 +485,7 @@ function initEventListeners() {
         else if (e.key === 't' || e.key === 'T') {
             state.selectedDate = toLocalDateStr(new Date());
             document.getElementById('date-picker').value = state.selectedDate;
-            savePreferences(); loadFilings(); loadStats(); loadAnalytics();
+            savePreferences(); loadDateAndAutoFetch();
         }
     });
 }
@@ -623,7 +623,6 @@ async function loadFilings() {
 function preloadStockData() {
     const codes = new Set();
     for (const f of state.filings) {
-        // Try target_sec_code first, then sec_code (EDINET API provides issuer code)
         const code = f.target_sec_code || f.sec_code;
         if (code) {
             const normalized = code.length === 5 ? code.slice(0, 4) : code;
@@ -632,22 +631,23 @@ function preloadStockData() {
     }
     if (codes.size === 0) return;
 
-    // Fetch ALL unique codes — on mobile, market cap is prominently shown on every card
-    // Use small stagger to avoid hammering the backend
-    const staggerMs = 100;
-    const promises = [];
-    let delay = 0;
-    for (const code of codes) {
-        if (stockCache[code]) continue;
-        promises.push(new Promise(resolve => {
-            setTimeout(() => fetchStockData(code).then(resolve, resolve), delay);
-        }));
-        delay += staggerMs;
-    }
-    // Re-render feed once all preloads finish so table/cards show market data
-    if (promises.length > 0) {
-        Promise.all(promises).then(() => renderFeed());
-    }
+    // Fetch in concurrent batches of 5 for faster loading
+    const uncached = [...codes].filter(c => !stockCache[c]);
+    if (uncached.length === 0) return;
+    const BATCH_SIZE = 5;
+    let rendered = false;
+    (async () => {
+        for (let i = 0; i < uncached.length; i += BATCH_SIZE) {
+            const batch = uncached.slice(i, i + BATCH_SIZE);
+            await Promise.all(batch.map(c => fetchStockData(c).catch(() => null)));
+            // Re-render after each batch so cards update progressively
+            if (!rendered || i + BATCH_SIZE < uncached.length) {
+                renderFeed();
+                rendered = true;
+            }
+        }
+        renderFeed();
+    })();
 }
 
 async function loadStats() {
@@ -3219,9 +3219,7 @@ function initDateNav() {
     picker.addEventListener('change', (e) => {
         state.selectedDate = e.target.value;
         savePreferences();
-        loadFilings();
-        loadStats();
-        loadAnalytics();
+        loadDateAndAutoFetch();
     });
 
     prevBtn.addEventListener('click', () => navigateDate(-1));
@@ -3231,9 +3229,7 @@ function initDateNav() {
         state.selectedDate = toLocalDateStr(new Date());
         picker.value = state.selectedDate;
         savePreferences();
-        loadFilings();
-        loadStats();
-        loadAnalytics();
+        loadDateAndAutoFetch();
     });
 
     fetchBtn.addEventListener('click', async () => {
@@ -3323,9 +3319,68 @@ function navigateDate(days) {
     state.selectedDate = toLocalDateStr(d);
     document.getElementById('date-picker').value = state.selectedDate;
     savePreferences();
-    loadFilings();
-    loadStats();
-    loadAnalytics();
+    loadDateAndAutoFetch();
+}
+
+// ---------------------------------------------------------------------------
+// Auto-fetch: load data for selected date, then auto-trigger EDINET fetch
+// if no filings are found (i.e. the date hasn't been fetched yet).
+// ---------------------------------------------------------------------------
+
+async function loadDateAndAutoFetch() {
+    // Load existing data in parallel
+    const [filingsResult] = await Promise.all([
+        loadFilings().then(() => state.filings),
+        loadStats(),
+        loadAnalytics(),
+    ]);
+    // If no filings exist for this date, auto-trigger EDINET API fetch
+    if (state.filings.length === 0) {
+        autoFetchForDate(state.selectedDate);
+    }
+}
+
+async function autoFetchForDate(dateStr) {
+    const fetchBtn = document.getElementById('date-fetch');
+    if (!fetchBtn || fetchBtn.disabled) return;
+    fetchBtn.disabled = true;
+    const origText = fetchBtn.textContent;
+    fetchBtn.textContent = 'AUTO FETCH...';
+    try {
+        const resp = await fetch(`/api/poll?date=${dateStr}`, { method: 'POST' });
+        if (!resp.ok) {
+            fetchBtn.disabled = false;
+            fetchBtn.textContent = origText;
+            return;
+        }
+        // Wait for data to arrive via SSE or poll with timeout
+        const maxWait = 30000;
+        const checkInterval = 2000;
+        const start = Date.now();
+        const poll = async () => {
+            while (Date.now() - start < maxWait) {
+                await new Promise(r => setTimeout(r, checkInterval));
+                // Check if date is still the selected one (user may have navigated away)
+                if (state.selectedDate !== dateStr) break;
+                await loadFilings();
+                if (state.filings.length > 0) break;
+            }
+            loadStats();
+            loadAnalytics();
+            fetchBtn.disabled = false;
+            fetchBtn.textContent = state.filings.length > 0
+                ? `${state.filings.length}件取得`
+                : origText;
+            if (state.filings.length > 0) {
+                setTimeout(() => { fetchBtn.textContent = origText; }, 3000);
+            }
+        };
+        poll();
+    } catch (e) {
+        console.warn('Auto-fetch failed:', e);
+        fetchBtn.disabled = false;
+        fetchBtn.textContent = origText;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3354,7 +3409,15 @@ async function loadAnalytics() {
         _analyticsLoaded = true;
     } catch (e) {
         console.warn('Analytics load failed:', e);
-        showToast('分析データの読み込みに失敗しました');
+        // Clear loading indicators so user doesn't see perpetual "読み込み中..."
+        for (const id of ['rankings-content', 'mobile-rankings-content']) {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '<div class="summary-empty">分析データなし</div>';
+        }
+        for (const id of ['sector-content', 'mobile-sector-content']) {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '<div class="summary-empty">セクターデータなし</div>';
+        }
     }
 }
 
