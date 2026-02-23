@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 
@@ -36,13 +37,20 @@ async def init_db():
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        # Quick integrity check for SQLite
+        # Quick integrity check for SQLite (bounded to 10s to avoid hangs)
         if "sqlite" in settings.DATABASE_URL:
-            async with engine.connect() as conn:
-                result = await conn.execute(text("PRAGMA integrity_check"))
-                status = result.scalar()
-                if status != "ok":
-                    raise RuntimeError(f"SQLite integrity check failed: {status}")
+            try:
+                async with engine.connect() as conn:
+                    result = await asyncio.wait_for(
+                        conn.execute(text("PRAGMA integrity_check")),
+                        timeout=10.0,
+                    )
+                    status = result.scalar()
+                    if status != "ok":
+                        raise RuntimeError(f"SQLite integrity check failed: {status}")
+            except asyncio.TimeoutError:
+                logger.warning("SQLite integrity check timed out after 10s, skipping")
+
     except Exception as exc:
         if "sqlite" not in settings.DATABASE_URL:
             raise

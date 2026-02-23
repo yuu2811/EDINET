@@ -1,5 +1,6 @@
 """Filing list and detail endpoints, including EDINET document proxy."""
 
+import asyncio
 import logging
 from datetime import date
 
@@ -8,6 +9,7 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy import desc, func, or_, select
 
 from app.deps import get_async_session, validate_doc_id
+from app.edinet import _looks_like_pdf, edinet_client
 from app.models import Filing
 
 logger = logging.getLogger(__name__)
@@ -112,15 +114,11 @@ def _make_pdf_response(content: bytes, doc_id: str) -> Response:
 @documents_router.post("/{doc_id}/retry-xbrl")
 async def retry_xbrl_enrichment(doc_id: str) -> dict:
     """Re-download and re-parse XBRL for a specific filing."""
-    from app.edinet import edinet_client
-    from app.models import Filing as FilingModel
-    from sqlalchemy import select as sa_select
-
     doc_id = validate_doc_id(doc_id)
 
     async with get_async_session()() as session:
         result = await session.execute(
-            sa_select(FilingModel).where(FilingModel.doc_id == doc_id)
+            select(Filing).where(Filing.doc_id == doc_id)
         )
         filing = result.scalar_one_or_none()
         if not filing:
@@ -155,24 +153,18 @@ async def batch_retry_xbrl() -> dict:
     パーサー改善後に呼び出すことで、以前は抽出できなかった
     previous_holding_ratio を再取得できる。最大50件ずつ処理。
     """
-    import asyncio
-
-    from app.edinet import edinet_client
-    from app.models import Filing as FilingModel
-    from sqlalchemy import or_, select as sa_select
-
     async with get_async_session()() as session:
         result = await session.execute(
-            sa_select(FilingModel)
+            select(Filing)
             .where(
-                FilingModel.xbrl_flag.is_(True),
+                Filing.xbrl_flag.is_(True),
                 or_(
-                    FilingModel.xbrl_parsed.is_(False),
-                    FilingModel.holding_ratio.is_(None),
-                    FilingModel.previous_holding_ratio.is_(None),
+                    Filing.xbrl_parsed.is_(False),
+                    Filing.holding_ratio.is_(None),
+                    Filing.previous_holding_ratio.is_(None),
                 ),
             )
-            .order_by(desc(FilingModel.id))
+            .order_by(desc(Filing.id))
             .limit(50)
         )
         filings = result.scalars().all()
@@ -222,7 +214,6 @@ async def debug_xbrl(doc_id: str) -> dict:
     to help debug XBRL extraction issues.
     """
     from app.config import settings
-    from app.edinet import edinet_client
 
     doc_id = validate_doc_id(doc_id)
 
@@ -251,7 +242,6 @@ async def proxy_document_pdf(doc_id: str) -> Response:
     import httpx as _httpx
 
     from app.config import settings
-    from app.edinet import _looks_like_pdf, edinet_client
 
     doc_id = validate_doc_id(doc_id)
 

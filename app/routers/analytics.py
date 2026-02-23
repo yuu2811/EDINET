@@ -1,12 +1,11 @@
 """Rich analytics endpoints for the EDINET Large Shareholding Monitor."""
 
-from datetime import date, datetime, timedelta, timezone
-
-_JST = timezone(timedelta(hours=9))
+from datetime import date, datetime
 
 from fastapi import APIRouter, HTTPException, Path, Query
-from sqlalchemy import asc, desc, func, select
+from sqlalchemy import case, desc, func, select
 
+from app.config import JST
 from app.deps import get_async_session, normalize_sec_code, validate_edinet_code, validate_sec_code
 from app.models import Filing
 
@@ -46,7 +45,7 @@ def _period_start_date(period: str) -> str | None:
     """
     if period not in _VALID_PERIODS:
         period = "30d"
-    today = datetime.now(_JST).date()
+    today = datetime.now(JST).date()
     if period == "7d":
         start = today - timedelta(days=7)
     elif period == "90d":
@@ -183,9 +182,9 @@ async def market_movements(
         try:
             parsed = date.fromisoformat(target_date)
         except ValueError:
-            parsed = datetime.now(_JST).date()
+            parsed = datetime.now(JST).date()
     else:
-        parsed = datetime.now(_JST).date()
+        parsed = datetime.now(JST).date()
     date_str = parsed.isoformat()
 
     async with get_async_session()() as session:
@@ -335,43 +334,68 @@ async def market_movements(
 
 @router.get("/sectors")
 async def sector_breakdown() -> dict:
-    """Return sector-level aggregation of all filings in the database."""
+    """Return sector-level aggregation of all filings in the database.
+
+    Uses SQL GROUP BY on the sector prefix (first 2 digits of securities
+    code) to avoid loading all rows into Python memory.
+    """
     async with get_async_session()() as session:
-        # Fetch the minimal data needed for sector classification
+        # Derive the 4-digit ticker, then take the first 2 digits as sector prefix
+        ticker_expr = case(
+            (func.length(Filing.target_sec_code) == 5,
+             func.substr(Filing.target_sec_code, 1, 4)),
+            else_=Filing.target_sec_code,
+        )
+        sector_prefix = func.substr(ticker_expr, 1, 2)
+
         result = await session.execute(
             select(
-                Filing.target_sec_code,
-                Filing.holding_ratio,
+                sector_prefix.label("prefix"),
+                func.count(Filing.id).label("filing_count"),
+                func.count(func.distinct(ticker_expr)).label("company_count"),
+                func.avg(Filing.holding_ratio).label("avg_ratio"),
             )
+            .where(Filing.target_sec_code.isnot(None))
+            .group_by(sector_prefix)
         )
 
-        sector_data: dict[str, dict] = {}
-        for row in result:
-            sector = _sec_code_to_sector(row.target_sec_code)
-            if sector not in sector_data:
-                sector_data[sector] = {
-                    "sec_codes": set(),
-                    "filing_count": 0,
-                    "ratios": [],
-                }
-            norm = normalize_sec_code(row.target_sec_code)
-            if norm:
-                sector_data[sector]["sec_codes"].add(norm)
-            sector_data[sector]["filing_count"] += 1
-            if row.holding_ratio is not None:
-                sector_data[sector]["ratios"].append(row.holding_ratio)
+        # Also count filings with no sec_code (→ "その他")
+        null_result = await session.execute(
+            select(
+                func.count(Filing.id).label("filing_count"),
+                func.avg(Filing.holding_ratio).label("avg_ratio"),
+            )
+            .where(Filing.target_sec_code.is_(None))
+        )
+        null_row = null_result.one()
 
         sectors = []
-        for sector, data in sorted(sector_data.items(), key=lambda x: -x[1]["filing_count"]):
-            avg_ratio = None
-            if data["ratios"]:
-                avg_ratio = round(sum(data["ratios"]) / len(data["ratios"]), 2)
+        for row in result:
+            sector_name = _SECTOR_MAP.get(row.prefix, "その他")
+            avg_ratio = round(row.avg_ratio, 2) if row.avg_ratio is not None else None
             sectors.append({
-                "sector": sector,
-                "company_count": len(data["sec_codes"]),
-                "filing_count": data["filing_count"],
+                "sector": sector_name,
+                "company_count": row.company_count,
+                "filing_count": row.filing_count,
                 "avg_ratio": avg_ratio,
             })
+
+        # Merge null sec_code filings into "その他"
+        if null_row.filing_count > 0:
+            other = next((s for s in sectors if s["sector"] == "その他"), None)
+            if other:
+                other["filing_count"] += null_row.filing_count
+            else:
+                avg_ratio = round(null_row.avg_ratio, 2) if null_row.avg_ratio is not None else None
+                sectors.append({
+                    "sector": "その他",
+                    "company_count": 0,
+                    "filing_count": null_row.filing_count,
+                    "avg_ratio": avg_ratio,
+                })
+
+        # Sort by filing count descending
+        sectors.sort(key=lambda s: -s["filing_count"])
 
         return {"sectors": sectors}
 
