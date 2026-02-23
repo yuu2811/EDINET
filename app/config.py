@@ -6,7 +6,9 @@ load_dotenv()
 
 class Settings:
     EDINET_API_KEY: str = os.getenv("EDINET_API_KEY", "")
-    EDINET_API_BASE: str = "https://api.edinet-fsa.go.jp/api/v2"
+    EDINET_API_BASE: str = os.getenv(
+        "EDINET_API_BASE", "https://api.edinet-fsa.go.jp/api/v2"
+    )
     POLL_INTERVAL: int = int(os.getenv("POLL_INTERVAL", "60"))
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL", "sqlite+aiosqlite:///./edinet_monitor.db"
@@ -14,6 +16,16 @@ class Settings:
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+
+    # CORS: comma-separated allowed origins, or "*" for all (default)
+    ALLOWED_ORIGINS: list[str] = [
+        o.strip()
+        for o in os.getenv("ALLOWED_ORIGINS", "*").split(",")
+        if o.strip()
+    ]
+
+    # Stock data cache TTL in seconds (default: 30 minutes)
+    STOCK_CACHE_TTL: int = int(os.getenv("STOCK_CACHE_TTL", "1800"))
 
     # Large shareholding report docTypeCodes
     LARGE_HOLDING_DOC_TYPES: list[str] = ["350", "360"]

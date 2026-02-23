@@ -494,6 +494,8 @@ function initEventListeners() {
 // SSE Connection
 // ---------------------------------------------------------------------------
 
+let _wasDisconnected = false;
+
 function initSSE() {
     if (eventSource) {
         eventSource.close();
@@ -518,14 +520,24 @@ function initSSE() {
     });
 
     eventSource.onopen = () => {
+        const reconnected = _wasDisconnected;
+        _wasDisconnected = false;
         setConnectionStatus('connected');
+        // After a reconnection, refresh data to catch filings missed while offline
+        if (reconnected) {
+            console.log('SSE reconnected — refreshing data');
+            loadFilings();
+            loadStats();
+        }
     };
 
     eventSource.onerror = () => {
         // EventSource readyState: 0=CONNECTING, 1=OPEN, 2=CLOSED
         if (eventSource.readyState === EventSource.CONNECTING) {
+            _wasDisconnected = true;
             setConnectionStatus('reconnecting');
         } else {
+            _wasDisconnected = true;
             setConnectionStatus('disconnected');
         }
         // EventSource auto-reconnects

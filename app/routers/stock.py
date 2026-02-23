@@ -31,9 +31,17 @@ router = APIRouter(prefix="/api/stock", tags=["Stock"])
 # In-memory cache with TTL
 # ---------------------------------------------------------------------------
 _cache: dict[str, tuple[float, dict]] = {}
-_CACHE_TTL = 30 * 60  # 30 minutes
+_CACHE_TTL: int = 0  # populated lazily from settings
 _external_apis_failed_at: float = 0.0  # monotonic timestamp; 0 = not failed
 _EXTERNAL_RETRY_INTERVAL = 5 * 60  # retry external APIs after 5 minutes
+
+
+def _get_cache_ttl() -> int:
+    global _CACHE_TTL
+    if _CACHE_TTL == 0:
+        from app.config import settings
+        _CACHE_TTL = settings.STOCK_CACHE_TTL
+    return _CACHE_TTL
 
 
 def _cache_get(key: str) -> dict | None:
@@ -42,7 +50,7 @@ def _cache_get(key: str) -> dict | None:
     if entry is None:
         return None
     ts, value = entry
-    if time.monotonic() - ts > _CACHE_TTL:
+    if time.monotonic() - ts > _get_cache_ttl():
         _cache.pop(key, None)
         return None
     return value
@@ -55,7 +63,8 @@ def _cache_set(key: str, value: dict) -> None:
     # Evict expired entries when cache grows too large
     if len(_cache) >= _CACHE_MAX_SIZE:
         now = time.monotonic()
-        expired_keys = [k for k, (ts, _) in _cache.items() if now - ts > _CACHE_TTL]
+        ttl = _get_cache_ttl()
+        expired_keys = [k for k, (ts, _) in _cache.items() if now - ts > ttl]
         for k in expired_keys:
             _cache.pop(k, None)
     _cache[key] = (time.monotonic(), value)
