@@ -2458,136 +2458,96 @@ function closeModal() {
 // Profile Views (Filer / Company)
 // ---------------------------------------------------------------------------
 
-async function openFilerProfile(edinetCode) {
-    if (!edinetCode) return;
+async function openProfileModal(apiPath, loadingMsg, errorMsg, renderFn) {
     const body = document.getElementById('modal-body');
     const modal = document.getElementById('detail-modal');
     if (!body || !modal) return;
     currentModalDocId = null;
-    body.innerHTML = '<div class="stock-loading">提出者プロフィール読み込み中...</div>';
+    body.innerHTML = `<div class="stock-loading">${loadingMsg}</div>`;
     modal.classList.remove('hidden');
-
     try {
-        const resp = await fetch(`/api/analytics/filer/${encodeURIComponent(edinetCode)}`);
-        if (!resp.ok) { body.innerHTML = '<div class="stock-no-data">提出者データが見つかりません</div>'; return; }
+        const resp = await fetch(apiPath);
+        if (!resp.ok) { body.innerHTML = `<div class="stock-no-data">${errorMsg}</div>`; return; }
         const data = await resp.json();
-
-        let html = `<div class="profile-header">
-            <div class="profile-name">${escapeHtml(data.filer_name)}</div>
-            <div class="profile-meta">${escapeHtml(data.edinet_code)}</div>
-        </div>`;
-
-        // Summary stats
-        const s = data.summary;
-        html += `<div class="profile-stats">
-            <div class="profile-stat"><span class="profile-stat-value">${s.total_filings}</span><span class="profile-stat-label">提出件数</span></div>
-            <div class="profile-stat"><span class="profile-stat-value">${s.unique_targets}</span><span class="profile-stat-label">対象企業数</span></div>
-            <div class="profile-stat"><span class="profile-stat-value">${s.avg_holding_ratio != null ? s.avg_holding_ratio + '%' : '-'}</span><span class="profile-stat-label">平均保有割合</span></div>
-        </div>`;
-        if (s.first_filing && s.last_filing) {
-            html += `<div class="profile-period">${escapeHtml(s.first_filing.slice(0,10))} 〜 ${escapeHtml(s.last_filing.slice(0,10))}</div>`;
-        }
-
-        // Target companies table
-        if (data.targets && data.targets.length > 0) {
-            html += `<div class="profile-section-title">保有銘柄一覧</div>`;
-            html += '<div class="feed-table-wrapper"><table class="feed-table"><thead><tr><th>対象企業</th><th>コード</th><th>最新割合</th><th>件数</th><th>推移</th></tr></thead><tbody>';
-            for (const t of data.targets) {
-                const ratio = t.latest_ratio != null ? t.latest_ratio.toFixed(2) + '%' : '-';
-                // Mini sparkline from history
-                let trend = '';
-                if (t.history && t.history.length >= 2) {
-                    const pts = t.history.slice().reverse().slice(-10);
-                    const vals = pts.map(p => p.ratio);
-                    trend = miniSparkline(vals);
-                }
-                const nameLink = t.sec_code
-                    ? `<a href="#" onclick="event.preventDefault();openCompanyProfile('${escapeHtml(t.sec_code)}')">${escapeHtml(t.company_name || '不明')}</a>`
-                    : escapeHtml(t.company_name || '不明');
-                html += `<tr>
-                    <td>${nameLink}</td>
-                    <td>${escapeHtml(t.sec_code || '-')}</td>
-                    <td>${ratio}</td>
-                    <td>${t.filing_count}</td>
-                    <td>${trend}</td>
-                </tr>`;
-            }
-            html += '</tbody></table></div>';
-        }
-
-        // Recent filings
-        if (data.recent_filings && data.recent_filings.length > 0) {
-            html += renderProfileFilings(data.recent_filings);
-        }
-
-        body.innerHTML = html;
+        body.innerHTML = renderFn(data);
         attachProfileFilingHandlers();
     } catch (e) {
-        console.error('Filer profile error:', e);
+        console.error('Profile error:', e);
         body.innerHTML = '<div class="stock-no-data">プロフィールの読み込みに失敗しました</div>';
     }
 }
 
+function _profileItemsTable(title, headers, items, rowFn) {
+    if (!items || items.length === 0) return '';
+    let html = `<div class="profile-section-title">${title}</div>`;
+    html += `<div class="feed-table-wrapper"><table class="feed-table"><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>`;
+    for (const item of items) {
+        const ratio = item.latest_ratio != null ? item.latest_ratio.toFixed(2) + '%' : '-';
+        let trend = '';
+        if (item.history && item.history.length >= 2) {
+            const vals = item.history.slice().reverse().slice(-10).map(p => p.ratio);
+            trend = miniSparkline(vals);
+        }
+        html += rowFn(item, ratio, trend);
+    }
+    return html + '</tbody></table></div>';
+}
+
+async function openFilerProfile(edinetCode) {
+    if (!edinetCode) return;
+    openProfileModal(
+        `/api/analytics/filer/${encodeURIComponent(edinetCode)}`,
+        '提出者プロフィール読み込み中...', '提出者データが見つかりません',
+        (data) => {
+            const s = data.summary;
+            let html = `<div class="profile-header">
+                <div class="profile-name">${escapeHtml(data.filer_name)}</div>
+                <div class="profile-meta">${escapeHtml(data.edinet_code)}</div>
+            </div>`;
+            html += `<div class="profile-stats">
+                <div class="profile-stat"><span class="profile-stat-value">${s.total_filings}</span><span class="profile-stat-label">提出件数</span></div>
+                <div class="profile-stat"><span class="profile-stat-value">${s.unique_targets}</span><span class="profile-stat-label">対象企業数</span></div>
+                <div class="profile-stat"><span class="profile-stat-value">${s.avg_holding_ratio != null ? s.avg_holding_ratio + '%' : '-'}</span><span class="profile-stat-label">平均保有割合</span></div>
+            </div>`;
+            if (s.first_filing && s.last_filing) {
+                html += `<div class="profile-period">${escapeHtml(s.first_filing.slice(0,10))} 〜 ${escapeHtml(s.last_filing.slice(0,10))}</div>`;
+            }
+            html += _profileItemsTable('保有銘柄一覧', ['対象企業','コード','最新割合','件数','推移'], data.targets, (t, ratio, trend) => {
+                const link = t.sec_code
+                    ? `<a href="#" onclick="event.preventDefault();openCompanyProfile('${escapeHtml(t.sec_code)}')">${escapeHtml(t.company_name || '不明')}</a>`
+                    : escapeHtml(t.company_name || '不明');
+                return `<tr><td>${link}</td><td>${escapeHtml(t.sec_code || '-')}</td><td>${ratio}</td><td>${t.filing_count}</td><td>${trend}</td></tr>`;
+            });
+            if (data.recent_filings && data.recent_filings.length > 0) html += renderProfileFilings(data.recent_filings);
+            return html;
+        }
+    );
+}
+
 async function openCompanyProfile(secCode) {
     if (!secCode) return;
-    const body = document.getElementById('modal-body');
-    const modal = document.getElementById('detail-modal');
-    if (!body || !modal) return;
-    currentModalDocId = null;
-    body.innerHTML = '<div class="stock-loading">企業プロフィール読み込み中...</div>';
-    modal.classList.remove('hidden');
-
-    try {
-        const resp = await fetch(`/api/analytics/company/${encodeURIComponent(secCode)}`);
-        if (!resp.ok) { body.innerHTML = '<div class="stock-no-data">企業データが見つかりません</div>'; return; }
-        const data = await resp.json();
-
-        let html = `<div class="profile-header">
-            <div class="profile-name">${escapeHtml(data.company_name || secCode)}</div>
-            <div class="profile-meta">[${escapeHtml(data.sec_code)}] ${escapeHtml(data.sector || '')}</div>
-        </div>`;
-
-        html += `<div class="profile-stats">
-            <div class="profile-stat"><span class="profile-stat-value">${data.holder_count}</span><span class="profile-stat-label">大量保有者数</span></div>
-            <div class="profile-stat"><span class="profile-stat-value">${data.total_filings}</span><span class="profile-stat-label">報告件数</span></div>
-        </div>`;
-
-        // Holders table
-        if (data.holders && data.holders.length > 0) {
-            html += `<div class="profile-section-title">大量保有者一覧</div>`;
-            html += '<div class="feed-table-wrapper"><table class="feed-table"><thead><tr><th>保有者</th><th>最新割合</th><th>件数</th><th>推移</th></tr></thead><tbody>';
-            for (const h of data.holders) {
-                const ratio = h.latest_ratio != null ? h.latest_ratio.toFixed(2) + '%' : '-';
-                let trend = '';
-                if (h.history && h.history.length >= 2) {
-                    const pts = h.history.slice().reverse().slice(-10);
-                    const vals = pts.map(p => p.ratio);
-                    trend = miniSparkline(vals);
-                }
-                const nameLink = h.edinet_code
+    openProfileModal(
+        `/api/analytics/company/${encodeURIComponent(secCode)}`,
+        '企業プロフィール読み込み中...', '企業データが見つかりません',
+        (data) => {
+            let html = `<div class="profile-header">
+                <div class="profile-name">${escapeHtml(data.company_name || secCode)}</div>
+                <div class="profile-meta">[${escapeHtml(data.sec_code)}] ${escapeHtml(data.sector || '')}</div>
+            </div>`;
+            html += `<div class="profile-stats">
+                <div class="profile-stat"><span class="profile-stat-value">${data.holder_count}</span><span class="profile-stat-label">大量保有者数</span></div>
+                <div class="profile-stat"><span class="profile-stat-value">${data.total_filings}</span><span class="profile-stat-label">報告件数</span></div>
+            </div>`;
+            html += _profileItemsTable('大量保有者一覧', ['保有者','最新割合','件数','推移'], data.holders, (h, ratio, trend) => {
+                const link = h.edinet_code
                     ? `<a href="#" onclick="event.preventDefault();openFilerProfile('${escapeHtml(h.edinet_code)}')">${escapeHtml(h.filer_name || '不明')}</a>`
                     : escapeHtml(h.filer_name || '不明');
-                html += `<tr>
-                    <td>${nameLink}</td>
-                    <td>${ratio}</td>
-                    <td>${h.filing_count}</td>
-                    <td>${trend}</td>
-                </tr>`;
-            }
-            html += '</tbody></table></div>';
+                return `<tr><td>${link}</td><td>${ratio}</td><td>${h.filing_count}</td><td>${trend}</td></tr>`;
+            });
+            if (data.recent_filings && data.recent_filings.length > 0) html += renderProfileFilings(data.recent_filings);
+            return html;
         }
-
-        // Recent filings
-        if (data.recent_filings && data.recent_filings.length > 0) {
-            html += renderProfileFilings(data.recent_filings);
-        }
-
-        body.innerHTML = html;
-        attachProfileFilingHandlers();
-    } catch (e) {
-        console.error('Company profile error:', e);
-        body.innerHTML = '<div class="stock-no-data">プロフィールの読み込みに失敗しました</div>';
-    }
+    );
 }
 
 /** Generate an inline SVG sparkline from an array of numbers. */
@@ -2953,21 +2913,15 @@ function initMobileNav() {
         });
     });
 
-    // Overlay backdrop close handlers
-    document.querySelectorAll('.overlay-backdrop').forEach(backdrop => {
-        backdrop.addEventListener('click', () => {
-            const overlay = backdrop.closest('.sidebar-overlay');
-            if (overlay) closeMobileOverlay(overlay.id);
+    // Overlay backdrop & close button handlers
+    for (const sel of ['.overlay-backdrop', '.overlay-close']) {
+        document.querySelectorAll(sel).forEach(el => {
+            el.addEventListener('click', () => {
+                const overlay = el.closest('.sidebar-overlay');
+                if (overlay) closeMobileOverlay(overlay.id);
+            });
         });
-    });
-
-    // Overlay close button handlers
-    document.querySelectorAll('.overlay-close').forEach(closeBtn => {
-        closeBtn.addEventListener('click', () => {
-            const overlay = closeBtn.closest('.sidebar-overlay');
-            if (overlay) closeMobileOverlay(overlay.id);
-        });
-    });
+    }
 
     // Initialize swipe-to-close on all overlays
     document.querySelectorAll('.sidebar-overlay').forEach(overlayEl => {

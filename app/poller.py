@@ -109,6 +109,18 @@ class SSEBroadcaster:
 
 broadcaster = SSEBroadcaster()
 
+_TARGET_RE = re.compile(r"[（(]([^）)]+?)(?:株式|株券)[）)]")
+
+
+def _apply_pre_enrichment(filing: Filing) -> None:
+    """Copy sec_code → target_sec_code and extract target name from description."""
+    if filing.sec_code and not filing.target_sec_code:
+        filing.target_sec_code = filing.sec_code
+    if not filing.target_company_name and filing.doc_description:
+        m = _TARGET_RE.search(filing.doc_description)
+        if m:
+            filing.target_company_name = m.group(1)
+
 
 async def poll_edinet(target_date=None):
     """Poll EDINET for new large shareholding filings."""
@@ -197,18 +209,7 @@ async def poll_edinet(target_date=None):
                 is_special_exemption=is_special,
             )
 
-            # --- Pre-enrichment from document list fields ---
-            # secCode from the EDINET document list is the ISSUER's code
-            # (= target company), so copy it to target_sec_code as well.
-            if filing.sec_code and not filing.target_sec_code:
-                filing.target_sec_code = filing.sec_code
-
-            # Extract target company name from doc_description if available.
-            # Typical format: "変更報告書（トヨタ自動車株式）"
-            if not filing.target_company_name and doc_description:
-                m = re.search(r"[（(]([^）)]+?)(?:株式|株券)[）)]", doc_description)
-                if m:
-                    filing.target_company_name = m.group(1)
+            _apply_pre_enrichment(filing)
 
             try:
                 session.add(filing)
@@ -350,13 +351,7 @@ async def _retry_xbrl_enrichment():
                 await asyncio.wait_for(_enrich_from_xbrl(filing), timeout=10.0)
             except asyncio.TimeoutError:
                 logger.warning("XBRL retry timed out for %s", filing.doc_id)
-
-            if not filing.target_company_name and filing.doc_description:
-                m = re.search(r"[（(]([^）)]+?)(?:株式|株券)[）)]", filing.doc_description)
-                if m:
-                    filing.target_company_name = m.group(1)
-            if filing.sec_code and not filing.target_sec_code:
-                filing.target_sec_code = filing.sec_code
+            _apply_pre_enrichment(filing)
 
         # Process sequentially with delay per EDINET API v2 spec recommendation
         # (several seconds between document downloads to avoid rate limiting)
