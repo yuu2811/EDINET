@@ -110,6 +110,30 @@ function ratioChangeClass(change) {
     return change > 0 ? 'positive' : change < 0 ? 'negative' : 'neutral';
 }
 
+/** Prepare common data fields shared across card/table/mobile renderers */
+function prepareFilingData(f) {
+    const time = f.submit_date_time
+        ? f.submit_date_time.split(' ').pop() || f.submit_date_time
+        : '-';
+    const filerName = f.holder_name || f.filer_name || '(不明)';
+    const targetName = f.target_company_name || extractTargetFromDescription(f.doc_description) || '(対象不明)';
+    const secCode = f.target_sec_code || f.sec_code || '';
+    const cls = ratioChangeClass(f.ratio_change);
+    const sd = getCachedStock(secCode);
+    const code = normalizeSecCode(secCode);
+    const stockLoading = code && !stockCache[code];
+    const isChange = f.doc_description && f.doc_description.includes('変更');
+    return { time, filerName, targetName, secCode, cls, sd, code, stockLoading, isChange };
+}
+
+/** Build PDF + EDINET link HTML */
+function buildDocLinks(f, linkClass) {
+    let html = '';
+    if (f.pdf_url) html += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="${linkClass}" onclick="event.stopPropagation()">PDF</a>`;
+    if (f.edinet_url) html += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="${linkClass}" onclick="event.stopPropagation()">EDINET</a>`;
+    return html;
+}
+
 /** Build clickable filer link HTML */
 function filerLinkHtml(name, edinetCode) {
     const safe = escapeHtml(name || '(不明)');
@@ -154,6 +178,34 @@ function updateToggleBtn(btn, active, onTitle, offTitle, onAria, offAria) {
     btn.title = active ? onTitle : offTitle;
     btn.setAttribute('aria-pressed', active);
     btn.setAttribute('aria-label', active ? onAria : offAria);
+}
+
+/** Toggle sound on/off — shared by desktop and mobile buttons */
+function toggleSound() {
+    state.soundEnabled = !state.soundEnabled;
+    updateToggleBtn(document.getElementById('btn-sound'), state.soundEnabled,
+        'サウンド ON', 'サウンド OFF', 'サウンドアラート: 有効', 'サウンドアラート: 無効');
+    const msb = document.getElementById('mobile-btn-sound');
+    if (msb) { msb.classList.toggle('active', state.soundEnabled); msb.textContent = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF'; }
+    savePreferences();
+}
+
+/** Toggle notifications on/off — shared by desktop and mobile buttons */
+async function toggleNotify() {
+    if (!('Notification' in window)) {
+        alert('このブラウザはデスクトップ通知に対応していません');
+        return;
+    }
+    const perm = await Notification.requestPermission();
+    state.notificationsEnabled = perm === 'granted';
+    if (perm === 'denied') {
+        showToast('通知が拒否されました。ブラウザの設定から許可してください。');
+    }
+    updateToggleBtn(document.getElementById('btn-notify'), state.notificationsEnabled,
+        '通知 ON', '通知 OFF', 'デスクトップ通知: 有効', 'デスクトップ通知: 無効');
+    const mnb = document.getElementById('mobile-btn-notify');
+    if (mnb) { mnb.classList.toggle('active', state.notificationsEnabled); mnb.textContent = state.notificationsEnabled ? '通知 ON' : '通知 OFF'; }
+    savePreferences();
 }
 
 // ---------------------------------------------------------------------------
@@ -380,28 +432,10 @@ function initPollCountdown() {
 
 function initEventListeners() {
     // Sound toggle
-    document.getElementById('btn-sound').addEventListener('click', () => {
-        state.soundEnabled = !state.soundEnabled;
-        updateToggleBtn(document.getElementById('btn-sound'), state.soundEnabled,
-            'サウンド ON', 'サウンド OFF', 'サウンドアラート: 有効', 'サウンドアラート: 無効');
-        savePreferences();
-    });
+    document.getElementById('btn-sound').addEventListener('click', toggleSound);
 
     // Notification permission
-    document.getElementById('btn-notify').addEventListener('click', async () => {
-        if (!('Notification' in window)) {
-            alert('このブラウザはデスクトップ通知に対応していません');
-            return;
-        }
-        const perm = await Notification.requestPermission();
-        state.notificationsEnabled = perm === 'granted';
-        if (perm === 'denied') {
-            showToast('通知が拒否されました。ブラウザの設定から許可してください。');
-        }
-        updateToggleBtn(document.getElementById('btn-notify'), state.notificationsEnabled,
-            '通知 ON', '通知 OFF', 'デスクトップ通知: 有効', 'デスクトップ通知: 無効');
-        savePreferences();
-    });
+    document.getElementById('btn-notify').addEventListener('click', toggleNotify);
 
     // Manual poll
     document.getElementById('btn-poll').addEventListener('click', async () => {
@@ -908,21 +942,13 @@ function renderFeedTable(container, filings) {
         </tr></thead><tbody>`;
 
     for (const f of filings) {
-        const time = f.submit_date_time
-            ? f.submit_date_time.split(' ').pop() || f.submit_date_time
-            : '-';
-
+        const { time, filerName, targetName, secCode, cls, sd, stockLoading } = prepareFilingData(f);
         const typeBadge = buildBadges(f, 'tbl-badge badge-');
-
-        const filerName = f.holder_name || f.filer_name || '(不明)';
         const filer = filerLinkHtml(filerName, f.edinet_code);
-        const targetName = f.target_company_name || extractTargetFromDescription(f.doc_description) || '(対象不明)';
-        const secCode = f.target_sec_code || f.sec_code || '';
         const target = companyLinkHtml(targetName, secCode, false);
         const codeDisplay = secCode ? `<span class="tbl-code">${escapeHtml(secCode)}</span>` : '';
 
         // Ratio
-        const cls = ratioChangeClass(f.ratio_change);
         let ratioHtml = '<span class="text-dim">-</span>';
         if (f.holding_ratio != null) {
             ratioHtml = `<span class="${cls}">${f.holding_ratio.toFixed(2)}%</span>`;
@@ -940,22 +966,12 @@ function renderFeedTable(container, filings) {
         const prev = f.previous_holding_ratio != null ? f.previous_holding_ratio.toFixed(2) + '%' : '-';
 
         // Market data from stock cache
-        const sd = getCachedStock(secCode);
-        const code = normalizeSecCode(secCode);
-        const stockLoading = code && !stockCache[code];
         const loadingHint = stockLoading ? '<span class="text-dim tbl-loading">...</span>' : '<span class="text-dim">-</span>';
         const mcap = sd && sd.market_cap_display ? sd.market_cap_display : loadingHint;
         const pbr = sd && sd.pbr != null ? Number(sd.pbr).toFixed(2) + '倍' : (stockLoading ? '...' : '-');
         const price = sd && sd.current_price != null ? '\u00a5' + Math.round(sd.current_price).toLocaleString() : (stockLoading ? '...' : '-');
 
-        // Links
-        let links = '';
-        if (f.pdf_url) {
-            links += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="tbl-link" onclick="event.stopPropagation()">PDF</a>`;
-        }
-        if (f.edinet_url) {
-            links += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="tbl-link" onclick="event.stopPropagation()">EDINET</a>`;
-        }
+        const links = buildDocLinks(f, 'tbl-link');
 
         // Row class
         let rowClass = '';
@@ -993,7 +1009,7 @@ function renderFeedTable(container, filings) {
 }
 
 function createFeedCard(f) {
-    const isChange = f.doc_description && f.doc_description.includes('変更');
+    const { time, filerName, targetName, secCode, cls, sd, isChange } = prepareFilingData(f);
     let cardClass = f.is_amendment ? 'amendment' : isChange ? 'change-report' : 'new-report';
     if (f.ratio_change > 0) cardClass += ' ratio-up';
     else if (f.ratio_change < 0) cardClass += ' ratio-down';
@@ -1003,23 +1019,16 @@ function createFeedCard(f) {
         badge += '<span class="card-badge badge-watchlist">WATCH</span>';
     }
 
-    const time = f.submit_date_time
-        ? f.submit_date_time.split(' ').pop() || f.submit_date_time
-        : '-';
-
-    const filerHtml = filerLinkHtml(f.holder_name || f.filer_name, f.edinet_code);
-    const targetName = f.target_company_name || extractTargetFromDescription(f.doc_description) || '(対象不明)';
-    const cardSecCode = f.target_sec_code || f.sec_code || '';
-    const targetHtml = companyLinkHtml(targetName, cardSecCode, true);
+    const filerHtml = filerLinkHtml(filerName, f.edinet_code);
+    const targetHtml = companyLinkHtml(targetName, secCode, true);
 
     // Ratio with before→after flow display
     let ratioHtml = '';
     if (f.holding_ratio != null) {
-        const ratioClass = ratioChangeClass(f.ratio_change);
 
         let changeHtml = '';
         if (f.ratio_change != null && f.ratio_change !== 0) {
-            changeHtml = `<span class="ratio-change-pill ${ratioClass}">${changeDisplayHtml(f.ratio_change)}</span>`;
+            changeHtml = `<span class="ratio-change-pill ${cls}">${changeDisplayHtml(f.ratio_change)}</span>`;
         }
 
         // Flow row: prev → curr [change pill], or just curr if no prev
@@ -1027,13 +1036,13 @@ function createFeedCard(f) {
         if (f.previous_holding_ratio != null) {
             flowHtml = `<div class="ratio-flow">
                 <span class="ratio-flow-prev">${f.previous_holding_ratio.toFixed(2)}%</span>
-                <span class="ratio-flow-arrow ${ratioClass}">→</span>
-                <span class="ratio-flow-curr ${ratioClass}">${f.holding_ratio.toFixed(2)}%</span>
+                <span class="ratio-flow-arrow ${cls}">→</span>
+                <span class="ratio-flow-curr ${cls}">${f.holding_ratio.toFixed(2)}%</span>
                 ${changeHtml}
             </div>`;
         } else {
             flowHtml = `<div class="ratio-flow">
-                <span class="ratio-flow-curr ${ratioClass}">${f.holding_ratio.toFixed(2)}%</span>
+                <span class="ratio-flow-curr ${cls}">${f.holding_ratio.toFixed(2)}%</span>
                 ${changeHtml}
             </div>`;
         }
@@ -1045,16 +1054,14 @@ function createFeedCard(f) {
         if (prevW > 0 && f.ratio_change != null && f.ratio_change !== 0) {
             const minW = Math.min(prevW, currW);
             const maxW = Math.max(prevW, currW);
-            // Base bar up to the smaller value
             barInner += `<div class="ratio-bar ratio-bar-prev" style="width: ${minW}%"></div>`;
-            // Delta zone between prev and curr
-            barInner += `<div class="ratio-bar ratio-bar-delta ${ratioClass}" style="left: ${minW}%; width: ${maxW - minW}%"></div>`;
+            barInner += `<div class="ratio-bar ratio-bar-delta ${cls}" style="left: ${minW}%; width: ${maxW - minW}%"></div>`;
         } else {
-            barInner += `<div class="ratio-bar ratio-bar-curr ${ratioClass}" style="width: ${currW}%"></div>`;
+            barInner += `<div class="ratio-bar ratio-bar-curr ${cls}" style="width: ${currW}%"></div>`;
         }
         const barHtml = `<div class="ratio-bar-container">${barInner}</div>`;
 
-        ratioHtml = `<div class="ratio-display ${ratioClass}">
+        ratioHtml = `<div class="ratio-display ${cls}">
             ${flowHtml}
             ${barHtml}
         </div>`;
@@ -1071,23 +1078,15 @@ function createFeedCard(f) {
         purposeHtml = `<span class="card-purpose">${escapeHtml(short)}</span>`;
     }
 
-    // Links
-    let links = '';
-    if (f.pdf_url) {
-        links += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="card-link" onclick="event.stopPropagation()">PDF</a>`;
-    }
-    if (f.edinet_url) {
-        links += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="card-link" onclick="event.stopPropagation()">EDINET</a>`;
-    }
+    const links = buildDocLinks(f, 'card-link');
 
     // Market data from cache (desktop only)
     let marketDataHtml = '';
-    const cardStockData = getCachedStock(cardSecCode);
-    if (cardStockData) {
+    if (sd) {
         const parts = [];
-        if (cardStockData.market_cap_display) parts.push(`時価:${cardStockData.market_cap_display}`);
-        if (cardStockData.pbr != null) parts.push(`PBR:${Number(cardStockData.pbr).toFixed(2)}倍`);
-        if (cardStockData.current_price != null) parts.push(`\u00a5${Math.round(cardStockData.current_price).toLocaleString()}`);
+        if (sd.market_cap_display) parts.push(`時価:${sd.market_cap_display}`);
+        if (sd.pbr != null) parts.push(`PBR:${Number(sd.pbr).toFixed(2)}倍`);
+        if (sd.current_price != null) parts.push(`\u00a5${Math.round(sd.current_price).toLocaleString()}`);
         if (parts.length > 0) {
             marketDataHtml = `<div class="card-market-data">${parts.map(p => `<span>${p}</span>`).join('')}</div>`;
         }
@@ -1120,35 +1119,27 @@ function createFeedCard(f) {
 // ---------------------------------------------------------------------------
 
 function createMobileFeedCard(f) {
-    const isChange = f.doc_description && f.doc_description.includes('変更');
+    const { time: rawTime, filerName, targetName, secCode, cls, sd, stockLoading, isChange } = prepareFilingData(f);
+    const time = rawTime === '-' ? '' : rawTime;
     let cardClass = f.is_amendment ? 'amendment' : isChange ? 'change-report' : 'new-report';
     if (f.ratio_change > 0) cardClass += ' ratio-up';
     else if (f.ratio_change < 0) cardClass += ' ratio-down';
 
     // Badge (mobile uses m-badge prefix; amendment → amend)
     let badge = buildBadges(f, 'm-badge m-badge-');
-    // Fix: mobile uses m-badge-amend not m-badge-amendment
     badge = badge.replace('m-badge-amendment', 'm-badge-amend');
     if (isWatchlistMatch(f)) {
         badge += '<span class="m-badge m-badge-watch">&#9733;</span>';
     }
 
-    const time = f.submit_date_time
-        ? f.submit_date_time.split(' ').pop() || f.submit_date_time
-        : '';
-
-    const target = f.target_company_name || extractTargetFromDescription(f.doc_description) || '(対象不明)';
-    const secCode = f.target_sec_code || f.sec_code;
     const targetCode = secCode ? `[${secCode}]` : '';
-    const mTargetHtml = companyLinkHtml(target, secCode, false);
-    const mFilerHtml = filerLinkHtml(f.holder_name || f.filer_name, f.edinet_code);
-
-    const ratioClass = ratioChangeClass(f.ratio_change);
+    const mTargetHtml = companyLinkHtml(targetName, secCode, false);
+    const mFilerHtml = filerLinkHtml(filerName, f.edinet_code);
 
     let ratioVal;
     if (f.holding_ratio != null && f.previous_holding_ratio != null) {
         ratioVal = `<span class="text-dim" style="font-size:11px">${f.previous_holding_ratio.toFixed(2)}%</span>`
-            + `<span class="${ratioClass}" style="font-size:11px;font-weight:700;margin:0 2px">→</span>`
+            + `<span class="${cls}" style="font-size:11px;font-weight:700;margin:0 2px">→</span>`
             + `${f.holding_ratio.toFixed(2)}%`;
     } else if (f.holding_ratio != null) {
         ratioVal = `${f.holding_ratio.toFixed(2)}%`;
@@ -1160,14 +1151,10 @@ function createMobileFeedCard(f) {
 
     let changeHtml = '';
     if (f.ratio_change != null && f.ratio_change !== 0) {
-        changeHtml = `<span class="m-change ${ratioClass}">${changeDisplayHtml(f.ratio_change)}</span>`;
+        changeHtml = `<span class="m-change ${cls}">${changeDisplayHtml(f.ratio_change)}</span>`;
     }
 
     // Market data from stock cache
-    const sd = getCachedStock(secCode);
-    const code = normalizeSecCode(secCode);
-
-    const stockLoading = code && !cached;
     let mcapHtml = '';
     if (sd && sd.market_cap_display) {
         mcapHtml = `<span class="m-mcap">${sd.market_cap_display}</span>`;
@@ -1189,15 +1176,7 @@ function createMobileFeedCard(f) {
 
     const hasMktData = mcapHtml || priceHtml || pbrHtml;
     const sep = hasMktData ? '<span class="m-sep"></span>' : '';
-
-    // PDF + EDINET links
-    let linkHtml = '';
-    if (f.pdf_url) {
-        linkHtml += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="m-link" onclick="event.stopPropagation()">PDF</a>`;
-    }
-    if (f.edinet_url) {
-        linkHtml += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="m-link" onclick="event.stopPropagation()">EDINET</a>`;
-    }
+    const linkHtml = buildDocLinks(f, 'm-link');
 
     return `<div class="m-card ${cardClass}" data-doc-id="${escapeHtml(f.doc_id)}">
     <div class="m-card-head">
@@ -1207,7 +1186,7 @@ function createMobileFeedCard(f) {
         <span class="m-time">${escapeHtml(time)}</span>
     </div>
     <div class="m-card-data">
-        <span class="m-ratio ${ratioClass}">${ratioVal}</span>
+        <span class="m-ratio ${cls}">${ratioVal}</span>
         ${changeHtml}
         ${sep}${mcapHtml}${priceHtml}${pbrHtml}
     </div>
@@ -2458,136 +2437,96 @@ function closeModal() {
 // Profile Views (Filer / Company)
 // ---------------------------------------------------------------------------
 
-async function openFilerProfile(edinetCode) {
-    if (!edinetCode) return;
+async function openProfileModal(apiPath, loadingMsg, errorMsg, renderFn) {
     const body = document.getElementById('modal-body');
     const modal = document.getElementById('detail-modal');
     if (!body || !modal) return;
     currentModalDocId = null;
-    body.innerHTML = '<div class="stock-loading">提出者プロフィール読み込み中...</div>';
+    body.innerHTML = `<div class="stock-loading">${loadingMsg}</div>`;
     modal.classList.remove('hidden');
-
     try {
-        const resp = await fetch(`/api/analytics/filer/${encodeURIComponent(edinetCode)}`);
-        if (!resp.ok) { body.innerHTML = '<div class="stock-no-data">提出者データが見つかりません</div>'; return; }
+        const resp = await fetch(apiPath);
+        if (!resp.ok) { body.innerHTML = `<div class="stock-no-data">${errorMsg}</div>`; return; }
         const data = await resp.json();
-
-        let html = `<div class="profile-header">
-            <div class="profile-name">${escapeHtml(data.filer_name)}</div>
-            <div class="profile-meta">${escapeHtml(data.edinet_code)}</div>
-        </div>`;
-
-        // Summary stats
-        const s = data.summary;
-        html += `<div class="profile-stats">
-            <div class="profile-stat"><span class="profile-stat-value">${s.total_filings}</span><span class="profile-stat-label">提出件数</span></div>
-            <div class="profile-stat"><span class="profile-stat-value">${s.unique_targets}</span><span class="profile-stat-label">対象企業数</span></div>
-            <div class="profile-stat"><span class="profile-stat-value">${s.avg_holding_ratio != null ? s.avg_holding_ratio + '%' : '-'}</span><span class="profile-stat-label">平均保有割合</span></div>
-        </div>`;
-        if (s.first_filing && s.last_filing) {
-            html += `<div class="profile-period">${escapeHtml(s.first_filing.slice(0,10))} 〜 ${escapeHtml(s.last_filing.slice(0,10))}</div>`;
-        }
-
-        // Target companies table
-        if (data.targets && data.targets.length > 0) {
-            html += `<div class="profile-section-title">保有銘柄一覧</div>`;
-            html += '<div class="feed-table-wrapper"><table class="feed-table"><thead><tr><th>対象企業</th><th>コード</th><th>最新割合</th><th>件数</th><th>推移</th></tr></thead><tbody>';
-            for (const t of data.targets) {
-                const ratio = t.latest_ratio != null ? t.latest_ratio.toFixed(2) + '%' : '-';
-                // Mini sparkline from history
-                let trend = '';
-                if (t.history && t.history.length >= 2) {
-                    const pts = t.history.slice().reverse().slice(-10);
-                    const vals = pts.map(p => p.ratio);
-                    trend = miniSparkline(vals);
-                }
-                const nameLink = t.sec_code
-                    ? `<a href="#" onclick="event.preventDefault();openCompanyProfile('${escapeHtml(t.sec_code)}')">${escapeHtml(t.company_name || '不明')}</a>`
-                    : escapeHtml(t.company_name || '不明');
-                html += `<tr>
-                    <td>${nameLink}</td>
-                    <td>${escapeHtml(t.sec_code || '-')}</td>
-                    <td>${ratio}</td>
-                    <td>${t.filing_count}</td>
-                    <td>${trend}</td>
-                </tr>`;
-            }
-            html += '</tbody></table></div>';
-        }
-
-        // Recent filings
-        if (data.recent_filings && data.recent_filings.length > 0) {
-            html += renderProfileFilings(data.recent_filings);
-        }
-
-        body.innerHTML = html;
+        body.innerHTML = renderFn(data);
         attachProfileFilingHandlers();
     } catch (e) {
-        console.error('Filer profile error:', e);
+        console.error('Profile error:', e);
         body.innerHTML = '<div class="stock-no-data">プロフィールの読み込みに失敗しました</div>';
     }
 }
 
+function _profileItemsTable(title, headers, items, rowFn) {
+    if (!items || items.length === 0) return '';
+    let html = `<div class="profile-section-title">${title}</div>`;
+    html += `<div class="feed-table-wrapper"><table class="feed-table"><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>`;
+    for (const item of items) {
+        const ratio = item.latest_ratio != null ? item.latest_ratio.toFixed(2) + '%' : '-';
+        let trend = '';
+        if (item.history && item.history.length >= 2) {
+            const vals = item.history.slice().reverse().slice(-10).map(p => p.ratio);
+            trend = miniSparkline(vals);
+        }
+        html += rowFn(item, ratio, trend);
+    }
+    return html + '</tbody></table></div>';
+}
+
+async function openFilerProfile(edinetCode) {
+    if (!edinetCode) return;
+    openProfileModal(
+        `/api/analytics/filer/${encodeURIComponent(edinetCode)}`,
+        '提出者プロフィール読み込み中...', '提出者データが見つかりません',
+        (data) => {
+            const s = data.summary;
+            let html = `<div class="profile-header">
+                <div class="profile-name">${escapeHtml(data.filer_name)}</div>
+                <div class="profile-meta">${escapeHtml(data.edinet_code)}</div>
+            </div>`;
+            html += `<div class="profile-stats">
+                <div class="profile-stat"><span class="profile-stat-value">${s.total_filings}</span><span class="profile-stat-label">提出件数</span></div>
+                <div class="profile-stat"><span class="profile-stat-value">${s.unique_targets}</span><span class="profile-stat-label">対象企業数</span></div>
+                <div class="profile-stat"><span class="profile-stat-value">${s.avg_holding_ratio != null ? s.avg_holding_ratio + '%' : '-'}</span><span class="profile-stat-label">平均保有割合</span></div>
+            </div>`;
+            if (s.first_filing && s.last_filing) {
+                html += `<div class="profile-period">${escapeHtml(s.first_filing.slice(0,10))} 〜 ${escapeHtml(s.last_filing.slice(0,10))}</div>`;
+            }
+            html += _profileItemsTable('保有銘柄一覧', ['対象企業','コード','最新割合','件数','推移'], data.targets, (t, ratio, trend) => {
+                const link = t.sec_code
+                    ? `<a href="#" onclick="event.preventDefault();openCompanyProfile('${escapeHtml(t.sec_code)}')">${escapeHtml(t.company_name || '不明')}</a>`
+                    : escapeHtml(t.company_name || '不明');
+                return `<tr><td>${link}</td><td>${escapeHtml(t.sec_code || '-')}</td><td>${ratio}</td><td>${t.filing_count}</td><td>${trend}</td></tr>`;
+            });
+            if (data.recent_filings && data.recent_filings.length > 0) html += renderProfileFilings(data.recent_filings);
+            return html;
+        }
+    );
+}
+
 async function openCompanyProfile(secCode) {
     if (!secCode) return;
-    const body = document.getElementById('modal-body');
-    const modal = document.getElementById('detail-modal');
-    if (!body || !modal) return;
-    currentModalDocId = null;
-    body.innerHTML = '<div class="stock-loading">企業プロフィール読み込み中...</div>';
-    modal.classList.remove('hidden');
-
-    try {
-        const resp = await fetch(`/api/analytics/company/${encodeURIComponent(secCode)}`);
-        if (!resp.ok) { body.innerHTML = '<div class="stock-no-data">企業データが見つかりません</div>'; return; }
-        const data = await resp.json();
-
-        let html = `<div class="profile-header">
-            <div class="profile-name">${escapeHtml(data.company_name || secCode)}</div>
-            <div class="profile-meta">[${escapeHtml(data.sec_code)}] ${escapeHtml(data.sector || '')}</div>
-        </div>`;
-
-        html += `<div class="profile-stats">
-            <div class="profile-stat"><span class="profile-stat-value">${data.holder_count}</span><span class="profile-stat-label">大量保有者数</span></div>
-            <div class="profile-stat"><span class="profile-stat-value">${data.total_filings}</span><span class="profile-stat-label">報告件数</span></div>
-        </div>`;
-
-        // Holders table
-        if (data.holders && data.holders.length > 0) {
-            html += `<div class="profile-section-title">大量保有者一覧</div>`;
-            html += '<div class="feed-table-wrapper"><table class="feed-table"><thead><tr><th>保有者</th><th>最新割合</th><th>件数</th><th>推移</th></tr></thead><tbody>';
-            for (const h of data.holders) {
-                const ratio = h.latest_ratio != null ? h.latest_ratio.toFixed(2) + '%' : '-';
-                let trend = '';
-                if (h.history && h.history.length >= 2) {
-                    const pts = h.history.slice().reverse().slice(-10);
-                    const vals = pts.map(p => p.ratio);
-                    trend = miniSparkline(vals);
-                }
-                const nameLink = h.edinet_code
+    openProfileModal(
+        `/api/analytics/company/${encodeURIComponent(secCode)}`,
+        '企業プロフィール読み込み中...', '企業データが見つかりません',
+        (data) => {
+            let html = `<div class="profile-header">
+                <div class="profile-name">${escapeHtml(data.company_name || secCode)}</div>
+                <div class="profile-meta">[${escapeHtml(data.sec_code)}] ${escapeHtml(data.sector || '')}</div>
+            </div>`;
+            html += `<div class="profile-stats">
+                <div class="profile-stat"><span class="profile-stat-value">${data.holder_count}</span><span class="profile-stat-label">大量保有者数</span></div>
+                <div class="profile-stat"><span class="profile-stat-value">${data.total_filings}</span><span class="profile-stat-label">報告件数</span></div>
+            </div>`;
+            html += _profileItemsTable('大量保有者一覧', ['保有者','最新割合','件数','推移'], data.holders, (h, ratio, trend) => {
+                const link = h.edinet_code
                     ? `<a href="#" onclick="event.preventDefault();openFilerProfile('${escapeHtml(h.edinet_code)}')">${escapeHtml(h.filer_name || '不明')}</a>`
                     : escapeHtml(h.filer_name || '不明');
-                html += `<tr>
-                    <td>${nameLink}</td>
-                    <td>${ratio}</td>
-                    <td>${h.filing_count}</td>
-                    <td>${trend}</td>
-                </tr>`;
-            }
-            html += '</tbody></table></div>';
+                return `<tr><td>${link}</td><td>${ratio}</td><td>${h.filing_count}</td><td>${trend}</td></tr>`;
+            });
+            if (data.recent_filings && data.recent_filings.length > 0) html += renderProfileFilings(data.recent_filings);
+            return html;
         }
-
-        // Recent filings
-        if (data.recent_filings && data.recent_filings.length > 0) {
-            html += renderProfileFilings(data.recent_filings);
-        }
-
-        body.innerHTML = html;
-        attachProfileFilingHandlers();
-    } catch (e) {
-        console.error('Company profile error:', e);
-        body.innerHTML = '<div class="stock-no-data">プロフィールの読み込みに失敗しました</div>';
-    }
+    );
 }
 
 /** Generate an inline SVG sparkline from an array of numbers. */
@@ -2953,21 +2892,15 @@ function initMobileNav() {
         });
     });
 
-    // Overlay backdrop close handlers
-    document.querySelectorAll('.overlay-backdrop').forEach(backdrop => {
-        backdrop.addEventListener('click', () => {
-            const overlay = backdrop.closest('.sidebar-overlay');
-            if (overlay) closeMobileOverlay(overlay.id);
+    // Overlay backdrop & close button handlers
+    for (const sel of ['.overlay-backdrop', '.overlay-close']) {
+        document.querySelectorAll(sel).forEach(el => {
+            el.addEventListener('click', () => {
+                const overlay = el.closest('.sidebar-overlay');
+                if (overlay) closeMobileOverlay(overlay.id);
+            });
         });
-    });
-
-    // Overlay close button handlers
-    document.querySelectorAll('.overlay-close').forEach(closeBtn => {
-        closeBtn.addEventListener('click', () => {
-            const overlay = closeBtn.closest('.sidebar-overlay');
-            if (overlay) closeMobileOverlay(overlay.id);
-        });
-    });
+    }
 
     // Initialize swipe-to-close on all overlays
     document.querySelectorAll('.sidebar-overlay').forEach(overlayEl => {
@@ -2976,36 +2909,10 @@ function initMobileNav() {
 
     // Mobile settings panel handlers
     const mobileSoundBtn = document.getElementById('mobile-btn-sound');
-    if (mobileSoundBtn) {
-        mobileSoundBtn.addEventListener('click', () => {
-            state.soundEnabled = !state.soundEnabled;
-            mobileSoundBtn.classList.toggle('active', state.soundEnabled);
-            mobileSoundBtn.textContent = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF';
-            updateToggleBtn(document.getElementById('btn-sound'), state.soundEnabled,
-                'サウンド ON', 'サウンド OFF', 'サウンドアラート: 有効', 'サウンドアラート: 無効');
-            savePreferences();
-        });
-    }
+    if (mobileSoundBtn) mobileSoundBtn.addEventListener('click', toggleSound);
 
     const mobileNotifyBtn = document.getElementById('mobile-btn-notify');
-    if (mobileNotifyBtn) {
-        mobileNotifyBtn.addEventListener('click', async () => {
-            if (!('Notification' in window)) {
-                alert('このブラウザはデスクトップ通知に対応していません');
-                return;
-            }
-            const perm = await Notification.requestPermission();
-            state.notificationsEnabled = perm === 'granted';
-            if (perm === 'denied') {
-                showToast('通知が拒否されました。ブラウザの設定から許可してください。');
-            }
-            mobileNotifyBtn.classList.toggle('active', state.notificationsEnabled);
-            mobileNotifyBtn.textContent = state.notificationsEnabled ? '通知 ON' : '通知 OFF';
-            updateToggleBtn(document.getElementById('btn-notify'), state.notificationsEnabled,
-                '通知 ON', '通知 OFF', 'デスクトップ通知: 有効', 'デスクトップ通知: 無効');
-            savePreferences();
-        });
-    }
+    if (mobileNotifyBtn) mobileNotifyBtn.addEventListener('click', toggleNotify);
 
     const mobilePollBtn = document.getElementById('mobile-btn-poll');
     if (mobilePollBtn) {
