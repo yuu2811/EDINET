@@ -111,16 +111,26 @@ def _make_pdf_response(content: bytes, doc_id: str) -> Response:
     )
 
 
+def _apply_xbrl_data(filing, data: dict) -> bool:
+    """Apply parsed XBRL data to a filing. Returns True if any field was set."""
+    changed = False
+    for field, value in data.items():
+        if value is not None:
+            setattr(filing, field, value)
+            changed = True
+    filing.xbrl_parsed = True
+    return changed
+
+
 @documents_router.post("/{doc_id}/retry-xbrl")
 async def retry_xbrl_enrichment(doc_id: str) -> dict:
     """Re-download and re-parse XBRL for a specific filing."""
     doc_id = validate_doc_id(doc_id)
 
     async with get_async_session()() as session:
-        result = await session.execute(
+        filing = (await session.execute(
             select(Filing).where(Filing.doc_id == doc_id)
-        )
-        filing = result.scalar_one_or_none()
+        )).scalar_one_or_none()
         if not filing:
             return {"success": False, "error": "書類が見つかりません"}
 
@@ -132,29 +142,16 @@ async def retry_xbrl_enrichment(doc_id: str) -> dict:
         if not any(v is not None for v in data.values()):
             return {"success": False, "error": "XBRLからデータを抽出できません"}
 
-        for field, value in data.items():
-            if value is not None:
-                setattr(filing, field, value)
-        filing.xbrl_parsed = True
+        _apply_xbrl_data(filing, data)
         await session.commit()
-
         return {"success": True, "data": data}
 
 
 @documents_router.post("/batch-retry-xbrl")
 async def batch_retry_xbrl() -> dict:
-    """Re-parse XBRL for filings missing data.
-
-    Targets filings where:
-    - xbrl_parsed is False (never parsed), OR
-    - holding_ratio is None (parse failed), OR
-    - previous_holding_ratio is None (パーサー改善後の再抽出対象)
-
-    パーサー改善後に呼び出すことで、以前は抽出できなかった
-    previous_holding_ratio を再取得できる。最大50件ずつ処理。
-    """
+    """Re-parse XBRL for filings missing data (max 50 at a time)."""
     async with get_async_session()() as session:
-        result = await session.execute(
+        filings = (await session.execute(
             select(Filing)
             .where(
                 Filing.xbrl_flag.is_(True),
@@ -166,8 +163,7 @@ async def batch_retry_xbrl() -> dict:
             )
             .order_by(desc(Filing.id))
             .limit(50)
-        )
-        filings = result.scalars().all()
+        )).scalars().all()
         if not filings:
             return {"success": True, "processed": 0, "message": "対象なし"}
 
@@ -175,27 +171,20 @@ async def batch_retry_xbrl() -> dict:
         enriched = 0
         for i, filing in enumerate(filings):
             if i > 0:
-                await asyncio.sleep(3.0)  # EDINET rate limit
+                await asyncio.sleep(3.0)
             try:
                 zip_content = await asyncio.wait_for(
-                    edinet_client.download_xbrl(filing.doc_id),
-                    timeout=15.0,
+                    edinet_client.download_xbrl(filing.doc_id), timeout=15.0,
                 )
                 if not zip_content:
                     processed += 1
                     continue
-
                 data = edinet_client.parse_xbrl_for_holding_data(zip_content)
-                for field, value in data.items():
-                    if value is not None:
-                        setattr(filing, field, value)
-                filing.xbrl_parsed = True
-                if any(v is not None for v in data.values()):
+                if _apply_xbrl_data(filing, data):
                     enriched += 1
                 processed += 1
             except Exception:
                 processed += 1
-                continue
 
         await session.commit()
         return {

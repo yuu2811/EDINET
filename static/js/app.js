@@ -88,6 +88,75 @@ function extractTargetFromDescription(desc) {
 }
 
 // ---------------------------------------------------------------------------
+// Shared UI Helpers (reduce code duplication)
+// ---------------------------------------------------------------------------
+
+/** Normalize 5-digit sec code to 4-digit */
+function normalizeSecCode(code) {
+    if (!code) return '';
+    return code.length === 5 ? code.slice(0, 4) : code;
+}
+
+/** Get cached stock data for a sec code */
+function getCachedStock(secCode) {
+    const code = normalizeSecCode(secCode);
+    if (!code) return null;
+    const cached = stockCache[code];
+    return cached && cached.data ? cached.data : null;
+}
+
+/** Determine CSS class for ratio change */
+function ratioChangeClass(change) {
+    return change > 0 ? 'positive' : change < 0 ? 'negative' : 'neutral';
+}
+
+/** Build clickable filer link HTML */
+function filerLinkHtml(name, edinetCode) {
+    const safe = escapeHtml(name || '(不明)');
+    if (!edinetCode) return safe;
+    return `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeHtml(edinetCode)}')">${safe}</a>`;
+}
+
+/** Build clickable company link HTML */
+function companyLinkHtml(name, secCode, showCode) {
+    const safe = escapeHtml(name || '(対象不明)');
+    const codeStr = showCode && secCode ? ` ${escapeHtml('[' + secCode + ']')}` : '';
+    if (!secCode) return safe + codeStr;
+    return `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${safe}${codeStr}</a>`;
+}
+
+/** Build badge HTML for a filing */
+function buildBadges(f, cssPrefix) {
+    // cssPrefix: 'card-badge badge-' for desktop cards, 'tbl-badge badge-' for table, 'm-badge m-badge-' for mobile
+    const isChange = f.doc_description && f.doc_description.includes('変更');
+    const badges = [];
+    if (f.is_amendment) badges.push([`${cssPrefix}amendment`, '訂正']);
+    else if (isChange) badges.push([`${cssPrefix}change`, '変更']);
+    else badges.push([`${cssPrefix}new`, '新規']);
+    if (f.is_special_exemption) badges.push([`${cssPrefix}special`, '特例']);
+    if (f.english_doc_flag) badges.push([`${cssPrefix}english`, 'EN']);
+    if (f.withdrawal_status === '1') badges.push([`${cssPrefix}withdrawn`, '取下']);
+    return badges.map(([cls, txt]) => `<span class="${cls}">${txt}</span>`).join('');
+}
+
+/** Build change display HTML */
+function changeDisplayHtml(change, cls) {
+    if (change == null || change === 0) return '';
+    const arrow = change > 0 ? '▲' : '▼';
+    const sign = change > 0 ? '+' : '';
+    return `${arrow}${sign}${change.toFixed(2)}%`;
+}
+
+/** Update a toggle button's visual state */
+function updateToggleBtn(btn, active, onTitle, offTitle, onAria, offAria) {
+    if (!btn) return;
+    btn.classList.toggle('active', active);
+    btn.title = active ? onTitle : offTitle;
+    btn.setAttribute('aria-pressed', active);
+    btn.setAttribute('aria-label', active ? onAria : offAria);
+}
+
+// ---------------------------------------------------------------------------
 // Toast Notifications
 // ---------------------------------------------------------------------------
 
@@ -179,27 +248,15 @@ function loadPreferences() {
         // Restore sound preference
         if (typeof prefs.soundEnabled === 'boolean') {
             state.soundEnabled = prefs.soundEnabled;
-            const btn = document.getElementById('btn-sound');
-            if (btn) {
-                btn.classList.toggle('active', state.soundEnabled);
-                btn.title = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF';
-                btn.setAttribute('aria-pressed', state.soundEnabled);
-                btn.setAttribute('aria-label',
-                    state.soundEnabled ? 'サウンドアラート: 有効' : 'サウンドアラート: 無効');
-            }
+            updateToggleBtn(document.getElementById('btn-sound'), state.soundEnabled,
+                'サウンド ON', 'サウンド OFF', 'サウンドアラート: 有効', 'サウンドアラート: 無効');
         }
 
         // Restore notification preference
         if (typeof prefs.notificationsEnabled === 'boolean') {
             state.notificationsEnabled = prefs.notificationsEnabled;
-            const btn = document.getElementById('btn-notify');
-            if (btn) {
-                btn.classList.toggle('active', state.notificationsEnabled);
-                btn.title = state.notificationsEnabled ? '通知 ON' : '通知 OFF';
-                btn.setAttribute('aria-pressed', state.notificationsEnabled);
-                btn.setAttribute('aria-label',
-                    state.notificationsEnabled ? 'デスクトップ通知: 有効' : 'デスクトップ通知: 無効');
-            }
+            updateToggleBtn(document.getElementById('btn-notify'), state.notificationsEnabled,
+                '通知 ON', '通知 OFF', 'デスクトップ通知: 有効', 'デスクトップ通知: 無効');
         }
 
         // Restore view mode
@@ -325,12 +382,8 @@ function initEventListeners() {
     // Sound toggle
     document.getElementById('btn-sound').addEventListener('click', () => {
         state.soundEnabled = !state.soundEnabled;
-        const btn = document.getElementById('btn-sound');
-        btn.classList.toggle('active', state.soundEnabled);
-        btn.title = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF';
-        btn.setAttribute('aria-pressed', state.soundEnabled);
-        btn.setAttribute('aria-label',
-            state.soundEnabled ? 'サウンドアラート: 有効' : 'サウンドアラート: 無効');
+        updateToggleBtn(document.getElementById('btn-sound'), state.soundEnabled,
+            'サウンド ON', 'サウンド OFF', 'サウンドアラート: 有効', 'サウンドアラート: 無効');
         savePreferences();
     });
 
@@ -345,12 +398,8 @@ function initEventListeners() {
         if (perm === 'denied') {
             showToast('通知が拒否されました。ブラウザの設定から許可してください。');
         }
-        const btn = document.getElementById('btn-notify');
-        btn.classList.toggle('active', state.notificationsEnabled);
-        btn.title = state.notificationsEnabled ? '通知 ON' : '通知 OFF';
-        btn.setAttribute('aria-pressed', state.notificationsEnabled);
-        btn.setAttribute('aria-label',
-            state.notificationsEnabled ? 'デスクトップ通知: 有効' : 'デスクトップ通知: 無効');
+        updateToggleBtn(document.getElementById('btn-notify'), state.notificationsEnabled,
+            '通知 ON', '通知 OFF', 'デスクトップ通知: 有効', 'デスクトップ通知: 無効');
         savePreferences();
     });
 
@@ -391,24 +440,18 @@ function initEventListeners() {
     });
 
     // View toggle (cards / table)
-    document.getElementById('view-cards').addEventListener('click', () => {
-        state.viewMode = 'cards';
-        document.getElementById('view-cards').classList.add('active');
-        document.getElementById('view-cards').setAttribute('aria-pressed', 'true');
-        document.getElementById('view-table').classList.remove('active');
-        document.getElementById('view-table').setAttribute('aria-pressed', 'false');
-        renderFeed();
-        savePreferences();
-    });
-    document.getElementById('view-table').addEventListener('click', () => {
-        state.viewMode = 'table';
-        document.getElementById('view-table').classList.add('active');
-        document.getElementById('view-table').setAttribute('aria-pressed', 'true');
-        document.getElementById('view-cards').classList.remove('active');
-        document.getElementById('view-cards').setAttribute('aria-pressed', 'false');
-        renderFeed();
-        savePreferences();
-    });
+    for (const mode of ['cards', 'table']) {
+        document.getElementById(`view-${mode}`).addEventListener('click', () => {
+            state.viewMode = mode;
+            const other = mode === 'cards' ? 'table' : 'cards';
+            document.getElementById(`view-${mode}`).classList.add('active');
+            document.getElementById(`view-${mode}`).setAttribute('aria-pressed', 'true');
+            document.getElementById(`view-${other}`).classList.remove('active');
+            document.getElementById(`view-${other}`).setAttribute('aria-pressed', 'false');
+            renderFeed();
+            savePreferences();
+        });
+    }
 
     // Watchlist add
     document.getElementById('btn-add-watch').addEventListener('click', () => {
@@ -869,40 +912,19 @@ function renderFeedTable(container, filings) {
             ? f.submit_date_time.split(' ').pop() || f.submit_date_time
             : '-';
 
-        // Type badge
-        let typeBadge;
-        if (f.is_amendment) {
-            typeBadge = '<span class="badge-amendment tbl-badge">訂正</span>';
-        } else if (f.doc_description && f.doc_description.includes('変更')) {
-            typeBadge = '<span class="badge-change tbl-badge">変更</span>';
-        } else {
-            typeBadge = '<span class="badge-new tbl-badge">新規</span>';
-        }
-        if (f.is_special_exemption) {
-            typeBadge += ' <span class="badge-special tbl-badge">特例</span>';
-        }
-        if (f.english_doc_flag) {
-            typeBadge += ' <span class="badge-english tbl-badge">EN</span>';
-        }
-        if (f.withdrawal_status === '1') {
-            typeBadge += ' <span class="badge-withdrawn tbl-badge">取下</span>';
-        }
+        const typeBadge = buildBadges(f, 'tbl-badge badge-');
 
         const filerName = f.holder_name || f.filer_name || '(不明)';
-        const filer = f.edinet_code
-            ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeHtml(f.edinet_code)}')">${escapeHtml(filerName)}</a>`
-            : escapeHtml(filerName);
+        const filer = filerLinkHtml(filerName, f.edinet_code);
         const targetName = f.target_company_name || extractTargetFromDescription(f.doc_description) || '(対象不明)';
         const secCode = f.target_sec_code || f.sec_code || '';
-        const target = secCode
-            ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${escapeHtml(targetName)}</a>`
-            : escapeHtml(targetName);
+        const target = companyLinkHtml(targetName, secCode, false);
         const codeDisplay = secCode ? `<span class="tbl-code">${escapeHtml(secCode)}</span>` : '';
 
         // Ratio
+        const cls = ratioChangeClass(f.ratio_change);
         let ratioHtml = '<span class="text-dim">-</span>';
         if (f.holding_ratio != null) {
-            const cls = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : '';
             ratioHtml = `<span class="${cls}">${f.holding_ratio.toFixed(2)}%</span>`;
         } else if (f.xbrl_flag && !f.xbrl_parsed) {
             ratioHtml = '<span class="xbrl-pending">取得中...</span>';
@@ -911,23 +933,20 @@ function renderFeedTable(container, filings) {
         // Change
         let changeHtml = '<span class="text-dim">-</span>';
         if (f.ratio_change != null && f.ratio_change !== 0) {
-            const cls = f.ratio_change > 0 ? 'positive' : 'negative';
-            const arrow = f.ratio_change > 0 ? '▲' : '▼';
-            const sign = f.ratio_change > 0 ? '+' : '';
-            changeHtml = `<span class="tbl-change ${cls}">${arrow}${sign}${f.ratio_change.toFixed(2)}%</span>`;
+            changeHtml = `<span class="tbl-change ${cls}">${changeDisplayHtml(f.ratio_change, cls)}</span>`;
         }
 
         // Previous ratio
         const prev = f.previous_holding_ratio != null ? f.previous_holding_ratio.toFixed(2) + '%' : '-';
 
         // Market data from stock cache
-        const code = secCode ? (secCode.length === 5 ? secCode.slice(0, 4) : secCode) : '';
-        const cached = code ? stockCache[code] : null;
-        const sd = cached && cached.data ? cached.data : null;
-        const loadingHint = code && !cached ? '<span class="text-dim tbl-loading">...</span>' : '<span class="text-dim">-</span>';
+        const sd = getCachedStock(secCode);
+        const code = normalizeSecCode(secCode);
+        const stockLoading = code && !stockCache[code];
+        const loadingHint = stockLoading ? '<span class="text-dim tbl-loading">...</span>' : '<span class="text-dim">-</span>';
         const mcap = sd && sd.market_cap_display ? sd.market_cap_display : loadingHint;
-        const pbr = sd && sd.pbr != null ? Number(sd.pbr).toFixed(2) + '倍' : (code && !cached ? '...' : '-');
-        const price = sd && sd.current_price != null ? '\u00a5' + Math.round(sd.current_price).toLocaleString() : (code && !cached ? '...' : '-');
+        const pbr = sd && sd.pbr != null ? Number(sd.pbr).toFixed(2) + '倍' : (stockLoading ? '...' : '-');
+        const price = sd && sd.current_price != null ? '\u00a5' + Math.round(sd.current_price).toLocaleString() : (stockLoading ? '...' : '-');
 
         // Links
         let links = '';
@@ -979,59 +998,28 @@ function createFeedCard(f) {
     if (f.ratio_change > 0) cardClass += ' ratio-up';
     else if (f.ratio_change < 0) cardClass += ' ratio-down';
 
-    // Badge
-    let badge = '';
-    if (f.is_amendment) {
-        badge = '<span class="card-badge badge-amendment">訂正</span>';
-    } else if (isChange) {
-        badge = '<span class="card-badge badge-change">変更</span>';
-    } else {
-        badge = '<span class="card-badge badge-new">新規</span>';
-    }
-
-    if (f.is_special_exemption) {
-        badge += '<span class="card-badge badge-special">特例</span>';
-    }
-
-    if (f.english_doc_flag) {
-        badge += '<span class="card-badge badge-english">EN</span>';
-    }
-    if (f.withdrawal_status === '1') {
-        badge += '<span class="card-badge badge-withdrawn">取下</span>';
-    }
-
-    // Watchlist match badge
+    let badge = buildBadges(f, 'card-badge badge-');
     if (isWatchlistMatch(f)) {
         badge += '<span class="card-badge badge-watchlist">WATCH</span>';
     }
 
-    // Time
     const time = f.submit_date_time
         ? f.submit_date_time.split(' ').pop() || f.submit_date_time
         : '-';
 
-    // Filer / Target (clickable if codes available)
-    const filerName = f.holder_name || f.filer_name || '(不明)';
-    const filerHtml = f.edinet_code
-        ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeHtml(f.edinet_code)}')">${escapeHtml(filerName)}</a>`
-        : escapeHtml(filerName);
+    const filerHtml = filerLinkHtml(f.holder_name || f.filer_name, f.edinet_code);
     const targetName = f.target_company_name || extractTargetFromDescription(f.doc_description) || '(対象不明)';
     const cardSecCode = f.target_sec_code || f.sec_code || '';
-    const targetCode = cardSecCode ? `[${cardSecCode}]` : '';
-    const targetHtml = cardSecCode
-        ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(cardSecCode)}')">${escapeHtml(targetName)} ${escapeHtml(targetCode)}</a>`
-        : `${escapeHtml(targetName)} ${escapeHtml(targetCode)}`;
+    const targetHtml = companyLinkHtml(targetName, cardSecCode, true);
 
     // Ratio with before→after flow display
     let ratioHtml = '';
     if (f.holding_ratio != null) {
-        const ratioClass = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : 'neutral';
+        const ratioClass = ratioChangeClass(f.ratio_change);
 
         let changeHtml = '';
         if (f.ratio_change != null && f.ratio_change !== 0) {
-            const arrow = f.ratio_change > 0 ? '▲' : '▼';
-            const sign = f.ratio_change > 0 ? '+' : '';
-            changeHtml = `<span class="ratio-change-pill ${ratioClass}">${arrow} ${sign}${f.ratio_change.toFixed(2)}%</span>`;
+            changeHtml = `<span class="ratio-change-pill ${ratioClass}">${changeDisplayHtml(f.ratio_change)}</span>`;
         }
 
         // Flow row: prev → curr [change pill], or just curr if no prev
@@ -1094,18 +1082,14 @@ function createFeedCard(f) {
 
     // Market data from cache (desktop only)
     let marketDataHtml = '';
-    if (cardSecCode) {
-        const code = cardSecCode.length === 5 ? cardSecCode.slice(0, 4) : cardSecCode;
-        const cached = stockCache[code];
-        if (cached && cached.data) {
-            const sd = cached.data;
-            const parts = [];
-            if (sd.market_cap_display) parts.push(`時価:${sd.market_cap_display}`);
-            if (sd.pbr != null) parts.push(`PBR:${Number(sd.pbr).toFixed(2)}倍`);
-            if (sd.current_price != null) parts.push(`\u00a5${Math.round(sd.current_price).toLocaleString()}`);
-            if (parts.length > 0) {
-                marketDataHtml = `<div class="card-market-data">${parts.map(p => `<span>${p}</span>`).join('')}</div>`;
-            }
+    const cardStockData = getCachedStock(cardSecCode);
+    if (cardStockData) {
+        const parts = [];
+        if (cardStockData.market_cap_display) parts.push(`時価:${cardStockData.market_cap_display}`);
+        if (cardStockData.pbr != null) parts.push(`PBR:${Number(cardStockData.pbr).toFixed(2)}倍`);
+        if (cardStockData.current_price != null) parts.push(`\u00a5${Math.round(cardStockData.current_price).toLocaleString()}`);
+        if (parts.length > 0) {
+            marketDataHtml = `<div class="card-market-data">${parts.map(p => `<span>${p}</span>`).join('')}</div>`;
         }
     }
 
@@ -1141,50 +1125,25 @@ function createMobileFeedCard(f) {
     if (f.ratio_change > 0) cardClass += ' ratio-up';
     else if (f.ratio_change < 0) cardClass += ' ratio-down';
 
-    // Badge
-    let badge = '';
-    if (f.is_amendment) {
-        badge = '<span class="m-badge m-badge-amend">訂正</span>';
-    } else if (isChange) {
-        badge = '<span class="m-badge m-badge-change">変更</span>';
-    } else {
-        badge = '<span class="m-badge m-badge-new">新規</span>';
-    }
-    if (f.is_special_exemption) {
-        badge += '<span class="m-badge m-badge-special">特例</span>';
-    }
-    if (f.english_doc_flag) {
-        badge += '<span class="m-badge m-badge-english">EN</span>';
-    }
-    if (f.withdrawal_status === '1') {
-        badge += '<span class="m-badge m-badge-withdrawn">取下</span>';
-    }
+    // Badge (mobile uses m-badge prefix; amendment → amend)
+    let badge = buildBadges(f, 'm-badge m-badge-');
+    // Fix: mobile uses m-badge-amend not m-badge-amendment
+    badge = badge.replace('m-badge-amendment', 'm-badge-amend');
     if (isWatchlistMatch(f)) {
         badge += '<span class="m-badge m-badge-watch">&#9733;</span>';
     }
 
-    // Time
     const time = f.submit_date_time
         ? f.submit_date_time.split(' ').pop() || f.submit_date_time
         : '';
 
-    // Target company = headline (clickable if sec_code available)
-    const target = f.target_company_name
-        || extractTargetFromDescription(f.doc_description)
-        || '(対象不明)';
+    const target = f.target_company_name || extractTargetFromDescription(f.doc_description) || '(対象不明)';
     const secCode = f.target_sec_code || f.sec_code;
     const targetCode = secCode ? `[${secCode}]` : '';
-    const mTargetHtml = secCode
-        ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${escapeHtml(target)}</a>`
-        : escapeHtml(target);
-    // Filer = secondary (clickable if edinet_code available)
-    const filer = f.holder_name || f.filer_name || '(不明)';
-    const mFilerHtml = f.edinet_code
-        ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeHtml(f.edinet_code)}')">${escapeHtml(filer)}</a>`
-        : escapeHtml(filer);
+    const mTargetHtml = companyLinkHtml(target, secCode, false);
+    const mFilerHtml = filerLinkHtml(f.holder_name || f.filer_name, f.edinet_code);
 
-    // Ratio metrics — compact flow: prev → curr  change
-    const ratioClass = f.ratio_change > 0 ? 'positive' : f.ratio_change < 0 ? 'negative' : 'neutral';
+    const ratioClass = ratioChangeClass(f.ratio_change);
 
     let ratioVal;
     if (f.holding_ratio != null && f.previous_holding_ratio != null) {
@@ -1201,18 +1160,12 @@ function createMobileFeedCard(f) {
 
     let changeHtml = '';
     if (f.ratio_change != null && f.ratio_change !== 0) {
-        const arrow = f.ratio_change > 0 ? '▲' : '▼';
-        const sign = f.ratio_change > 0 ? '+' : '';
-        changeHtml = `<span class="m-change ${ratioClass}">${arrow}${sign}${f.ratio_change.toFixed(2)}%</span>`;
+        changeHtml = `<span class="m-change ${ratioClass}">${changeDisplayHtml(f.ratio_change)}</span>`;
     }
 
-    // prevHtml no longer needed — shown inline in ratioVal
-    const prevHtml = '';
-
-    // Market data from stock cache (secCode already defined above)
-    const code = secCode ? (secCode.length === 5 ? secCode.slice(0, 4) : secCode) : '';
-    const cached = code ? stockCache[code] : null;
-    const sd = cached && cached.data ? cached.data : null;
+    // Market data from stock cache
+    const sd = getCachedStock(secCode);
+    const code = normalizeSecCode(secCode);
 
     const stockLoading = code && !cached;
     let mcapHtml = '';
@@ -1260,7 +1213,6 @@ function createMobileFeedCard(f) {
     </div>
     <div class="m-card-foot">
         <span class="m-filer">${mFilerHtml}</span>
-        ${prevHtml}
         ${linkHtml}
     </div>
 </div>`;
@@ -1293,11 +1245,8 @@ function renderStats() {
     if (s.top_filers && s.top_filers.length > 0) {
         filersList.innerHTML = s.top_filers.map(f => {
             const name = f.name || '(不明)';
-            const nameHtml = f.edinet_code
-                ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeHtml(f.edinet_code)}')">${escapeHtml(name)}</a>`
-                : escapeHtml(name);
             return `<div class="filer-row">
-                <span class="filer-name" title="${escapeHtml(name)}">${nameHtml}</span>
+                <span class="filer-name" title="${escapeHtml(name)}">${filerLinkHtml(name, f.edinet_code)}</span>
                 <span class="filer-count">${f.count}</span>
             </div>`;
         }).join('');
@@ -1353,31 +1302,18 @@ function renderSummary() {
         </div>
     `;
 
-    if (largestIncrease && largestIncrease.ratio_change > 0) {
-        const name = largestIncrease.target_company_name || largestIncrease.filer_name || '不明';
-        const secCode = largestIncrease.target_sec_code || largestIncrease.sec_code;
-        const nameHtml = secCode
-            ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${escapeHtml(name)}</a>`
-            : escapeHtml(name);
+    for (const [item, label, cls] of [
+        [largestIncrease, '最大増加', 'positive'],
+        [largestDecrease, '最大減少', 'negative'],
+    ]) {
+        if (!item || (cls === 'positive' ? item.ratio_change <= 0 : item.ratio_change >= 0)) continue;
+        const name = item.target_company_name || item.filer_name || '不明';
+        const sign = item.ratio_change > 0 ? '+' : '';
         html += `
         <div class="summary-highlight">
-            <div class="summary-highlight-label">最大増加</div>
-            <div class="summary-highlight-value positive">+${largestIncrease.ratio_change.toFixed(2)}%</div>
-            <div class="summary-highlight-company">${nameHtml}</div>
-        </div>`;
-    }
-
-    if (largestDecrease && largestDecrease.ratio_change < 0) {
-        const name = largestDecrease.target_company_name || largestDecrease.filer_name || '不明';
-        const secCode = largestDecrease.target_sec_code || largestDecrease.sec_code;
-        const nameHtml = secCode
-            ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${escapeHtml(name)}</a>`
-            : escapeHtml(name);
-        html += `
-        <div class="summary-highlight">
-            <div class="summary-highlight-label">最大減少</div>
-            <div class="summary-highlight-value negative">${largestDecrease.ratio_change.toFixed(2)}%</div>
-            <div class="summary-highlight-company">${nameHtml}</div>
+            <div class="summary-highlight-label">${label}</div>
+            <div class="summary-highlight-value ${cls}">${sign}${item.ratio_change.toFixed(2)}%</div>
+            <div class="summary-highlight-company">${companyLinkHtml(name, item.target_sec_code || item.sec_code, false)}</div>
         </div>`;
     }
 
@@ -1396,11 +1332,10 @@ function renderWatchlist() {
     }
 
     container.innerHTML = state.watchlist.map(w => {
-        const code = w.sec_code ? (w.sec_code.length === 5 ? w.sec_code.slice(0, 4) : w.sec_code) : '';
-        const cached = code ? stockCache[code] : null;
+        const sd = getCachedStock(w.sec_code);
         let priceHtml = '';
-        if (cached && cached.data && cached.data.current_price != null) {
-            priceHtml = `<span class="watch-price">&yen;${Math.round(cached.data.current_price).toLocaleString()}</span>`;
+        if (sd && sd.current_price != null) {
+            priceHtml = `<span class="watch-price">&yen;${Math.round(sd.current_price).toLocaleString()}</span>`;
         }
         return `<div class="watch-item" data-sec-code="${escapeHtml(code)}">
             <div class="watch-info">
@@ -2922,20 +2857,10 @@ function syncMobilePanel(panelId) {
         }
 
     } else if (panelId === 'mobile-settings-panel') {
-        // Sync button states with desktop buttons
-        const desktopSoundBtn = document.getElementById('btn-sound');
-        const mobileSoundBtn = document.getElementById('mobile-btn-sound');
-        if (desktopSoundBtn && mobileSoundBtn) {
-            mobileSoundBtn.classList.toggle('active', state.soundEnabled);
-            mobileSoundBtn.textContent = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF';
-        }
-
-        const desktopNotifyBtn = document.getElementById('btn-notify');
-        const mobileNotifyBtn = document.getElementById('mobile-btn-notify');
-        if (desktopNotifyBtn && mobileNotifyBtn) {
-            mobileNotifyBtn.classList.toggle('active', state.notificationsEnabled);
-            mobileNotifyBtn.textContent = state.notificationsEnabled ? '通知 ON' : '通知 OFF';
-        }
+        const msb = document.getElementById('mobile-btn-sound');
+        if (msb) { msb.classList.toggle('active', state.soundEnabled); msb.textContent = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF'; }
+        const mnb = document.getElementById('mobile-btn-notify');
+        if (mnb) { mnb.classList.toggle('active', state.notificationsEnabled); mnb.textContent = state.notificationsEnabled ? '通知 ON' : '通知 OFF'; }
     }
 }
 
@@ -3054,21 +2979,10 @@ function initMobileNav() {
     if (mobileSoundBtn) {
         mobileSoundBtn.addEventListener('click', () => {
             state.soundEnabled = !state.soundEnabled;
-
-            // Update mobile button
             mobileSoundBtn.classList.toggle('active', state.soundEnabled);
             mobileSoundBtn.textContent = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF';
-
-            // Sync with desktop button
-            const desktopBtn = document.getElementById('btn-sound');
-            if (desktopBtn) {
-                desktopBtn.classList.toggle('active', state.soundEnabled);
-                desktopBtn.title = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF';
-                desktopBtn.setAttribute('aria-pressed', state.soundEnabled);
-                desktopBtn.setAttribute('aria-label',
-                    state.soundEnabled ? 'サウンドアラート: 有効' : 'サウンドアラート: 無効');
-            }
-
+            updateToggleBtn(document.getElementById('btn-sound'), state.soundEnabled,
+                'サウンド ON', 'サウンド OFF', 'サウンドアラート: 有効', 'サウンドアラート: 無効');
             savePreferences();
         });
     }
@@ -3085,21 +2999,10 @@ function initMobileNav() {
             if (perm === 'denied') {
                 showToast('通知が拒否されました。ブラウザの設定から許可してください。');
             }
-
-            // Update mobile button
             mobileNotifyBtn.classList.toggle('active', state.notificationsEnabled);
             mobileNotifyBtn.textContent = state.notificationsEnabled ? '通知 ON' : '通知 OFF';
-
-            // Sync with desktop button
-            const desktopBtn = document.getElementById('btn-notify');
-            if (desktopBtn) {
-                desktopBtn.classList.toggle('active', state.notificationsEnabled);
-                desktopBtn.title = state.notificationsEnabled ? '通知 ON' : '通知 OFF';
-                desktopBtn.setAttribute('aria-pressed', state.notificationsEnabled);
-                desktopBtn.setAttribute('aria-label',
-                    state.notificationsEnabled ? 'デスクトップ通知: 有効' : 'デスクトップ通知: 無効');
-            }
-
+            updateToggleBtn(document.getElementById('btn-notify'), state.notificationsEnabled,
+                '通知 ON', '通知 OFF', 'デスクトップ通知: 有効', 'デスクトップ通知: 無効');
             savePreferences();
         });
     }
@@ -3387,7 +3290,6 @@ async function autoFetchForDate(dateStr) {
 // Analytics
 // ---------------------------------------------------------------------------
 
-let _analyticsLoaded = false;
 
 async function loadAnalytics() {
     const period = document.getElementById('rankings-period')?.value || '30d';
@@ -3406,7 +3308,6 @@ async function loadAnalytics() {
 
         renderRankings(rankings, movements);
         renderSectors(sectors);
-        _analyticsLoaded = true;
     } catch (e) {
         console.warn('Analytics load failed:', e);
         // Clear loading indicators so user doesn't see perpetual "読み込み中..."
@@ -3419,6 +3320,14 @@ async function loadAnalytics() {
             if (el) el.innerHTML = '<div class="summary-empty">セクターデータなし</div>';
         }
     }
+}
+
+/** Build a rankings section HTML block */
+function rankingSection(title, items, limit, rowFn) {
+    if (!items || items.length === 0) return '';
+    let html = `<div class="rankings-section"><div class="rankings-section-title">${title}</div>`;
+    for (const item of items.slice(0, limit)) html += rowFn(item);
+    return html + '</div>';
 }
 
 function renderRankings(rankings, movements) {
@@ -3444,119 +3353,61 @@ function renderRankings(rankings, movements) {
             </div>`;
         }
 
-        // Most active filers
-        if (rankings.most_active_filers && rankings.most_active_filers.length > 0) {
-            html += '<div class="rankings-section"><div class="rankings-section-title">活発な提出者</div>';
-            for (const f of rankings.most_active_filers.slice(0, 5)) {
-                const name = f.filer_name || '(不明)';
-                const nameHtml = f.edinet_code
-                    ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeHtml(f.edinet_code)}')">${escapeHtml(name)}</a>`
-                    : escapeHtml(name);
-                html += `<div class="filer-row" data-edinet="${escapeHtml(f.edinet_code || '')}">
-                    <span class="filer-name" title="${escapeHtml(name)}">${nameHtml}</span>
-                    <span class="filer-count">${f.filing_count}</span>
-                </div>`;
-            }
-            html += '</div>';
-        }
+        html += rankingSection('活発な提出者', rankings.most_active_filers, 5, f => {
+            const name = f.filer_name || '(不明)';
+            return `<div class="filer-row" data-edinet="${escapeHtml(f.edinet_code || '')}">
+                <span class="filer-name" title="${escapeHtml(name)}">${filerLinkHtml(name, f.edinet_code)}</span>
+                <span class="filer-count">${f.filing_count}</span>
+            </div>`;
+        });
 
-        // Most targeted companies
-        if (rankings.most_targeted_companies && rankings.most_targeted_companies.length > 0) {
-            html += '<div class="rankings-section"><div class="rankings-section-title">注目銘柄</div>';
-            for (const c of rankings.most_targeted_companies.slice(0, 5)) {
-                const name = c.company_name || '(不明)';
-                const code = c.sec_code ? `[${c.sec_code}]` : '';
-                const nameHtml = c.sec_code
-                    ? `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(c.sec_code)}')">${escapeHtml(name)} ${escapeHtml(code)}</a>`
-                    : `${escapeHtml(name)} ${escapeHtml(code)}`;
-                html += `<div class="filer-row">
-                    <span class="filer-name" title="${escapeHtml(name)}">${nameHtml}</span>
-                    <span class="filer-count">${c.filing_count}</span>
-                </div>`;
-            }
-            html += '</div>';
-        }
+        html += rankingSection('注目銘柄', rankings.most_targeted_companies, 5, c => {
+            const name = c.company_name || '(不明)';
+            return `<div class="filer-row">
+                <span class="filer-name" title="${escapeHtml(name)}">${companyLinkHtml(name, c.sec_code, true)}</span>
+                <span class="filer-count">${c.filing_count}</span>
+            </div>`;
+        });
 
-        // Largest increases
-        if (rankings.largest_increases && rankings.largest_increases.length > 0) {
-            html += '<div class="rankings-section"><div class="rankings-section-title">最大増加</div>';
-            for (const f of rankings.largest_increases.slice(0, 3)) {
-                const name = f.target_company_name || f.filer_name || '?';
-                const change = f.ratio_change != null ? `+${f.ratio_change.toFixed(2)}%` : '';
-                const secCode = f.target_sec_code || f.sec_code;
-                const nameHtml = secCode
-                    ? `<a href="#" class="filer-link positive" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${escapeHtml(name)}</a>`
-                    : escapeHtml(name);
-                html += `<div class="filer-row">
-                    <span class="filer-name positive" title="${escapeHtml(name)}">${nameHtml}</span>
-                    <span class="filer-count positive">${change}</span>
-                </div>`;
-            }
-            html += '</div>';
-        }
+        // Largest increases / decreases (shared renderer)
+        const renderRatioChange = (items, title, limit) => rankingSection(title, items, limit, f => {
+            const name = f.target_company_name || f.filer_name || '?';
+            const secCode = f.target_sec_code || f.sec_code;
+            const cls = ratioChangeClass(f.ratio_change);
+            const change = f.ratio_change != null ? `${f.ratio_change > 0 ? '+' : ''}${f.ratio_change.toFixed(2)}%` : '';
+            return `<div class="filer-row">
+                <span class="filer-name ${cls}" title="${escapeHtml(name)}">${companyLinkHtml(name, secCode, false)}</span>
+                <span class="filer-count ${cls}">${change}</span>
+            </div>`;
+        });
+        html += renderRatioChange(rankings.largest_increases, '最大増加', 3);
+        html += renderRatioChange(rankings.largest_decreases, '最大減少', 3);
 
-        // Largest decreases
-        if (rankings.largest_decreases && rankings.largest_decreases.length > 0) {
-            html += '<div class="rankings-section"><div class="rankings-section-title">最大減少</div>';
-            for (const f of rankings.largest_decreases.slice(0, 3)) {
-                const name = f.target_company_name || f.filer_name || '?';
-                const change = f.ratio_change != null ? `${f.ratio_change.toFixed(2)}%` : '';
-                const secCode = f.target_sec_code || f.sec_code;
-                const nameHtml = secCode
-                    ? `<a href="#" class="filer-link negative" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${escapeHtml(name)}</a>`
-                    : escapeHtml(name);
-                html += `<div class="filer-row">
-                    <span class="filer-name negative" title="${escapeHtml(name)}">${nameHtml}</span>
-                    <span class="filer-count negative">${change}</span>
-                </div>`;
-            }
-            html += '</div>';
-        }
+        html += rankingSection('活発な日', rankings.busiest_days, 5, d =>
+            `<div class="filer-row">
+                <span class="filer-name">${escapeHtml(d.date || '')}</span>
+                <span class="filer-count">${d.filing_count}件</span>
+            </div>`
+        );
 
-        // Busiest days
-        if (rankings.busiest_days && rankings.busiest_days.length > 0) {
-            html += '<div class="rankings-section"><div class="rankings-section-title">活発な日</div>';
-            for (const d of rankings.busiest_days.slice(0, 5)) {
-                html += `<div class="filer-row">
-                    <span class="filer-name">${escapeHtml(d.date || '')}</span>
-                    <span class="filer-count">${d.filing_count}件</span>
-                </div>`;
-            }
-            html += '</div>';
-        }
+        html += rankingSection('セクター動向', movements?.sector_movements, 5, s => {
+            const cls = ratioChangeClass(s.avg_change);
+            const avgText = s.avg_change != null ? `${s.avg_change > 0 ? '+' : ''}${s.avg_change.toFixed(2)}%` : '';
+            return `<div class="filer-row">
+                <span class="filer-name">${escapeHtml(s.sector)} <span class="text-dim">(${s.count}件)</span></span>
+                <span class="filer-count ${cls}">${avgText}</span>
+            </div>`;
+        });
 
-        // Sector movements
-        if (movements && movements.sector_movements && movements.sector_movements.length > 0) {
-            html += '<div class="rankings-section"><div class="rankings-section-title">セクター動向</div>';
-            for (const s of movements.sector_movements.slice(0, 5)) {
-                const avgCls = s.avg_change > 0 ? 'positive' : s.avg_change < 0 ? 'negative' : '';
-                const avgText = s.avg_change != null ? `${s.avg_change > 0 ? '+' : ''}${s.avg_change.toFixed(2)}%` : '';
-                html += `<div class="filer-row">
-                    <span class="filer-name">${escapeHtml(s.sector)} <span class="text-dim">(${s.count}件)</span></span>
-                    <span class="filer-count ${avgCls}">${avgText}</span>
-                </div>`;
-            }
-            html += '</div>';
-        }
-
-        // Notable moves
-        if (movements && movements.notable_moves && movements.notable_moves.length > 0) {
-            html += '<div class="rankings-section"><div class="rankings-section-title">注目変動</div>';
-            for (const m of movements.notable_moves.slice(0, 5)) {
-                const name = m.target_company_name || m.filer_name || '?';
-                const change = m.ratio_change != null ? `${m.ratio_change > 0 ? '+' : ''}${m.ratio_change.toFixed(2)}%` : '';
-                const cls = m.ratio_change > 0 ? 'positive' : m.ratio_change < 0 ? 'negative' : '';
-                const secCode = m.target_sec_code || m.sec_code;
-                const nameHtml = secCode
-                    ? `<a href="#" class="filer-link ${cls}" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${escapeHtml(name)}</a>`
-                    : escapeHtml(name);
-                html += `<div class="filer-row">
-                    <span class="filer-name ${cls}" title="${escapeHtml(name)}">${nameHtml}</span>
-                    <span class="filer-count ${cls}">${change}</span>
-                </div>`;
-            }
-            html += '</div>';
-        }
+        html += rankingSection('注目変動', movements?.notable_moves, 5, m => {
+            const name = m.target_company_name || m.filer_name || '?';
+            const cls = ratioChangeClass(m.ratio_change);
+            const change = m.ratio_change != null ? `${m.ratio_change > 0 ? '+' : ''}${m.ratio_change.toFixed(2)}%` : '';
+            return `<div class="filer-row">
+                <span class="filer-name ${cls}" title="${escapeHtml(name)}">${companyLinkHtml(name, m.target_sec_code || m.sec_code, false)}</span>
+                <span class="filer-count ${cls}">${change}</span>
+            </div>`;
+        });
 
         container.innerHTML = html || '<div class="summary-empty">データなし</div>';
     }

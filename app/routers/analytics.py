@@ -116,29 +116,23 @@ async def activity_rankings(
             for r in target_result
         ]
 
-        # Largest increases: top 10 with biggest positive ratio change
-        increase_q = _period_filter(
+        # Largest increases / decreases
+        ratio_diff = Filing.holding_ratio - Filing.previous_holding_ratio
+        ratio_base = (
             select(Filing)
             .where(Filing.holding_ratio.isnot(None))
             .where(Filing.previous_holding_ratio.isnot(None))
-            .where(Filing.holding_ratio > Filing.previous_holding_ratio)
-            .order_by(desc(Filing.holding_ratio - Filing.previous_holding_ratio))
-            .limit(10)
         )
-        increase_result = await session.execute(increase_q)
-        largest_increases = [f.to_dict() for f in increase_result.scalars().all()]
-
-        # Largest decreases: top 10 with biggest negative ratio change
-        decrease_q = _period_filter(
-            select(Filing)
-            .where(Filing.holding_ratio.isnot(None))
-            .where(Filing.previous_holding_ratio.isnot(None))
-            .where(Filing.holding_ratio < Filing.previous_holding_ratio)
-            .order_by(Filing.holding_ratio - Filing.previous_holding_ratio)
-            .limit(10)
+        inc_q = _period_filter(
+            ratio_base.where(Filing.holding_ratio > Filing.previous_holding_ratio)
+            .order_by(desc(ratio_diff)).limit(10)
         )
-        decrease_result = await session.execute(decrease_q)
-        largest_decreases = [f.to_dict() for f in decrease_result.scalars().all()]
+        dec_q = _period_filter(
+            ratio_base.where(Filing.holding_ratio < Filing.previous_holding_ratio)
+            .order_by(ratio_diff).limit(10)
+        )
+        largest_increases = [f.to_dict() for f in (await session.execute(inc_q)).scalars().all()]
+        largest_decreases = [f.to_dict() for f in (await session.execute(dec_q)).scalars().all()]
 
         # Busiest days: top 5 by filing count
         # Extract the date part from submit_date_time (first 10 chars = "YYYY-MM-DD")
@@ -401,6 +395,40 @@ async def sector_breakdown() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Shared profile helpers
+# ---------------------------------------------------------------------------
+
+def _group_filings(filings, key_fn, init_fn):
+    """Group filings by key, building a dict of {key: {init_fields + filing_count + history}}."""
+    groups: dict[str, dict] = {}
+    for f in filings:
+        key = key_fn(f)
+        if key not in groups:
+            groups[key] = {**init_fn(f), "filing_count": 0, "history": []}
+        groups[key]["filing_count"] += 1
+        if f.holding_ratio is not None:
+            groups[key]["history"].append({
+                "date": f.submit_date_time,
+                "ratio": f.holding_ratio,
+                "previous_ratio": f.previous_holding_ratio,
+            })
+    return groups
+
+
+async def _profile_query(session, where_clause, limit, offset):
+    """Execute count + paginated filing query for profile endpoints."""
+    total_count = (await session.execute(
+        select(func.count(Filing.id)).where(where_clause)
+    )).scalar() or 0
+    filings = (await session.execute(
+        select(Filing).where(where_clause)
+        .order_by(desc(Filing.submit_date_time))
+        .offset(offset).limit(limit)
+    )).scalars().all()
+    return total_count, filings
+
+
+# ---------------------------------------------------------------------------
 # Filer Profile
 # ---------------------------------------------------------------------------
 
@@ -413,76 +441,39 @@ async def filer_profile(
     """Return a filer's full history, target companies, and activity summary."""
     edinet_code = validate_edinet_code(edinet_code)
     async with get_async_session()() as session:
-        # Total count for this filer
-        total_result = await session.execute(
-            select(func.count(Filing.id))
-            .where(Filing.edinet_code == edinet_code)
+        total_count, filings = await _profile_query(
+            session, Filing.edinet_code == edinet_code, limit, offset,
         )
-        total_count = total_result.scalar() or 0
-
-        # All filings by this filer (paginated)
-        result = await session.execute(
-            select(Filing)
-            .where(Filing.edinet_code == edinet_code)
-            .order_by(desc(Filing.submit_date_time))
-            .offset(offset)
-            .limit(limit)
-        )
-        filings = result.scalars().all()
-
         if not filings:
             raise HTTPException(status_code=404, detail="Filer not found")
 
-        filer_name = filings[0].filer_name or filings[0].holder_name or edinet_code
+        targets = _group_filings(
+            filings,
+            key_fn=lambda f: f.target_sec_code or f.target_company_name or f.doc_id,
+            init_fn=lambda f: {
+                "company_name": f.target_company_name,
+                "sec_code": f.target_sec_code,
+                "latest_ratio": f.holding_ratio,
+                "latest_date": f.submit_date_time,
+            },
+        )
 
-        # Target companies with latest ratio
-        targets: dict[str, dict] = {}
-        for f in filings:
-            key = f.target_sec_code or f.target_company_name or f.doc_id
-            if key not in targets:
-                targets[key] = {
-                    "company_name": f.target_company_name,
-                    "sec_code": f.target_sec_code,
-                    "latest_ratio": f.holding_ratio,
-                    "latest_date": f.submit_date_time,
-                    "filing_count": 0,
-                    "history": [],
-                }
-            targets[key]["filing_count"] += 1
-            if f.holding_ratio is not None:
-                targets[key]["history"].append({
-                    "date": f.submit_date_time,
-                    "ratio": f.holding_ratio,
-                    "previous_ratio": f.previous_holding_ratio,
-                })
-
-        # Sort targets by filing count descending
-        sorted_targets = sorted(targets.values(), key=lambda t: -t["filing_count"])
-
-        # Activity summary
-        total_filings = len(filings)
         ratios = [f.holding_ratio for f in filings if f.holding_ratio is not None]
-        avg_ratio = round(sum(ratios) / len(ratios), 2) if ratios else None
-        unique_targets = len(targets)
-
-        # Date range
         dates = [f.submit_date_time for f in filings if f.submit_date_time]
-        first_date = min(dates) if dates else None
-        last_date = max(dates) if dates else None
 
         return {
             "edinet_code": edinet_code,
-            "filer_name": filer_name,
+            "filer_name": filings[0].filer_name or filings[0].holder_name or edinet_code,
             "summary": {
                 "total_filings": total_count,
                 "fetched_filings": len(filings),
-                "unique_targets": unique_targets,
-                "avg_holding_ratio": avg_ratio,
-                "first_filing": first_date,
-                "last_filing": last_date,
+                "unique_targets": len(targets),
+                "avg_holding_ratio": round(sum(ratios) / len(ratios), 2) if ratios else None,
+                "first_filing": min(dates) if dates else None,
+                "last_filing": max(dates) if dates else None,
             },
             "has_more": offset + len(filings) < total_count,
-            "targets": sorted_targets,
+            "targets": sorted(targets.values(), key=lambda t: -t["filing_count"]),
             "recent_filings": [f.to_dict() for f in filings[:20]],
         }
 
@@ -499,79 +490,39 @@ async def company_profile(
 ) -> dict:
     """Return all large shareholding data for a specific company."""
     normalized = validate_sec_code(sec_code)
-    # Match both 4-digit and 5-digit (with trailing 0) sec codes
     codes = [normalized, normalized + "0"]
+    where = (Filing.target_sec_code.in_(codes)) | (Filing.sec_code.in_(codes))
 
     async with get_async_session()() as session:
-        # Total count
-        total_result = await session.execute(
-            select(func.count(Filing.id))
-            .where(
-                (Filing.target_sec_code.in_(codes))
-                | (Filing.sec_code.in_(codes))
-            )
-        )
-        total_count = total_result.scalar() or 0
-
-        result = await session.execute(
-            select(Filing)
-            .where(
-                (Filing.target_sec_code.in_(codes))
-                | (Filing.sec_code.in_(codes))
-            )
-            .order_by(desc(Filing.submit_date_time))
-            .offset(offset)
-            .limit(limit)
-        )
-        filings = result.scalars().all()
-
+        total_count, filings = await _profile_query(session, where, limit, offset)
         if not filings:
             raise HTTPException(status_code=404, detail="Company not found")
 
-        company_name = None
-        for f in filings:
-            if f.target_company_name:
-                company_name = f.target_company_name
-                break
+        company_name = next((f.target_company_name for f in filings if f.target_company_name), None)
 
-        # Major holders with latest data
-        holders: dict[str, dict] = {}
-        for f in filings:
-            key = f.edinet_code or f.filer_name or f.doc_id
-            if key not in holders:
-                holders[key] = {
-                    "filer_name": f.holder_name or f.filer_name,
-                    "edinet_code": f.edinet_code,
-                    "latest_ratio": f.holding_ratio,
-                    "latest_date": f.submit_date_time,
-                    "filing_count": 0,
-                    "history": [],
-                }
-            holders[key]["filing_count"] += 1
-            if f.holding_ratio is not None:
-                holders[key]["history"].append({
-                    "date": f.submit_date_time,
-                    "ratio": f.holding_ratio,
-                    "previous_ratio": f.previous_holding_ratio,
-                })
-
-        # Sort by latest ratio descending
-        sorted_holders = sorted(
-            holders.values(),
-            key=lambda h: h["latest_ratio"] if h["latest_ratio"] is not None else -1,
-            reverse=True,
+        holders = _group_filings(
+            filings,
+            key_fn=lambda f: f.edinet_code or f.filer_name or f.doc_id,
+            init_fn=lambda f: {
+                "filer_name": f.holder_name or f.filer_name,
+                "edinet_code": f.edinet_code,
+                "latest_ratio": f.holding_ratio,
+                "latest_date": f.submit_date_time,
+            },
         )
-
-        sector = _sec_code_to_sector(normalized)
 
         return {
             "sec_code": normalized,
             "company_name": company_name,
-            "sector": sector,
+            "sector": _sec_code_to_sector(normalized),
             "holder_count": len(holders),
             "total_filings": total_count,
             "fetched_filings": len(filings),
             "has_more": offset + len(filings) < total_count,
-            "holders": sorted_holders,
+            "holders": sorted(
+                holders.values(),
+                key=lambda h: h["latest_ratio"] if h["latest_ratio"] is not None else -1,
+                reverse=True,
+            ),
             "recent_filings": [f.to_dict() for f in filings[:20]],
         }

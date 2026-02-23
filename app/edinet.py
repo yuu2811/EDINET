@@ -1008,91 +1008,39 @@ class EdinetClient:
 # Helper functions for inline XBRL element name matching
 # ---------------------------------------------------------------------------
 
-def _matches_ratio_pattern(name: str) -> bool:
-    """Check if element name matches a shareholding ratio pattern.
-
-    今回・前回の両方にマッチする。前回かどうかの判定は呼び出し元の is_previous で行う。
-
-    対象タクソノミ要素:
-      jpcrp_cor: TotalShareholdingRatioOfShareCertificatesEtc
-      jplvh_cor: HoldingRatioOfShareCertificatesEtc (今回)
-      jplvh_cor: HoldingRatioOfShareCertificatesEtcPerLastReport (前回)
-      jplvh_cor: PreviousHoldingRatioOfShareCertificatesEtc (前回)
-      jplvh_cor: RatioOfShareCertificatesEtcAtTimeOfPreviousReport (前回)
-    """
-    patterns = (
-        "HoldingRatio",         # matches both jplvh "HoldingRatio..." and jpcrp "ShareholdingRatio..."
-        "ShareholdingRatio",    # explicit jpcrp_cor match
-        "RatioOfShareholdingToTotalIssuedShares",
-        "RatioOfShareCertificatesEtc",  # jplvh_cor 前回保有割合 element
-    )
-    # Exclude per-shareholder entries and abstract elements
-    if any(skip in name for skip in ("Abstract", "EachLargeShareholder", "JointHolder")):
+def _name_contains_any(name: str, patterns: tuple[str, ...], exclude: tuple[str, ...] = ()) -> bool:
+    """Check if name contains any of the patterns and none of the exclusions."""
+    if exclude and any(skip in name for skip in exclude):
         return False
     return any(p in name for p in patterns)
 
+_RATIO_PATTERNS = ("HoldingRatio", "ShareholdingRatio", "RatioOfShareholdingToTotalIssuedShares", "RatioOfShareCertificatesEtc")
+_RATIO_EXCLUDE = ("Abstract", "EachLargeShareholder", "JointHolder")
+_SHARES_PATTERNS = ("TotalNumberOfShareCertificatesEtcHeld", "TotalNumberOfSharesHeld", "NumberOfShareCertificatesEtc", "NumberOfStocksEtc")
+_HOLDER_PATTERNS = ("NameOfLargeShareholdingReporter", "NameOfFiler", "ReporterName", "LargeShareholderName")
+_TARGET_PATTERNS = ("IssuerNameLargeShareholding", "IssuerName", "NameOfIssuer", "TargetCompanyName")
+_SEC_CODE_PATTERNS = ("SecurityCodeOfIssuer", "IssuerSecuritiesCode", "SecurityCode")
+_PURPOSE_PATTERNS = ("PurposeOfHolding",)
+
+def _matches_ratio_pattern(name: str) -> bool:
+    return _name_contains_any(name, _RATIO_PATTERNS, _RATIO_EXCLUDE)
 
 def _matches_shares_pattern(name: str) -> bool:
-    """Match shares-held elements from both jpcrp_cor and jplvh_cor taxonomy.
-
-      jpcrp_cor: TotalNumberOfShareCertificatesEtcHeld
-      jplvh_cor: TotalNumberOfStocksEtcHeld
-    """
-    patterns = (
-        "TotalNumberOfShareCertificatesEtcHeld",
-        "TotalNumberOfSharesHeld",
-        "NumberOfShareCertificatesEtc",
-        "NumberOfStocksEtc",     # jplvh_cor: TotalNumberOfStocksEtcHeld
-    )
-    if "Abstract" in name:
-        return False
-    return any(p in name for p in patterns)
-
+    return _name_contains_any(name, _SHARES_PATTERNS, ("Abstract",))
 
 def _matches_holder_pattern(name: str, full_qname: str = "") -> bool:
-    """Match holder/filer name elements.
-
-    jplvh_cor uses just 'Name' which is too generic for substring matching,
-    so we also check the full QName (prefix:localName) for jplvh_cor:Name.
-    """
-    patterns = (
-        "NameOfLargeShareholdingReporter",
-        "NameOfFiler",
-        "ReporterName",
-        "LargeShareholderName",
-    )
-    if any(p in name for p in patterns):
+    if _name_contains_any(name, _HOLDER_PATTERNS):
         return True
-    # jplvh_cor:Name — exact match on localName + namespace check
-    if name == "Name" and ("jplvh" in full_qname or "lvh" in full_qname):
-        return True
-    return False
-
+    return name == "Name" and ("jplvh" in full_qname or "lvh" in full_qname)
 
 def _matches_target_pattern(name: str) -> bool:
-    patterns = (
-        "IssuerNameLargeShareholding",
-        "IssuerName",
-        "NameOfIssuer",
-        "TargetCompanyName",
-    )
-    return any(p in name for p in patterns)
-
+    return _name_contains_any(name, _TARGET_PATTERNS)
 
 def _matches_sec_code_pattern(name: str) -> bool:
-    patterns = (
-        "SecurityCodeOfIssuer",
-        "IssuerSecuritiesCode",
-        "SecurityCode",
-    )
-    return any(p in name for p in patterns)
-
+    return _name_contains_any(name, _SEC_CODE_PATTERNS)
 
 def _matches_purpose_pattern(name: str) -> bool:
-    patterns = (
-        "PurposeOfHolding",
-    )
-    return any(p in name for p in patterns)
+    return _name_contains_any(name, _PURPOSE_PATTERNS)
 
 
 def _parse_ix_number(elem, text: str) -> float | None:
