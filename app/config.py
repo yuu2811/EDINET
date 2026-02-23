@@ -1,7 +1,12 @@
 import os
+from datetime import timedelta, timezone
+
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Japan Standard Time (UTC+9) — shared across all modules
+JST = timezone(timedelta(hours=9))
 
 
 class Settings:

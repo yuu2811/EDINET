@@ -435,3 +435,54 @@ class TestPDFProxyEndpoint:
         data = resp.json()
         assert "redirect_url" in data
 
+
+class TestAnalyticsAPI:
+    """Tests for /api/analytics endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_sector_breakdown(self, client):
+        """Sector breakdown should aggregate filings by sector prefix."""
+        resp = await client.get("/api/analytics/sectors")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "sectors" in data
+        sectors = data["sectors"]
+        assert isinstance(sectors, list)
+        # Our seed data has filings with target_sec_code "72030" and "67580"
+        total_filings = sum(s["filing_count"] for s in sectors)
+        assert total_filings >= 2
+
+    @pytest.mark.asyncio
+    async def test_sector_breakdown_has_required_fields(self, client):
+        """Each sector entry should have sector, company_count, filing_count, avg_ratio."""
+        resp = await client.get("/api/analytics/sectors")
+        data = resp.json()
+        for sector in data["sectors"]:
+            assert "sector" in sector
+            assert "company_count" in sector
+            assert "filing_count" in sector
+            assert "avg_ratio" in sector
+
+    @pytest.mark.asyncio
+    async def test_rankings(self, client):
+        """Rankings endpoint should return structured data."""
+        resp = await client.get("/api/analytics/rankings?period=all")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "most_active_filers" in data
+        assert "most_targeted_companies" in data
+        assert "largest_increases" in data
+        assert "largest_decreases" in data
+        assert "busiest_days" in data
+
+    @pytest.mark.asyncio
+    async def test_movements(self, client):
+        """Market movements endpoint should return structured data."""
+        resp = await client.get("/api/analytics/movements?date=2026-02-18")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["date"] == "2026-02-18"
+        assert "total_filings" in data
+        assert "net_direction" in data
+        assert "sector_movements" in data
+

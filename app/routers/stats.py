@@ -1,13 +1,11 @@
 """Dashboard statistics endpoint."""
 
-from datetime import date, datetime, timedelta, timezone
-
-_JST = timezone(timedelta(hours=9))
+from datetime import date, datetime
 
 from fastapi import APIRouter, Query
 from sqlalchemy import desc, func, select
 
-from app.config import settings
+from app.config import JST, settings
 from app.deps import get_async_session
 from app.models import Filing
 from app.poller import broadcaster
@@ -24,9 +22,9 @@ async def get_stats(
         try:
             today = date.fromisoformat(target_date)
         except ValueError:
-            today = datetime.now(_JST).date()
+            today = datetime.now(JST).date()
     else:
-        today = datetime.now(_JST).date()
+        today = datetime.now(JST).date()
     today_str = today.strftime("%Y-%m-%d")
 
     async with get_async_session()() as session:

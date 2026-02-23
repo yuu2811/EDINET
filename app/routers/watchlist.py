@@ -64,19 +64,24 @@ async def get_watchlist_filings() -> dict:
         if not watchlist:
             return {"filings": []}
 
+        # Collect unique values for batch IN() queries instead of
+        # individual OR conditions per watchlist item.
+        sec_codes = {w.sec_code for w in watchlist if w.sec_code}
+        edinet_codes = {w.edinet_code for w in watchlist if w.edinet_code}
+        company_names = [w.company_name for w in watchlist if w.company_name]
+
         conditions = []
-        for w in watchlist:
-            if w.sec_code:
-                conditions.append(Filing.target_sec_code == w.sec_code)
-                conditions.append(Filing.sec_code == w.sec_code)
-            if w.edinet_code:
-                conditions.append(Filing.subject_edinet_code == w.edinet_code)
-                conditions.append(Filing.issuer_edinet_code == w.edinet_code)
-            if w.company_name:
-                conditions.append(
-                    Filing.target_company_name.contains(w.company_name)
-                )
-                conditions.append(Filing.filer_name.contains(w.company_name))
+        if sec_codes:
+            codes = list(sec_codes)
+            conditions.append(Filing.target_sec_code.in_(codes))
+            conditions.append(Filing.sec_code.in_(codes))
+        if edinet_codes:
+            codes = list(edinet_codes)
+            conditions.append(Filing.subject_edinet_code.in_(codes))
+            conditions.append(Filing.issuer_edinet_code.in_(codes))
+        for name in company_names:
+            conditions.append(Filing.target_company_name.contains(name))
+            conditions.append(Filing.filer_name.contains(name))
 
         if not conditions:
             return {"filings": []}
