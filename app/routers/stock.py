@@ -266,10 +266,6 @@ async def _lookup_company_info(ticker: str) -> dict | None:
     return None
 
 
-def _lookup_edinet_code_list(ticker: str) -> str | None:
-    """Look up company name from the EDINET code list cache."""
-    return _edinet_code_list.get(ticker)
-
 
 def _format_market_cap(value: float | int | None) -> str | None:
     """Format a market cap (JPY) in Japanese style using 億 / 兆."""
@@ -293,23 +289,17 @@ def _format_market_cap(value: float | int | None) -> str | None:
 
 
 def _parse_float(v: str | None) -> float | None:
-    if v is None:
-        return None
-    v = v.strip()
-    if not v or v in ("N/A", "-", ""):
+    if not v or not (v := v.strip()) or v in ("N/A", "-"):
         return None
     try:
-        result = float(v)
-        return result if math.isfinite(result) else None
+        r = float(v)
+        return r if math.isfinite(r) else None
     except (ValueError, TypeError):
         return None
 
-
 def _parse_int(v: str | None) -> int | None:
     f = _parse_float(v)
-    if f is None:
-        return None
-    return int(f)
+    return int(f) if f is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -820,22 +810,7 @@ async def _fetch_kabutan_quote(
 
 @router.get("/{sec_code}")
 async def get_stock_data(sec_code: str) -> dict:
-    """Return stock price history, market cap, and PBR for a securities code.
-
-    Accepts EDINET-style 5-digit codes (e.g. ``39320``) or plain 4-digit
-    TSE codes (e.g. ``3932``).
-
-    Data sources (all free, no API keys required for stock prices):
-      - stooq.com: price history (CSV) + current quote
-      - Google Finance: current price (HTML scraping)
-      - Yahoo Finance: chart meta + quoteSummary (JSON)
-      - Kabutan (株探): current price + company name (HTML scraping)
-
-    Company name priority (金融庁データ優先):
-      1. EDINET Filing DB (大量保有報告書のXBRLから抽出)
-      2. EDINET code list (金融庁コードマスター)
-      3. External APIs (Google Finance / stooq / Yahoo / Kabutan)
-    """
+    """Return stock price history, market cap, and PBR for a securities code."""
     global _external_apis_failed_at
     ticker = validate_sec_code(sec_code)
 
@@ -850,7 +825,7 @@ async def get_stock_data(sec_code: str) -> dict:
     # Company name: Filing DB > Code list
     edinet_name = await _lookup_company_from_filings(ticker)
     if not edinet_name:
-        edinet_name = _lookup_edinet_code_list(ticker)
+        edinet_name = _edinet_code_list.get(ticker)
 
     # Company fundamentals: CompanyInfo table (from 有報/四半期報告書)
     company_info = await _lookup_company_info(ticker)
@@ -867,15 +842,7 @@ async def get_stock_data(sec_code: str) -> dict:
     price_source = "fallback"
     yahoo_summary: dict = {}  # populated by Yahoo quoteSummary if APIs are reachable
 
-    # --- Step 2: Fetch live market data from external APIs ---
-    # 6 sources fetched in parallel (all free, no API keys):
-    #   - stooq: price history + current quote (CSV API)
-    #   - Yahoo Finance: chart meta + quoteSummary (JSON API)
-    #   - Google Finance: page scraping (HTML)
-    #   - Kabutan (株探): page scraping (HTML, Japanese stock specialist)
-    #
-    # If external APIs previously failed for ALL sources, skip straight to
-    # fallback to avoid 10-second timeouts on every request.
+    # Fetch live market data from external APIs (skip if recently failed)
     apis_available = (
         _external_apis_failed_at == 0.0
         or (time.monotonic() - _external_apis_failed_at) > _EXTERNAL_RETRY_INTERVAL
@@ -904,16 +871,9 @@ async def get_stock_data(sec_code: str) -> dict:
                 if isinstance(_r, BaseException):
                     logger.warning("Stock data source %d failed for %s: %s", _i, ticker, _r)
 
-        # Merge results – prefer Yahoo for market cap / PBR, stooq for prices,
-        # Google Finance and Kabutan as additional price sources
         weekly_prices = history
 
-        # Current price priority (with source tracking):
-        #   1. stooq (most reliable for Japanese stocks)
-        #   2. Google Finance (real-time, free)
-        #   3. Yahoo Finance quoteSummary
-        #   4. Yahoo Finance chart meta
-        #   5. Kabutan (株探)
+        # Current price: stooq > Google > Yahoo summary > Yahoo chart > Kabutan
         price_source = "fallback"
         for source_name, source_price in [
             ("stooq", quote.get("current_price")),
