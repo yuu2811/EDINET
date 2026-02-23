@@ -41,6 +41,42 @@ XBRL_NS = {
 IX_NS = "http://www.xbrl.org/2013/inlineXBRL"
 
 
+def _empty_holding_result() -> dict:
+    """Return a fresh empty holding data dict."""
+    return {
+        "holding_ratio": None,
+        "previous_holding_ratio": None,
+        "holder_name": None,
+        "target_company_name": None,
+        "target_sec_code": None,
+        "shares_held": None,
+        "purpose_of_holding": None,
+    }
+
+
+def _is_previous_ratio(local_name: str, context_ref: str) -> bool:
+    """Determine whether a ratio element represents the *previous* holding ratio.
+
+    Checks element name and contextRef for "PerLastReport", "Previous", or "Prior".
+    """
+    return (
+        "PerLastReport" in local_name
+        or "Previous" in local_name
+        or "Prior" in context_ref
+        or "Previous" in context_ref
+    )
+
+
+def _normalize_ratio(val: float) -> float:
+    """Convert decimal-format ratios (0.0523) to percentage (5.23).
+
+    EDINET stores as percentage but some filings use decimal.
+    """
+    if 0 < val < 1.0:
+        return round(val * 100, 4)
+    return val
+
+
 def _looks_like_pdf(content: bytes) -> bool:
     """Return True when bytes appear to contain a PDF header.
 
@@ -67,12 +103,10 @@ class EdinetClient:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
-    async def fetch_document_list(
-        self, target_date: date
-    ) -> list[dict]:
-        """Fetch the document list for a given date from EDINET API.
+    async def _fetch_documents_raw(self, target_date: date) -> list[dict]:
+        """Fetch the raw document list for a date from EDINET API.
 
-        Returns only large shareholding reports (docTypeCode 350/360).
+        Shared implementation used by both filtered and unfiltered list endpoints.
         """
         client = await self._get_client()
         url = f"{self.base_url}/documents.json"
@@ -103,7 +137,16 @@ class EdinetClient:
             )
             return []
 
-        results = data.get("results", [])
+        return data.get("results", [])
+
+    async def fetch_document_list(
+        self, target_date: date
+    ) -> list[dict]:
+        """Fetch the document list for a given date from EDINET API.
+
+        Returns only large shareholding reports (docTypeCode 350/360).
+        """
+        results = await self._fetch_documents_raw(target_date)
         filings = []
         for doc in results:
             doc_type = doc.get("docTypeCode")
@@ -139,12 +182,18 @@ class EdinetClient:
         )
         return filings
 
-    async def download_xbrl(self, doc_id: str) -> bytes | None:
-        """Download the XBRL ZIP for a given document ID."""
+    async def _download_document(
+        self, doc_id: str, doc_type: int, label: str,
+    ) -> httpx.Response | None:
+        """Download a document from EDINET and validate the response.
+
+        Returns the httpx.Response on success, or None if the request
+        failed or the response looks like an error page.
+        """
         client = await self._get_client()
         url = f"{self.base_url}/documents/{doc_id}"
         params = {
-            "type": 1,  # XBRL data
+            "type": doc_type,
             "Subscription-Key": self.api_key,
         }
 
@@ -153,22 +202,30 @@ class EdinetClient:
             resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             logger.warning(
-                "EDINET API returned HTTP %s for XBRL download of %s",
-                e.response.status_code, doc_id,
+                "EDINET API returned HTTP %s for %s download of %s",
+                e.response.status_code, label, doc_id,
             )
             return None
         except Exception as e:
-            logger.error("Failed to download XBRL for %s: %s", doc_id, e)
+            logger.error("Failed to download %s for %s: %s", label, doc_id, e)
             return None
 
-        # EDINET API may return HTTP 200 with a JSON error body
+        # EDINET API may return HTTP 200 with a JSON/HTML error body
         ct = resp.headers.get("content-type", "")
         if "json" in ct or "text/html" in ct:
             body_preview = resp.content[:500].decode("utf-8", errors="replace")
             logger.warning(
-                "EDINET API returned non-ZIP Content-Type '%s' for XBRL %s: %s",
-                ct, doc_id, body_preview,
+                "EDINET API returned non-document Content-Type '%s' for %s %s: %s",
+                ct, label, doc_id, body_preview,
             )
+            return None
+
+        return resp
+
+    async def download_xbrl(self, doc_id: str) -> bytes | None:
+        """Download the XBRL ZIP for a given document ID."""
+        resp = await self._download_document(doc_id, doc_type=1, label="XBRL")
+        if resp is None:
             return None
 
         if len(resp.content) < 100:
@@ -189,36 +246,8 @@ class EdinetClient:
         - On error the API may return HTTP 200 with a JSON body instead
           of document data — we detect this via Content-Type.
         """
-        client = await self._get_client()
-        url = f"{self.base_url}/documents/{doc_id}"
-        params = {
-            "type": 2,  # PDF
-            "Subscription-Key": self.api_key,
-        }
-
-        try:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            logger.warning(
-                "EDINET API returned HTTP %s for PDF download of %s",
-                e.response.status_code, doc_id,
-            )
-            return None
-        except Exception as e:
-            logger.error("Failed to download PDF for %s: %s", doc_id, e)
-            return None
-
-        # EDINET API may return HTTP 200 with a JSON error body.
-        # Detect by checking Content-Type header.
-        ct = resp.headers.get("content-type", "")
-        if "json" in ct or "text/html" in ct:
-            # Not a document — likely an API error response
-            body_preview = resp.content[:500].decode("utf-8", errors="replace")
-            logger.warning(
-                "EDINET API returned non-document Content-Type '%s' for %s: %s",
-                ct, doc_id, body_preview,
-            )
+        resp = await self._download_document(doc_id, doc_type=2, label="PDF")
+        if resp is None:
             return None
 
         # Try ZIP first (older API / some document types return ZIP containing PDF)
@@ -242,7 +271,8 @@ class EdinetClient:
         logger.warning(
             "EDINET returned neither valid PDF nor ZIP for %s "
             "(%d bytes, content-type=%s)",
-            doc_id, len(resp.content), ct,
+            doc_id, len(resp.content),
+            resp.headers.get("content-type", ""),
         )
         return None
 
@@ -262,15 +292,7 @@ class EdinetClient:
         - shares_held: int | None
         - purpose_of_holding: str | None
         """
-        result = {
-            "holding_ratio": None,
-            "previous_holding_ratio": None,
-            "holder_name": None,
-            "target_company_name": None,
-            "target_sec_code": None,
-            "shares_held": None,
-            "purpose_of_holding": None,
-        }
+        result = _empty_holding_result()
 
         try:
             with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
@@ -351,15 +373,7 @@ class EdinetClient:
           ratio_patterns を全てスキャンし、holding_ratio と previous_holding_ratio の
           両方が見つかるまでループを継続する。
         """
-        result = {
-            "holding_ratio": None,
-            "previous_holding_ratio": None,
-            "holder_name": None,
-            "target_company_name": None,
-            "target_sec_code": None,
-            "shares_held": None,
-            "purpose_of_holding": None,
-        }
+        result = _empty_holding_result()
 
         try:
             tree = etree.fromstring(xbrl_bytes)
@@ -395,24 +409,9 @@ class EdinetClient:
                     if "Abstract" in local or "EachLargeShareholder" in local:
                         continue
                     try:
-                        val = float(elem.text.strip())
-                        # Auto-detect decimal vs percentage format:
-                        # EDINET stores as percentage (e.g. 5.23 = 5.23%)
-                        # but some filings use decimal (e.g. 0.0523 = 5.23%)
-                        if 0 < val < 1.0:
-                            val = round(val * 100, 4)
+                        val = _normalize_ratio(float(elem.text.strip()))
                         context_ref = elem.get("contextRef", "")
-                        # Detect "previous" ratio by element name or context:
-                        # - Element name contains "PerLastReport" (real EDINET: HoldingRatioOfShareCertificatesEtcPerLastReport)
-                        # - Element name contains "Previous" (e.g. PreviousHoldingRatioOfShareCertificatesEtc)
-                        # - contextRef contains "Prior" or "Previous" (e.g. PriorFilingDateInstant)
-                        is_previous = (
-                            "PerLastReport" in local
-                            or "Previous" in local
-                            or "Prior" in context_ref
-                            or "Previous" in context_ref
-                        )
-                        if is_previous:
+                        if _is_previous_ratio(local, context_ref):
                             if result["previous_holding_ratio"] is None:
                                 result["previous_holding_ratio"] = val
                         else:
@@ -430,23 +429,14 @@ class EdinetClient:
             )
             for elem in elements:
                 local = elem.xpath("local-name()")
-                # Exclude abstract, individual holder, and joint holder entries
                 if any(skip in local for skip in (
                     "Abstract", "EachLargeShareholder", "JointHolder",
                 )):
                     continue
                 try:
-                    val = float(elem.text.strip())
-                    if 0 < val < 1.0:
-                        val = round(val * 100, 4)
+                    val = _normalize_ratio(float(elem.text.strip()))
                     context_ref = elem.get("contextRef", "")
-                    is_previous = (
-                        "PerLastReport" in local
-                        or "Previous" in local
-                        or "Prior" in context_ref
-                        or "Previous" in context_ref
-                    )
-                    if is_previous:
+                    if _is_previous_ratio(local, context_ref):
                         if result["previous_holding_ratio"] is None:
                             result["previous_holding_ratio"] = val
                     else:
@@ -571,15 +561,7 @@ class EdinetClient:
         1. Try XML parser (preserves namespaces) — works for well-formed XHTML
         2. Fall back to regex extraction — works even when parsers fail
         """
-        result = {
-            "holding_ratio": None,
-            "previous_holding_ratio": None,
-            "holder_name": None,
-            "target_company_name": None,
-            "target_sec_code": None,
-            "shares_held": None,
-            "purpose_of_holding": None,
-        }
+        result = _empty_holding_result()
 
         # --- Strategy 1: XML parser (namespace-aware) ---
         try:
@@ -613,15 +595,7 @@ class EdinetClient:
         ix:nonFraction 要素の name 属性からローカル名を取得し、
         _matches_ratio_pattern() でマッチした要素について is_previous 判定を行う。
         """
-        result = {
-            "holding_ratio": None,
-            "previous_holding_ratio": None,
-            "holder_name": None,
-            "target_company_name": None,
-            "target_sec_code": None,
-            "shares_held": None,
-            "purpose_of_holding": None,
-        }
+        result = _empty_holding_result()
 
         # Discover the ix namespace URI dynamically from the document
         nsmap = {}
@@ -655,15 +629,8 @@ class EdinetClient:
                 try:
                     val = _parse_ix_number(elem, text)
                     if val is not None:
-                        if 0 < val < 1.0:
-                            val = round(val * 100, 4)
-                        is_previous = (
-                            "PerLastReport" in local_name
-                            or "Previous" in local_name
-                            or "Prior" in context_ref
-                            or "Previous" in context_ref
-                        )
-                        if is_previous:
+                        val = _normalize_ratio(val)
+                        if _is_previous_ratio(local_name, context_ref):
                             if result["previous_holding_ratio"] is None:
                                 result["previous_holding_ratio"] = val
                         else:
@@ -700,15 +667,7 @@ class EdinetClient:
 
     def _extract_inline_via_regex(self, htm_bytes: bytes) -> dict:
         """Extract inline XBRL data using regex (fallback when parsers fail)."""
-        result = {
-            "holding_ratio": None,
-            "previous_holding_ratio": None,
-            "holder_name": None,
-            "target_company_name": None,
-            "target_sec_code": None,
-            "shares_held": None,
-            "purpose_of_holding": None,
-        }
+        result = _empty_holding_result()
 
         text = htm_bytes.decode("utf-8", errors="replace")
 
@@ -790,15 +749,8 @@ class EdinetClient:
             return
 
         if _matches_ratio_pattern(local_name):
-            if 0 < val < 1.0:
-                val = round(val * 100, 4)
-            is_previous = (
-                "PerLastReport" in local_name
-                or "Previous" in local_name
-                or "Prior" in ctx
-                or "Previous" in ctx
-            )
-            if is_previous:
+            val = _normalize_ratio(val)
+            if _is_previous_ratio(local_name, ctx):
                 if result["previous_holding_ratio"] is None:
                     result["previous_holding_ratio"] = val
             else:
@@ -932,28 +884,7 @@ class EdinetClient:
         Used to discover 有価証券報告書 (120), 四半期報告書 (140), etc.
         for company fundamental data extraction.
         """
-        client = await self._get_client()
-        url = f"{self.base_url}/documents.json"
-        params = {
-            "date": target_date.strftime("%Y-%m-%d"),
-            "type": 2,
-            "Subscription-Key": self.api_key,
-        }
-
-        try:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as e:
-            logger.error("EDINET API request failed: %s", e)
-            return []
-
-        metadata = data.get("metadata", {})
-        status = metadata.get("status")
-        if status != "200":
-            return []
-
-        return data.get("results", [])
+        return await self._fetch_documents_raw(target_date)
 
     def parse_xbrl_for_company_info(self, zip_content: bytes) -> dict:
         """Parse 有価証券報告書 / 四半期報告書 XBRL for company fundamentals.

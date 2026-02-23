@@ -1,6 +1,6 @@
 """Rich analytics endpoints for the EDINET Large Shareholding Monitor."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Path, Query
 from sqlalchemy import case, desc, func, select
