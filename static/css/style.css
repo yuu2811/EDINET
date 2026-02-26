@@ -3932,3 +3932,129 @@ body {
         max-width: 140px;
     }
 }
+
+/* ==========================================================================
+   Tender Offer (TOB / 公開買付) Panel
+   ========================================================================== */
+
+.tob-list {
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 4px;
+}
+
+.tob-empty {
+    color: var(--text-dim);
+    text-align: center;
+    padding: 16px 10px;
+    font-size: var(--font-size-xs);
+}
+
+.tob-count-badge {
+    font-size: var(--font-size-xs);
+    color: var(--accent-orange);
+    margin-left: 4px;
+}
+
+.tob-item {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-primary);
+    border-radius: var(--radius-sm);
+    transition: background var(--duration-fast) ease;
+    border-left: 3px solid transparent;
+}
+
+.tob-item:hover {
+    background: var(--bg-card);
+}
+
+.tob-item.tob-filing {
+    border-left-color: var(--accent-orange);
+}
+
+.tob-item.tob-withdraw {
+    border-left-color: var(--text-red);
+}
+
+.tob-item.tob-opinion {
+    border-left-color: var(--accent-cyan);
+}
+
+.tob-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.tob-type-badge {
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    background: rgba(255, 152, 0, 0.15);
+    color: var(--accent-orange);
+}
+
+.tob-withdraw .tob-type-badge {
+    background: rgba(255, 82, 82, 0.15);
+    color: var(--text-red);
+}
+
+.tob-opinion .tob-type-badge {
+    background: rgba(0, 230, 230, 0.12);
+    color: var(--accent-cyan);
+}
+
+.tob-time {
+    font-size: var(--font-size-xs);
+    color: var(--text-dim);
+}
+
+.tob-filer {
+    font-size: var(--font-size-sm);
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tob-target {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 2px;
+}
+
+.tob-links {
+    margin-top: 4px;
+    display: flex;
+    gap: 6px;
+}
+
+.tob-link {
+    font-size: var(--font-size-xs);
+    color: var(--accent-cyan);
+    text-decoration: none;
+    padding: 1px 5px;
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-sm);
+}
+
+.tob-link:hover {
+    background: var(--bg-elevated);
+}
+
+/* Joint holder items in detail modal */
+.joint-holder-item {
+    padding: 2px 0;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+.joint-holder-item::before {
+    content: "\2022 ";
+    color: var(--accent-cyan);
+}

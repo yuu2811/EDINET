@@ -396,3 +396,77 @@ class TestDownloadPDF:
             result = await self.client.download_pdf("S100TEST")
 
         assert result is None
+
+
+class TestJointHolderExtraction:
+    """Tests for joint holder extraction from XBRL."""
+
+    def setup_method(self):
+        self.client = EdinetClient()
+
+    def test_extract_joint_holders_from_xbrl(self):
+        """Should extract joint holder names from traditional XBRL."""
+        xbrl = """<?xml version="1.0" encoding="UTF-8"?>
+        <xbrli:xbrl
+            xmlns:xbrli="http://www.xbrl.org/2003/instance"
+            xmlns:jpcrp060_cor="http://disclosure.edinet-fsa.go.jp/taxonomy/jpcrp060/2023-12-01/jpcrp060_cor">
+          <jpcrp060_cor:TotalShareholdingRatioOfShareCertificatesEtc contextRef="Current">7.50</jpcrp060_cor:TotalShareholdingRatioOfShareCertificatesEtc>
+          <jpcrp060_cor:JointHolder1Name contextRef="Current">共同保有者A株式会社</jpcrp060_cor:JointHolder1Name>
+          <jpcrp060_cor:JointHolder2Name contextRef="Current">共同保有者B株式会社</jpcrp060_cor:JointHolder2Name>
+          <jpcrp060_cor:JointHolder1HoldingRatio contextRef="Current">3.20</jpcrp060_cor:JointHolder1HoldingRatio>
+          <jpcrp060_cor:JointHolder2HoldingRatio contextRef="Current">2.10</jpcrp060_cor:JointHolder2HoldingRatio>
+        </xbrli:xbrl>"""
+        zip_data = _make_xbrl_zip(xbrl.encode("utf-8"))
+        result = self.client.parse_xbrl_for_holding_data(zip_data)
+        assert result["joint_holders"] is not None
+        import json
+        jh = json.loads(result["joint_holders"])
+        assert len(jh) == 2
+        assert jh[0]["name"] == "共同保有者A株式会社"
+        assert jh[0]["ratio"] == 3.20
+        assert jh[1]["name"] == "共同保有者B株式会社"
+        assert jh[1]["ratio"] == 2.10
+
+    def test_no_joint_holders(self):
+        """Should return None when no joint holders in XBRL."""
+        xbrl = """<?xml version="1.0" encoding="UTF-8"?>
+        <xbrli:xbrl
+            xmlns:xbrli="http://www.xbrl.org/2003/instance"
+            xmlns:jpcrp060_cor="http://disclosure.edinet-fsa.go.jp/taxonomy/jpcrp060/2023-12-01/jpcrp060_cor">
+          <jpcrp060_cor:TotalShareholdingRatioOfShareCertificatesEtc contextRef="Current">5.00</jpcrp060_cor:TotalShareholdingRatioOfShareCertificatesEtc>
+        </xbrli:xbrl>"""
+        zip_data = _make_xbrl_zip(xbrl.encode("utf-8"))
+        result = self.client.parse_xbrl_for_holding_data(zip_data)
+        assert result["joint_holders"] is None
+
+
+class TestFundSourceExtraction:
+    """Tests for acquisition fund source extraction from XBRL."""
+
+    def setup_method(self):
+        self.client = EdinetClient()
+
+    def test_extract_fund_source(self):
+        """Should extract fund source from traditional XBRL."""
+        xbrl = """<?xml version="1.0" encoding="UTF-8"?>
+        <xbrli:xbrl
+            xmlns:xbrli="http://www.xbrl.org/2003/instance"
+            xmlns:jpcrp060_cor="http://disclosure.edinet-fsa.go.jp/taxonomy/jpcrp060/2023-12-01/jpcrp060_cor">
+          <jpcrp060_cor:TotalShareholdingRatioOfShareCertificatesEtc contextRef="Current">8.00</jpcrp060_cor:TotalShareholdingRatioOfShareCertificatesEtc>
+          <jpcrp060_cor:DescriptionOfFundsForAcquisition contextRef="Current">自己資金及び借入金</jpcrp060_cor:DescriptionOfFundsForAcquisition>
+        </xbrli:xbrl>"""
+        zip_data = _make_xbrl_zip(xbrl.encode("utf-8"))
+        result = self.client.parse_xbrl_for_holding_data(zip_data)
+        assert result["fund_source"] == "自己資金及び借入金"
+
+    def test_no_fund_source(self):
+        """Should return None when no fund source in XBRL."""
+        xbrl = """<?xml version="1.0" encoding="UTF-8"?>
+        <xbrli:xbrl
+            xmlns:xbrli="http://www.xbrl.org/2003/instance"
+            xmlns:jpcrp060_cor="http://disclosure.edinet-fsa.go.jp/taxonomy/jpcrp060/2023-12-01/jpcrp060_cor">
+          <jpcrp060_cor:TotalShareholdingRatioOfShareCertificatesEtc contextRef="Current">5.00</jpcrp060_cor:TotalShareholdingRatioOfShareCertificatesEtc>
+        </xbrli:xbrl>"""
+        zip_data = _make_xbrl_zip(xbrl.encode("utf-8"))
+        result = self.client.parse_xbrl_for_holding_data(zip_data)
+        assert result["fund_source"] is None

@@ -15,7 +15,7 @@ from app.edinet import edinet_client
 from app.errors import register_error_handlers
 from app.logging_config import setup_logging
 from app.poller import run_poller
-from app.routers import analytics, filings, poll, stats, stock, stream, watchlist
+from app.routers import analytics, filings, poll, stats, stock, stream, tob, watchlist
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 register_error_handlers(app)
-for r in (stream.router, filings.router, filings.documents_router, stats.router, watchlist.router, poll.router, stock.router, analytics.router):
+for r in (stream.router, filings.router, filings.documents_router, stats.router, watchlist.router, poll.router, stock.router, analytics.router, tob.router):
     app.include_router(r)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

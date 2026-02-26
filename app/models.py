@@ -54,6 +54,10 @@ class Filing(Base):
     )
     shares_held: Mapped[int | None] = mapped_column(Integer, nullable=True)
     purpose_of_holding: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Joint holders — JSON string: [{"name": "...", "ratio": 1.23}, ...]
+    joint_holders: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Acquisition fund source (取得資金の内訳)
+    fund_source: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Timestamps
     submit_date_time: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
@@ -113,6 +117,8 @@ class Filing(Base):
             "target_sec_code": self.target_sec_code,
             "shares_held": self.shares_held,
             "purpose_of_holding": self.purpose_of_holding,
+            "joint_holders": self.joint_holders,
+            "fund_source": self.fund_source,
             "submit_date_time": self.submit_date_time,
             "period_start": self.period_start,
             "period_end": self.period_end,
@@ -190,6 +196,103 @@ class CompanyInfo(Base):
             "source_doc_type": self.source_doc_type,
             "period_end": self.period_end,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class TenderOffer(Base):
+    """A tender offer (公開買付/TOB) filing detected from EDINET.
+
+    Tracks docTypeCodes:
+      240: 公開買付届出書
+      250: 訂正公開買付届出書
+      260: 公開買付撤回届出書
+      270: 公開買付報告書
+      280: 訂正公開買付報告書
+      290: 意見表明報告書
+      300: 訂正意見表明報告書
+    """
+
+    __tablename__ = "tender_offers"
+    __table_args__ = (
+        Index("ix_tender_submit", "submit_date_time"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    doc_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+
+    # Filer info
+    edinet_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    filer_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    sec_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    jcn: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    # Document classification
+    doc_type_code: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    doc_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Target company (issuer)
+    subject_edinet_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    issuer_edinet_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    target_company_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    target_sec_code: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+
+    # Timestamps
+    submit_date_time: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    period_start: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    period_end: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    # Flags
+    pdf_flag: Mapped[bool] = mapped_column(Boolean, default=False)
+    xbrl_flag: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Internal
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+
+    # Derived classification
+    @property
+    def tob_type(self) -> str:
+        """Human-readable TOB event type."""
+        _type_map = {
+            "240": "公開買付届出",
+            "250": "訂正公開買付届出",
+            "260": "公開買付撤回",
+            "270": "公開買付報告",
+            "280": "訂正公開買付報告",
+            "290": "意見表明",
+            "300": "訂正意見表明",
+        }
+        return _type_map.get(self.doc_type_code or "", "TOB関連")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "doc_id": self.doc_id,
+            "edinet_code": self.edinet_code,
+            "filer_name": self.filer_name,
+            "sec_code": self.sec_code,
+            "doc_type_code": self.doc_type_code,
+            "doc_description": self.doc_description,
+            "tob_type": self.tob_type,
+            "subject_edinet_code": self.subject_edinet_code,
+            "issuer_edinet_code": self.issuer_edinet_code,
+            "target_company_name": self.target_company_name,
+            "target_sec_code": self.target_sec_code,
+            "submit_date_time": self.submit_date_time,
+            "period_start": self.period_start,
+            "period_end": self.period_end,
+            "pdf_flag": self.pdf_flag,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "pdf_url": f"/api/documents/{self.doc_id}/pdf"
+            if self.doc_id and self.pdf_flag
+            else None,
+            "edinet_url": (
+                f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx"
+                f"?{self.doc_id},,,"
+            )
+            if self.doc_id
+            else None,
         }
 
 

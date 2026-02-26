@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import Filing, Watchlist
+from app.models import Filing, TenderOffer, Watchlist
 
 
 @pytest_asyncio.fixture
@@ -82,6 +82,20 @@ async def seed_data(api_session_factory):
 
         wl = Watchlist(company_name="トヨタ自動車", sec_code="72030")
         session.add(wl)
+
+        # TOB seed data
+        tob = TenderOffer(
+            doc_id="S100TOB_API",
+            edinet_code="E88888",
+            filer_name="TOB株式会社",
+            doc_type_code="240",
+            doc_description="公開買付届出書（トヨタ自動車株式会社）",
+            target_company_name="トヨタ自動車株式会社",
+            target_sec_code="72030",
+            submit_date_time="2026-02-18 11:00",
+            pdf_flag=True,
+        )
+        session.add(tob)
         await session.commit()
 
 
@@ -534,4 +548,26 @@ class TestStatsCaching:
         assert data["today_total"] == 3
         assert data["today_new_reports"] == 2  # API1 + API2
         assert data["today_amendments"] == 1  # API3
+
+
+class TestTobAPI:
+    """Tests for /api/tob endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_list_tobs(self, client):
+        resp = await client.get("/api/tob")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "items" in data
+        assert "total" in data
+        assert data["total"] == 1
+        assert data["items"][0]["doc_id"] == "S100TOB_API"
+        assert data["items"][0]["tob_type"] == "公開買付届出"
+
+    @pytest.mark.asyncio
+    async def test_list_tobs_limit(self, client):
+        resp = await client.get("/api/tob?limit=1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["items"]) == 1
 

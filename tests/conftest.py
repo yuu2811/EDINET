@@ -13,7 +13,7 @@ os.environ["EDINET_API_KEY"] = "test_api_key_for_testing"
 os.environ["POLL_INTERVAL"] = "9999"
 
 from app.database import Base
-from app.models import Filing, Watchlist
+from app.models import Filing, TenderOffer, Watchlist
 
 
 @pytest.fixture(scope="session")
@@ -101,6 +101,30 @@ async def sample_amendment(db_session):
     await db_session.commit()
     await db_session.refresh(filing)
     return filing
+
+
+@pytest_asyncio.fixture
+async def sample_tob(db_session):
+    """Insert a sample tender offer filing."""
+    tob = TenderOffer(
+        doc_id="S100TOB01",
+        edinet_code="E77777",
+        filer_name="TOBアクイジション株式会社",
+        sec_code="77770",
+        doc_type_code="240",
+        doc_description="公開買付届出書（サンプル工業株式会社）",
+        subject_edinet_code="E99999",
+        issuer_edinet_code="E99999",
+        target_company_name="サンプル工業株式会社",
+        target_sec_code="99990",
+        submit_date_time="2026-02-18 10:00",
+        pdf_flag=True,
+        xbrl_flag=True,
+    )
+    db_session.add(tob)
+    await db_session.commit()
+    await db_session.refresh(tob)
+    return tob
 
 
 @pytest_asyncio.fixture

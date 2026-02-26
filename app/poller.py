@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from app.config import JST, settings
 from app.database import async_session
 from app.edinet import edinet_client
-from app.models import CompanyInfo, Filing
+from app.models import CompanyInfo, Filing, TenderOffer
 
 logger = logging.getLogger(__name__)
 
@@ -297,6 +297,8 @@ _XBRL_FIELDS = (
     "target_sec_code",
     "shares_held",
     "purpose_of_holding",
+    "joint_holders",
+    "fund_source",
 )
 
 
@@ -489,6 +491,12 @@ async def _poll_company_info(target_date: date) -> None:
                         company.shares_outstanding = info["shares_outstanding"]
                     if info.get("net_assets"):
                         company.net_assets = info["net_assets"]
+                    # Populate industry from EDINET code list (金融庁公式業種)
+                    if not company.industry:
+                        from app.routers.stock import get_industry_for_ticker
+                        industry = await get_industry_for_ticker(ticker)
+                        if industry:
+                            company.industry = industry
                     company.source_doc_id = doc_id
                     company.source_doc_type = doc.get("docTypeCode")
                     company.period_end = doc.get("periodEnd")
@@ -513,6 +521,84 @@ async def _poll_company_info(target_date: date) -> None:
             logger.info("Updated %d company info records from EDINET", updated)
 
 
+async def _poll_tender_offers(target_date: date) -> None:
+    """Detect tender offer (公開買付/TOB) filings from EDINET.
+
+    Scans the daily document list for docTypeCodes 240-300 (TOB-related)
+    and stores new findings in the tender_offers table.  Broadcasts SSE
+    events for real-time dashboard notification.
+    """
+    if not settings.EDINET_API_KEY:
+        return
+
+    all_docs = await edinet_client.fetch_all_document_list(target_date)
+    if not all_docs:
+        return
+
+    tob_docs = [
+        doc for doc in all_docs
+        if doc.get("docTypeCode") in settings.TOB_DOC_TYPES
+        and doc.get("withdrawalStatus", "0") != "1"
+        and doc.get("disclosureStatus", "0") == "0"
+    ]
+
+    if not tob_docs:
+        return
+
+    logger.info(
+        "Found %d TOB-related filings for %s", len(tob_docs), target_date,
+    )
+
+    # Batch duplicate check
+    doc_ids = [d.get("docID") for d in tob_docs if d.get("docID")]
+    async with async_session() as session:
+        existing_result = await session.execute(
+            select(TenderOffer.doc_id).where(TenderOffer.doc_id.in_(doc_ids))
+        )
+        existing_ids = set(existing_result.scalars().all())
+
+        new_count = 0
+        for doc in tob_docs:
+            doc_id = doc.get("docID")
+            if not doc_id or doc_id in existing_ids:
+                continue
+
+            # Extract target company from description (e.g. "公開買付届出書（ソニーグループ株式会社）")
+            target_name = None
+            desc = doc.get("docDescription", "")
+            m = re.search(r"[（(]([^）)]+?(?:株式会社|株式|Inc\.|Ltd\.))[）)]", desc)
+            if m:
+                target_name = m.group(1)
+
+            tob = TenderOffer(
+                doc_id=doc_id,
+                edinet_code=doc.get("edinetCode"),
+                filer_name=doc.get("filerName"),
+                sec_code=doc.get("secCode"),
+                jcn=doc.get("JCN"),
+                doc_type_code=doc.get("docTypeCode"),
+                doc_description=desc,
+                subject_edinet_code=doc.get("subjectEdinetCode"),
+                issuer_edinet_code=doc.get("issuerEdinetCode"),
+                target_company_name=target_name,
+                target_sec_code=doc.get("secCode"),
+                submit_date_time=doc.get("submitDateTime"),
+                period_start=doc.get("periodStart"),
+                period_end=doc.get("periodEnd"),
+                pdf_flag=doc.get("pdfFlag") == "1",
+                xbrl_flag=doc.get("xbrlFlag") == "1",
+            )
+            session.add(tob)
+            new_count += 1
+
+            # Broadcast SSE event for real-time notification
+            await broadcaster.broadcast(tob.to_dict(), event_type="new_tob")
+
+        if new_count > 0:
+            await session.commit()
+            logger.info("Stored %d new TOB filings", new_count)
+
+
 async def run_poller():
     """Run the polling loop."""
     if not settings.EDINET_API_KEY:
@@ -533,6 +619,8 @@ async def run_poller():
             await _retry_xbrl_enrichment()
             # Fetch company fundamentals from 有報/四半期報告書
             await _poll_company_info(today)
+            # Detect tender offer (TOB) filings
+            await _poll_tender_offers(today)
             # Clean up SSE clients that have been connected too long
             await broadcaster._cleanup_stale()
         except asyncio.CancelledError:

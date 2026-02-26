@@ -22,6 +22,7 @@ function toLocalDateStr(d) {
 const state = {
     filings: [],
     watchlist: [],
+    tobs: [],       // tender offer (公開買付) filings
     stats: {},
     connected: false,
     soundEnabled: true,
@@ -605,6 +606,11 @@ function initSSE() {
         loadStats();
     });
 
+    eventSource.addEventListener('new_tob', (e) => {
+        const tob = JSON.parse(e.data);
+        handleNewTob(tob);
+    });
+
     eventSource.onopen = () => {
         const reconnected = _wasDisconnected;
         _wasDisconnected = false;
@@ -670,7 +676,7 @@ function setConnectionStatus(status) {
 // ---------------------------------------------------------------------------
 
 async function loadInitialData() {
-    await Promise.all([loadFilings(), loadStats(), loadWatchlist(), loadAnalytics()]);
+    await Promise.all([loadFilings(), loadStats(), loadWatchlist(), loadAnalytics(), loadTobs()]);
 }
 
 async function loadFilings() {
@@ -747,6 +753,68 @@ async function loadStats() {
         console.error('Failed to load stats:', e);
         showToast('統計データの読み込みに失敗しました');
     }
+}
+
+// ---------------------------------------------------------------------------
+// Tender Offer (TOB / 公開買付) Functions
+// ---------------------------------------------------------------------------
+
+async function loadTobs() {
+    try {
+        const resp = await fetch('/api/tob?limit=50');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        state.tobs = data.items || [];
+        renderTobPanel();
+    } catch (e) {
+        console.error('Failed to load TOBs:', e);
+    }
+}
+
+function handleNewTob(tob) {
+    // Avoid duplicates
+    if (state.tobs.some(t => t.doc_id === tob.doc_id)) return;
+    state.tobs.unshift(tob);
+    renderTobPanel();
+    // Play alert sound and show notification
+    if (state.soundEnabled) playAlert();
+    showToast(`TOB: ${tob.tob_type} — ${tob.filer_name || '(不明)'}`);
+    if (state.notificationsEnabled && Notification.permission === 'granted') {
+        new Notification('公開買付 検知', {
+            body: `${tob.tob_type}: ${tob.filer_name || ''} → ${tob.target_company_name || tob.doc_description || ''}`,
+            tag: tob.doc_id,
+        });
+    }
+}
+
+function renderTobPanel() {
+    const container = document.getElementById('tob-list');
+    if (!container) return;
+    const badge = document.getElementById('tob-count');
+    if (badge) badge.textContent = state.tobs.length || '';
+
+    if (state.tobs.length === 0) {
+        container.innerHTML = '<div class="tob-empty">公開買付関連の届出はありません</div>';
+        return;
+    }
+
+    container.innerHTML = state.tobs.slice(0, 30).map(t => {
+        const time = t.submit_date_time ? t.submit_date_time.slice(0, 16).replace('T', ' ') : '';
+        const typeClass = t.doc_type_code === '260' ? 'tob-withdraw' :
+                          t.doc_type_code === '290' || t.doc_type_code === '300' ? 'tob-opinion' : 'tob-filing';
+        let links = '';
+        if (t.pdf_url) links += `<a href="${escapeHtml(t.pdf_url)}" target="_blank" rel="noopener" class="tob-link" onclick="event.stopPropagation()">PDF</a>`;
+        if (t.edinet_url) links += `<a href="${escapeHtml(t.edinet_url)}" target="_blank" rel="noopener" class="tob-link" onclick="event.stopPropagation()">EDINET</a>`;
+        return `<div class="tob-item ${typeClass}">
+            <div class="tob-header">
+                <span class="tob-type-badge">${escapeHtml(t.tob_type)}</span>
+                <span class="tob-time">${escapeHtml(time)}</span>
+            </div>
+            <div class="tob-filer">${escapeHtml(t.filer_name || '(不明)')}</div>
+            <div class="tob-target">${escapeHtml(t.target_company_name || t.doc_description || '')}</div>
+            <div class="tob-links">${links}</div>
+        </div>`;
+    }).join('');
 }
 
 async function loadWatchlist() {
@@ -2298,6 +2366,27 @@ function openModal(filing) {
         }
         if (filing.purpose_of_holding) {
             rows.push(['保有目的', filing.purpose_of_holding]);
+        }
+    }
+
+    // Fund source (取得資金)
+    if (filing.fund_source) {
+        rows.push(['取得資金', filing.fund_source]);
+    }
+
+    // Joint holders (共同保有者)
+    if (filing.joint_holders) {
+        try {
+            const jh = JSON.parse(filing.joint_holders);
+            if (Array.isArray(jh) && jh.length > 0) {
+                const jhHtml = jh.map(h => {
+                    const ratio = h.ratio != null ? ` (${h.ratio}%)` : '';
+                    return `<div class="joint-holder-item">${escapeHtml(h.name)}${ratio}</div>`;
+                }).join('');
+                rows.push(['共同保有者', { html: `<span class="detail-value">${jhHtml}</span>` }]);
+            }
+        } catch (e) {
+            rows.push(['共同保有者', filing.joint_holders]);
         }
     }
 

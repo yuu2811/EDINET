@@ -7,7 +7,7 @@ from sqlalchemy import case, desc, func, select
 
 from app.config import JST
 from app.deps import get_async_session, normalize_sec_code, validate_edinet_code, validate_sec_code
-from app.models import Filing
+from app.models import CompanyInfo, Filing
 
 router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
 
@@ -307,27 +307,35 @@ async def market_movements(
 async def sector_breakdown() -> dict:
     """Return sector-level aggregation of all filings in the database.
 
-    Uses SQL GROUP BY on the sector prefix (first 2 digits of securities
-    code) to avoid loading all rows into Python memory.
+    Prefers the 金融庁 official industry classification from CompanyInfo
+    (populated via the EDINET code list).  Falls back to the securities
+    code prefix mapping when CompanyInfo.industry is not available.
     """
     async with get_async_session()() as session:
-        # Derive the 4-digit ticker, then take the first 2 digits as sector prefix
+        # Derive the 4-digit ticker for the target company
         ticker_expr = case(
             (func.length(Filing.target_sec_code) == 5,
              func.substr(Filing.target_sec_code, 1, 4)),
             else_=Filing.target_sec_code,
         )
-        sector_prefix = func.substr(ticker_expr, 1, 2)
+        # Fallback: sec_code prefix → sector name
+        sec_prefix = func.substr(ticker_expr, 1, 2)
+
+        # LEFT JOIN CompanyInfo to get official industry classification
+        from sqlalchemy.orm import aliased
+        ci = aliased(CompanyInfo)
 
         result = await session.execute(
             select(
-                sector_prefix.label("prefix"),
+                ci.industry.label("industry"),
+                sec_prefix.label("prefix"),
                 func.count(Filing.id).label("filing_count"),
                 func.count(func.distinct(ticker_expr)).label("company_count"),
                 func.avg(Filing.holding_ratio).label("avg_ratio"),
             )
+            .outerjoin(ci, ticker_expr == ci.sec_code)
             .where(Filing.target_sec_code.isnot(None))
-            .group_by(sector_prefix)
+            .group_by(ci.industry, sec_prefix)
         )
 
         # Also count filings with no sec_code (→ "その他")
@@ -340,30 +348,42 @@ async def sector_breakdown() -> dict:
         )
         null_row = null_result.one()
 
-        sectors = []
+        # Merge rows by resolved sector name
+        sector_agg: dict[str, dict] = {}
         for row in result:
-            sector_name = _SECTOR_MAP.get(row.prefix, "その他")
-            avg_ratio = round(row.avg_ratio, 2) if row.avg_ratio is not None else None
-            sectors.append({
-                "sector": sector_name,
-                "company_count": row.company_count,
-                "filing_count": row.filing_count,
-                "avg_ratio": avg_ratio,
-            })
+            # Prefer official industry, fall back to prefix map
+            if row.industry:
+                sector_name = row.industry
+            else:
+                sector_name = _SECTOR_MAP.get(row.prefix, "その他") if row.prefix else "その他"
+            if sector_name not in sector_agg:
+                sector_agg[sector_name] = {"filing_count": 0, "company_count": 0, "ratio_sum": 0.0, "ratio_n": 0}
+            bucket = sector_agg[sector_name]
+            bucket["filing_count"] += row.filing_count
+            bucket["company_count"] += row.company_count
+            if row.avg_ratio is not None:
+                bucket["ratio_sum"] += row.avg_ratio * row.filing_count
+                bucket["ratio_n"] += row.filing_count
 
         # Merge null sec_code filings into "その他"
         if null_row.filing_count > 0:
-            other = next((s for s in sectors if s["sector"] == "その他"), None)
-            if other:
-                other["filing_count"] += null_row.filing_count
-            else:
-                avg_ratio = round(null_row.avg_ratio, 2) if null_row.avg_ratio is not None else None
-                sectors.append({
-                    "sector": "その他",
-                    "company_count": 0,
-                    "filing_count": null_row.filing_count,
-                    "avg_ratio": avg_ratio,
-                })
+            if "その他" not in sector_agg:
+                sector_agg["その他"] = {"filing_count": 0, "company_count": 0, "ratio_sum": 0.0, "ratio_n": 0}
+            bucket = sector_agg["その他"]
+            bucket["filing_count"] += null_row.filing_count
+            if null_row.avg_ratio is not None:
+                bucket["ratio_sum"] += null_row.avg_ratio * null_row.filing_count
+                bucket["ratio_n"] += null_row.filing_count
+
+        sectors = []
+        for sector_name, bucket in sector_agg.items():
+            avg_ratio = round(bucket["ratio_sum"] / bucket["ratio_n"], 2) if bucket["ratio_n"] > 0 else None
+            sectors.append({
+                "sector": sector_name,
+                "company_count": bucket["company_count"],
+                "filing_count": bucket["filing_count"],
+                "avg_ratio": avg_ratio,
+            })
 
         # Sort by filing count descending
         sectors.sort(key=lambda s: -s["filing_count"])

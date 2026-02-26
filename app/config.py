@@ -41,5 +41,11 @@ class Settings:
     # 140: 四半期報告書 (Quarterly Report)
     COMPANY_INFO_DOC_TYPES: list[str] = ["120", "130", "140"]
 
+    # Tender offer (公開買付/TOB) related docTypeCodes
+    # 240: 公開買付届出書  250: 訂正公開買付届出書
+    # 260: 公開買付撤回届出書  270: 公開買付報告書
+    # 280: 訂正公開買付報告書  290: 意見表明報告書  300: 訂正意見表明報告書
+    TOB_DOC_TYPES: list[str] = ["240", "250", "260", "270", "280", "290", "300"]
+
 
 settings = Settings()
