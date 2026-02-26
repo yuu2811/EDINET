@@ -129,16 +129,21 @@ function prepareFilingData(f) {
 /** Build PDF + EDINET link HTML */
 function buildDocLinks(f, linkClass) {
     let html = '';
-    if (f.pdf_url) html += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="${linkClass}" onclick="event.stopPropagation()">PDF</a>`;
-    if (f.edinet_url) html += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="${linkClass}" onclick="event.stopPropagation()">EDINET</a>`;
+    if (f.pdf_url) html += `<a href="${escapeHtml(f.pdf_url)}" target="_blank" rel="noopener" class="${linkClass}" onclick="event.stopPropagation()">PDF</a>`;
+    if (f.edinet_url) html += `<a href="${escapeHtml(f.edinet_url)}" target="_blank" rel="noopener" class="${linkClass}" onclick="event.stopPropagation()">EDINET</a>`;
     return html;
+}
+
+/** Escape a string for safe use inside a JavaScript single-quoted string literal. */
+function escapeJsString(s) {
+    return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 /** Build clickable filer link HTML */
 function filerLinkHtml(name, edinetCode) {
     const safe = escapeHtml(name || '(不明)');
     if (!edinetCode) return safe;
-    return `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeHtml(edinetCode)}')">${safe}</a>`;
+    return `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeJsString(escapeHtml(edinetCode))}')">${safe}</a>`;
 }
 
 /** Build clickable company link HTML */
@@ -146,7 +151,7 @@ function companyLinkHtml(name, secCode, showCode) {
     const safe = escapeHtml(name || '(対象不明)');
     const codeStr = showCode && secCode ? ` ${escapeHtml('[' + secCode + ']')}` : '';
     if (!secCode) return safe + codeStr;
-    return `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${safe}${codeStr}</a>`;
+    return `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeJsString(escapeHtml(secCode))}')">${safe}${codeStr}</a>`;
 }
 
 /** Build badge HTML for a filing */
@@ -454,11 +459,15 @@ function initEventListeners() {
         }, 3000);
     });
 
-    // Feed search
+    // Feed search (debounced to avoid excessive re-renders on fast typing)
+    let _searchDebounce = null;
     document.getElementById('feed-search').addEventListener('input', (e) => {
         state.searchQuery = e.target.value.toLowerCase();
-        renderFeed();
-        savePreferences();
+        clearTimeout(_searchDebounce);
+        _searchDebounce = setTimeout(() => {
+            renderFeed();
+            savePreferences();
+        }, 150);
     });
 
     // Feed filter
@@ -1311,6 +1320,7 @@ function renderWatchlist() {
     }
 
     container.innerHTML = state.watchlist.map(w => {
+        const code = normalizeSecCode(w.sec_code);
         const sd = getCachedStock(w.sec_code);
         let priceHtml = '';
         if (sd && sd.current_price != null) {

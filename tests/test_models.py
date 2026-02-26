@@ -4,7 +4,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
-from app.models import Filing, Watchlist
+from app.models import CompanyInfo, Filing, Watchlist
 
 
 @pytest.mark.asyncio
@@ -104,3 +104,49 @@ async def test_watchlist_persisted(db_session, sample_watchlist_item):
     found = result.scalar_one_or_none()
     assert found is not None
     assert found.company_name == "サンプル工業株式会社"
+
+
+# ---------------------------------------------------------------------------
+# CompanyInfo model tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_company_info_to_dict_with_bps():
+    """CompanyInfo.to_dict() should compute BPS when data is available."""
+    ci = CompanyInfo(
+        sec_code="1234",
+        company_name="テスト株式会社",
+        shares_outstanding=1_000_000,
+        net_assets=500_000_000,
+    )
+    d = ci.to_dict()
+    assert d["sec_code"] == "1234"
+    assert d["company_name"] == "テスト株式会社"
+    assert d["shares_outstanding"] == 1_000_000
+    assert d["net_assets"] == 500_000_000
+    # BPS = 500_000_000 / 1_000_000 = 500.0
+    assert d["bps"] == 500.0
+
+
+@pytest.mark.asyncio
+async def test_company_info_bps_none_when_no_shares():
+    """BPS should be None when shares_outstanding is missing."""
+    ci = CompanyInfo(sec_code="5678", net_assets=100_000_000)
+    d = ci.to_dict()
+    assert d["bps"] is None
+
+
+@pytest.mark.asyncio
+async def test_company_info_bps_none_when_zero_shares():
+    """BPS should be None when shares_outstanding is 0."""
+    ci = CompanyInfo(sec_code="5678", shares_outstanding=0, net_assets=100_000_000)
+    d = ci.to_dict()
+    assert d["bps"] is None
+
+
+@pytest.mark.asyncio
+async def test_company_info_bps_none_when_no_net_assets():
+    """BPS should be None when net_assets is missing."""
+    ci = CompanyInfo(sec_code="5678", shares_outstanding=1_000_000)
+    d = ci.to_dict()
+    assert d["bps"] is None
