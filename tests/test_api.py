@@ -486,3 +486,52 @@ class TestAnalyticsAPI:
         assert "net_direction" in data
         assert "sector_movements" in data
 
+    @pytest.mark.asyncio
+    async def test_movements_consolidated_counts(self, client):
+        """Consolidated query should compute correct increase/decrease counts."""
+        resp = await client.get("/api/analytics/movements?date=2026-02-18")
+        data = resp.json()
+        assert data["total_filings"] == 3
+        # S100API1: 5.12 > 4.80 (increase), S100API2: 6.83 < 7.24 (decrease)
+        assert data["increases"] == 1
+        assert data["decreases"] == 1
+        # unchanged = total - increases - decreases = 3 - 1 - 1 = 1
+        assert data["unchanged"] == 1
+        assert data["avg_increase"] is not None
+        assert data["avg_decrease"] is not None
+
+    @pytest.mark.asyncio
+    async def test_movements_empty_date(self, client):
+        """Empty date should return zero counts."""
+        resp = await client.get("/api/analytics/movements?date=2020-01-01")
+        data = resp.json()
+        assert data["total_filings"] == 0
+        assert data["increases"] == 0
+        assert data["decreases"] == 0
+        assert data["net_direction"] == "neutral"
+
+
+class TestStatsCaching:
+    """Tests for stats endpoint caching behavior."""
+
+    @pytest.mark.asyncio
+    async def test_stats_returns_consistent_data(self, client):
+        """Calling stats twice should return same data (from cache)."""
+        resp1 = await client.get("/api/stats?date=2026-02-18")
+        resp2 = await client.get("/api/stats?date=2026-02-18")
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+        d1 = resp1.json()
+        d2 = resp2.json()
+        assert d1["today_total"] == d2["today_total"]
+        assert d1["total_in_db"] == d2["total_in_db"]
+
+    @pytest.mark.asyncio
+    async def test_stats_consolidated_counts(self, client):
+        """Stats should correctly compute new_reports and amendments."""
+        resp = await client.get("/api/stats?date=2026-02-18")
+        data = resp.json()
+        assert data["today_total"] == 3
+        assert data["today_new_reports"] == 2  # API1 + API2
+        assert data["today_amendments"] == 1  # API3
+

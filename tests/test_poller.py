@@ -98,6 +98,82 @@ class TestSSEBroadcaster:
         assert "テスト証券" in msg
 
 
+class TestSSEBroadcasterReplay:
+    """Tests for SSE event replay via Last-Event-ID."""
+
+    @pytest.mark.asyncio
+    async def test_event_buffer_stores_events(self):
+        b = SSEBroadcaster()
+        await b.broadcast("e1", {"x": 1})
+        await b.broadcast("e2", {"x": 2})
+        assert len(b._event_buffer) == 2
+
+    @pytest.mark.asyncio
+    async def test_replay_missed_events_on_reconnect(self):
+        b = SSEBroadcaster()
+        # Broadcast 3 events (no subscribers yet, but events are buffered)
+        await b.broadcast("e1", {"x": 1})
+        await b.broadcast("e2", {"x": 2})
+        await b.broadcast("e3", {"x": 3})
+
+        # Subscribe with Last-Event-ID = 1 (should replay events 2 and 3)
+        _id, q = await b.subscribe(last_event_id=1)
+        assert q.qsize() == 2
+        msg1 = q.get_nowait()
+        assert "id: 2\n" in msg1
+        msg2 = q.get_nowait()
+        assert "id: 3\n" in msg2
+
+    @pytest.mark.asyncio
+    async def test_replay_no_missed_events(self):
+        b = SSEBroadcaster()
+        await b.broadcast("e1", {"x": 1})
+
+        # Subscribe with Last-Event-ID = 1 (no missed events)
+        _id, q = await b.subscribe(last_event_id=1)
+        assert q.qsize() == 0
+
+    @pytest.mark.asyncio
+    async def test_replay_all_events_with_zero_last_id(self):
+        b = SSEBroadcaster()
+        await b.broadcast("e1", {"x": 1})
+        await b.broadcast("e2", {"x": 2})
+
+        # Subscribe with Last-Event-ID = 0 (should replay all events)
+        _id, q = await b.subscribe(last_event_id=0)
+        assert q.qsize() == 2
+
+    @pytest.mark.asyncio
+    async def test_subscribe_without_last_event_id(self):
+        b = SSEBroadcaster()
+        await b.broadcast("e1", {"x": 1})
+
+        # Normal subscribe (no replay)
+        _id, q = await b.subscribe()
+        assert q.qsize() == 0
+
+    @pytest.mark.asyncio
+    async def test_event_buffer_bounded(self):
+        b = SSEBroadcaster()
+        # Broadcast more events than buffer size
+        for i in range(b._EVENT_BUFFER_SIZE + 50):
+            await b.broadcast("e", {"i": i})
+        assert len(b._event_buffer) == b._EVENT_BUFFER_SIZE
+
+    @pytest.mark.asyncio
+    async def test_replay_respects_queue_limit(self):
+        """Replay should stop if client queue fills up."""
+        b = SSEBroadcaster()
+        # Broadcast many events
+        for i in range(150):
+            await b.broadcast("e", {"i": i})
+
+        # Subscribe with Last-Event-ID = 0 (tries to replay all 150)
+        # Queue maxsize is 100, so only ~100 should be replayed
+        _id, q = await b.subscribe(last_event_id=0)
+        assert q.qsize() == 100  # bounded by queue maxsize
+
+
 class TestPollerIntegration:
     """Tests for the poll_edinet function."""
 

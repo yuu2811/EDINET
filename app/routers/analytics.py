@@ -184,11 +184,33 @@ async def market_movements(
     async with get_async_session()() as session:
         date_filter = Filing.submit_date_time.startswith(date_str)
 
-        # Total filings on the date
-        total_result = await session.execute(
-            select(func.count(Filing.id)).where(date_filter)
-        )
-        total_filings = total_result.scalar() or 0
+        # Consolidated query: total, increases, decreases, avg_increase, avg_decrease
+        # in a single round-trip using CASE/WHEN aggregation (was 5 separate queries)
+        ratio_diff = Filing.holding_ratio - Filing.previous_holding_ratio
+        has_both = Filing.holding_ratio.isnot(None) & Filing.previous_holding_ratio.isnot(None)
+
+        summary_q = select(
+            func.count(Filing.id).label("total"),
+            func.sum(case(
+                (has_both & (Filing.holding_ratio > Filing.previous_holding_ratio), 1),
+                else_=0,
+            )).label("increases"),
+            func.sum(case(
+                (has_both & (Filing.holding_ratio < Filing.previous_holding_ratio), 1),
+                else_=0,
+            )).label("decreases"),
+            func.avg(case(
+                (has_both & (Filing.holding_ratio > Filing.previous_holding_ratio), ratio_diff),
+                else_=None,
+            )).label("avg_increase"),
+            func.avg(case(
+                (has_both & (Filing.holding_ratio < Filing.previous_holding_ratio), ratio_diff),
+                else_=None,
+            )).label("avg_decrease"),
+        ).where(date_filter)
+
+        summary = (await session.execute(summary_q)).one()
+        total_filings = summary.total or 0
 
         if total_filings == 0:
             return {
@@ -204,30 +226,10 @@ async def market_movements(
                 "notable_moves": [],
             }
 
-        # Counts by direction
-        increase_count_result = await session.execute(
-            select(func.count(Filing.id)).where(
-                date_filter,
-                Filing.holding_ratio.isnot(None),
-                Filing.previous_holding_ratio.isnot(None),
-                Filing.holding_ratio > Filing.previous_holding_ratio,
-            )
-        )
-        increases = increase_count_result.scalar() or 0
-
-        decrease_count_result = await session.execute(
-            select(func.count(Filing.id)).where(
-                date_filter,
-                Filing.holding_ratio.isnot(None),
-                Filing.previous_holding_ratio.isnot(None),
-                Filing.holding_ratio < Filing.previous_holding_ratio,
-            )
-        )
-        decreases = decrease_count_result.scalar() or 0
-
+        increases = summary.increases or 0
+        decreases = summary.decreases or 0
         unchanged = total_filings - increases - decreases
 
-        # Net direction
         if increases > decreases:
             net_direction = "bullish"
         elif decreases > increases:
@@ -235,33 +237,8 @@ async def market_movements(
         else:
             net_direction = "neutral"
 
-        # Average increase
-        avg_inc_result = await session.execute(
-            select(
-                func.avg(Filing.holding_ratio - Filing.previous_holding_ratio)
-            ).where(
-                date_filter,
-                Filing.holding_ratio.isnot(None),
-                Filing.previous_holding_ratio.isnot(None),
-                Filing.holding_ratio > Filing.previous_holding_ratio,
-            )
-        )
-        avg_increase_raw = avg_inc_result.scalar()
-        avg_increase = round(avg_increase_raw, 2) if avg_increase_raw is not None else None
-
-        # Average decrease
-        avg_dec_result = await session.execute(
-            select(
-                func.avg(Filing.holding_ratio - Filing.previous_holding_ratio)
-            ).where(
-                date_filter,
-                Filing.holding_ratio.isnot(None),
-                Filing.previous_holding_ratio.isnot(None),
-                Filing.holding_ratio < Filing.previous_holding_ratio,
-            )
-        )
-        avg_decrease_raw = avg_dec_result.scalar()
-        avg_decrease = round(avg_decrease_raw, 2) if avg_decrease_raw is not None else None
+        avg_increase = round(summary.avg_increase, 2) if summary.avg_increase is not None else None
+        avg_decrease = round(summary.avg_decrease, 2) if summary.avg_decrease is not None else None
 
         # Sector movements — must be computed in Python since sector mapping
         # is application-level logic, not stored in DB

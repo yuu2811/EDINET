@@ -1,6 +1,7 @@
 """Background polling service for EDINET large shareholding filings."""
 
 import asyncio
+import collections
 import json
 import logging
 import re
@@ -32,18 +33,29 @@ class SSEBroadcaster:
     Thread-safe broadcaster using asyncio.Lock with bounded queues,
     client ID tracking, stale client cleanup, and event IDs for
     reconnection support (Last-Event-ID).
+
+    Maintains a ring buffer of recent events so that reconnecting
+    clients can replay missed events via the Last-Event-ID header.
     """
 
     _CLIENT_MAX_AGE = 3600  # 1 hour in seconds
+    _EVENT_BUFFER_SIZE = 200  # keep last N events for replay
 
     def __init__(self):
         self._lock = asyncio.Lock()
         self._clients: dict[int, tuple[asyncio.Queue, float]] = {}
         self._next_id: int = 0
         self._event_id: int = 0  # monotonic event ID for SSE reconnection
+        # Ring buffer: deque of (event_id, formatted_message)
+        self._event_buffer: collections.deque[tuple[int, str]] = collections.deque(
+            maxlen=self._EVENT_BUFFER_SIZE
+        )
 
-    async def subscribe(self) -> tuple[int, asyncio.Queue]:
+    async def subscribe(self, last_event_id: int | None = None) -> tuple[int, asyncio.Queue]:
         """Register a new SSE client.
+
+        Args:
+            last_event_id: If provided, replay buffered events after this ID.
 
         Returns:
             A tuple of (client_id, queue) where the queue is bounded
@@ -54,6 +66,23 @@ class SSEBroadcaster:
             self._next_id += 1
             q: asyncio.Queue = asyncio.Queue(maxsize=100)
             self._clients[client_id] = (q, time.monotonic())
+
+            # Replay missed events from buffer
+            if last_event_id is not None:
+                replayed = 0
+                for eid, message in self._event_buffer:
+                    if eid > last_event_id:
+                        try:
+                            q.put_nowait(message)
+                            replayed += 1
+                        except asyncio.QueueFull:
+                            break
+                if replayed:
+                    logger.info(
+                        "SSE client %d: replayed %d missed events (from id %d)",
+                        client_id, replayed, last_event_id,
+                    )
+
             logger.debug("SSE client %d subscribed (total: %d)",
                          client_id, len(self._clients))
             return client_id, q
@@ -71,10 +100,13 @@ class SSEBroadcaster:
 
         Each event gets a unique monotonic ID for reconnection support.
         If a client's queue is full, the client is dropped with a warning.
+        Events are also stored in a ring buffer for replay on reconnection.
         """
         self._event_id += 1
         payload = json.dumps(data, cls=JsonEncoder, ensure_ascii=False)
         message = f"id: {self._event_id}\nevent: {event}\ndata: {payload}\n\n"
+        # Store in ring buffer for replay
+        self._event_buffer.append((self._event_id, message))
         dead: list[int] = []
         async with self._lock:
             for client_id, (q, _connected_at) in self._clients.items():
@@ -161,16 +193,25 @@ async def poll_edinet(target_date=None):
 
     new_count = 0
     async with async_session() as session:
+        # Batch duplicate check: single IN() query instead of N individual SELECTs
+        all_doc_ids = [doc.get("docID") for doc in filings if doc.get("docID")]
+        existing_ids: set[str] = set()
+        if all_doc_ids:
+            # Process in chunks of 500 to stay within SQLite variable limits
+            for chunk_start in range(0, len(all_doc_ids), 500):
+                chunk = all_doc_ids[chunk_start:chunk_start + 500]
+                result = await session.execute(
+                    select(Filing.doc_id).where(Filing.doc_id.in_(chunk))
+                )
+                existing_ids.update(row[0] for row in result)
+
         for doc in filings:
             doc_id = doc.get("docID")
             if not doc_id:
                 continue
 
-            # Check if already stored
-            existing = await session.execute(
-                select(Filing).where(Filing.doc_id == doc_id)
-            )
-            if existing.scalar_one_or_none():
+            # Skip already-stored filings (checked via batch query above)
+            if doc_id in existing_ids:
                 continue
 
             # New filing detected
