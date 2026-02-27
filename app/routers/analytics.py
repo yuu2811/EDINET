@@ -7,7 +7,7 @@ from sqlalchemy import case, desc, func, select
 
 from app.config import JST
 from app.deps import get_async_session, normalize_sec_code, validate_edinet_code, validate_sec_code
-from app.models import Filing
+from app.models import CompanyInfo, Filing, TenderOffer
 
 router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
 
@@ -184,11 +184,33 @@ async def market_movements(
     async with get_async_session()() as session:
         date_filter = Filing.submit_date_time.startswith(date_str)
 
-        # Total filings on the date
-        total_result = await session.execute(
-            select(func.count(Filing.id)).where(date_filter)
-        )
-        total_filings = total_result.scalar() or 0
+        # Consolidated query: total, increases, decreases, avg_increase, avg_decrease
+        # in a single round-trip using CASE/WHEN aggregation (was 5 separate queries)
+        ratio_diff = Filing.holding_ratio - Filing.previous_holding_ratio
+        has_both = Filing.holding_ratio.isnot(None) & Filing.previous_holding_ratio.isnot(None)
+
+        summary_q = select(
+            func.count(Filing.id).label("total"),
+            func.sum(case(
+                (has_both & (Filing.holding_ratio > Filing.previous_holding_ratio), 1),
+                else_=0,
+            )).label("increases"),
+            func.sum(case(
+                (has_both & (Filing.holding_ratio < Filing.previous_holding_ratio), 1),
+                else_=0,
+            )).label("decreases"),
+            func.avg(case(
+                (has_both & (Filing.holding_ratio > Filing.previous_holding_ratio), ratio_diff),
+                else_=None,
+            )).label("avg_increase"),
+            func.avg(case(
+                (has_both & (Filing.holding_ratio < Filing.previous_holding_ratio), ratio_diff),
+                else_=None,
+            )).label("avg_decrease"),
+        ).where(date_filter)
+
+        summary = (await session.execute(summary_q)).one()
+        total_filings = summary.total or 0
 
         if total_filings == 0:
             return {
@@ -204,30 +226,10 @@ async def market_movements(
                 "notable_moves": [],
             }
 
-        # Counts by direction
-        increase_count_result = await session.execute(
-            select(func.count(Filing.id)).where(
-                date_filter,
-                Filing.holding_ratio.isnot(None),
-                Filing.previous_holding_ratio.isnot(None),
-                Filing.holding_ratio > Filing.previous_holding_ratio,
-            )
-        )
-        increases = increase_count_result.scalar() or 0
-
-        decrease_count_result = await session.execute(
-            select(func.count(Filing.id)).where(
-                date_filter,
-                Filing.holding_ratio.isnot(None),
-                Filing.previous_holding_ratio.isnot(None),
-                Filing.holding_ratio < Filing.previous_holding_ratio,
-            )
-        )
-        decreases = decrease_count_result.scalar() or 0
-
+        increases = summary.increases or 0
+        decreases = summary.decreases or 0
         unchanged = total_filings - increases - decreases
 
-        # Net direction
         if increases > decreases:
             net_direction = "bullish"
         elif decreases > increases:
@@ -235,33 +237,8 @@ async def market_movements(
         else:
             net_direction = "neutral"
 
-        # Average increase
-        avg_inc_result = await session.execute(
-            select(
-                func.avg(Filing.holding_ratio - Filing.previous_holding_ratio)
-            ).where(
-                date_filter,
-                Filing.holding_ratio.isnot(None),
-                Filing.previous_holding_ratio.isnot(None),
-                Filing.holding_ratio > Filing.previous_holding_ratio,
-            )
-        )
-        avg_increase_raw = avg_inc_result.scalar()
-        avg_increase = round(avg_increase_raw, 2) if avg_increase_raw is not None else None
-
-        # Average decrease
-        avg_dec_result = await session.execute(
-            select(
-                func.avg(Filing.holding_ratio - Filing.previous_holding_ratio)
-            ).where(
-                date_filter,
-                Filing.holding_ratio.isnot(None),
-                Filing.previous_holding_ratio.isnot(None),
-                Filing.holding_ratio < Filing.previous_holding_ratio,
-            )
-        )
-        avg_decrease_raw = avg_dec_result.scalar()
-        avg_decrease = round(avg_decrease_raw, 2) if avg_decrease_raw is not None else None
+        avg_increase = round(summary.avg_increase, 2) if summary.avg_increase is not None else None
+        avg_decrease = round(summary.avg_decrease, 2) if summary.avg_decrease is not None else None
 
         # Sector movements — must be computed in Python since sector mapping
         # is application-level logic, not stored in DB
@@ -330,27 +307,35 @@ async def market_movements(
 async def sector_breakdown() -> dict:
     """Return sector-level aggregation of all filings in the database.
 
-    Uses SQL GROUP BY on the sector prefix (first 2 digits of securities
-    code) to avoid loading all rows into Python memory.
+    Prefers the 金融庁 official industry classification from CompanyInfo
+    (populated via the EDINET code list).  Falls back to the securities
+    code prefix mapping when CompanyInfo.industry is not available.
     """
     async with get_async_session()() as session:
-        # Derive the 4-digit ticker, then take the first 2 digits as sector prefix
+        # Derive the 4-digit ticker for the target company
         ticker_expr = case(
             (func.length(Filing.target_sec_code) == 5,
              func.substr(Filing.target_sec_code, 1, 4)),
             else_=Filing.target_sec_code,
         )
-        sector_prefix = func.substr(ticker_expr, 1, 2)
+        # Fallback: sec_code prefix → sector name
+        sec_prefix = func.substr(ticker_expr, 1, 2)
+
+        # LEFT JOIN CompanyInfo to get official industry classification
+        from sqlalchemy.orm import aliased
+        ci = aliased(CompanyInfo)
 
         result = await session.execute(
             select(
-                sector_prefix.label("prefix"),
+                ci.industry.label("industry"),
+                sec_prefix.label("prefix"),
                 func.count(Filing.id).label("filing_count"),
                 func.count(func.distinct(ticker_expr)).label("company_count"),
                 func.avg(Filing.holding_ratio).label("avg_ratio"),
             )
+            .outerjoin(ci, ticker_expr == ci.sec_code)
             .where(Filing.target_sec_code.isnot(None))
-            .group_by(sector_prefix)
+            .group_by(ci.industry, sec_prefix)
         )
 
         # Also count filings with no sec_code (→ "その他")
@@ -363,30 +348,42 @@ async def sector_breakdown() -> dict:
         )
         null_row = null_result.one()
 
-        sectors = []
+        # Merge rows by resolved sector name
+        sector_agg: dict[str, dict] = {}
         for row in result:
-            sector_name = _SECTOR_MAP.get(row.prefix, "その他")
-            avg_ratio = round(row.avg_ratio, 2) if row.avg_ratio is not None else None
-            sectors.append({
-                "sector": sector_name,
-                "company_count": row.company_count,
-                "filing_count": row.filing_count,
-                "avg_ratio": avg_ratio,
-            })
+            # Prefer official industry, fall back to prefix map
+            if row.industry:
+                sector_name = row.industry
+            else:
+                sector_name = _SECTOR_MAP.get(row.prefix, "その他") if row.prefix else "その他"
+            if sector_name not in sector_agg:
+                sector_agg[sector_name] = {"filing_count": 0, "company_count": 0, "ratio_sum": 0.0, "ratio_n": 0}
+            bucket = sector_agg[sector_name]
+            bucket["filing_count"] += row.filing_count
+            bucket["company_count"] += row.company_count
+            if row.avg_ratio is not None:
+                bucket["ratio_sum"] += row.avg_ratio * row.filing_count
+                bucket["ratio_n"] += row.filing_count
 
         # Merge null sec_code filings into "その他"
         if null_row.filing_count > 0:
-            other = next((s for s in sectors if s["sector"] == "その他"), None)
-            if other:
-                other["filing_count"] += null_row.filing_count
-            else:
-                avg_ratio = round(null_row.avg_ratio, 2) if null_row.avg_ratio is not None else None
-                sectors.append({
-                    "sector": "その他",
-                    "company_count": 0,
-                    "filing_count": null_row.filing_count,
-                    "avg_ratio": avg_ratio,
-                })
+            if "その他" not in sector_agg:
+                sector_agg["その他"] = {"filing_count": 0, "company_count": 0, "ratio_sum": 0.0, "ratio_n": 0}
+            bucket = sector_agg["その他"]
+            bucket["filing_count"] += null_row.filing_count
+            if null_row.avg_ratio is not None:
+                bucket["ratio_sum"] += null_row.avg_ratio * null_row.filing_count
+                bucket["ratio_n"] += null_row.filing_count
+
+        sectors = []
+        for sector_name, bucket in sector_agg.items():
+            avg_ratio = round(bucket["ratio_sum"] / bucket["ratio_n"], 2) if bucket["ratio_n"] > 0 else None
+            sectors.append({
+                "sector": sector_name,
+                "company_count": bucket["company_count"],
+                "filing_count": bucket["filing_count"],
+                "avg_ratio": avg_ratio,
+            })
 
         # Sort by filing count descending
         sectors.sort(key=lambda s: -s["filing_count"])
@@ -405,14 +402,64 @@ def _group_filings(filings, key_fn, init_fn):
         key = key_fn(f)
         if key not in groups:
             groups[key] = {**init_fn(f), "filing_count": 0, "history": []}
-        groups[key]["filing_count"] += 1
+        g = groups[key]
+        g["filing_count"] += 1
+        # Always update latest_ratio / latest_date to the most recent filing
         if f.holding_ratio is not None:
-            groups[key]["history"].append({
+            g["history"].append({
                 "date": f.submit_date_time,
                 "ratio": f.holding_ratio,
                 "previous_ratio": f.previous_holding_ratio,
             })
     return groups
+
+
+async def _fetch_related_tobs(session, sec_codes: list[str]) -> list[dict]:
+    """Fetch tender offer filings related to the given sec_codes."""
+    if not sec_codes:
+        return []
+    result = await session.execute(
+        select(TenderOffer)
+        .where(TenderOffer.target_sec_code.in_(sec_codes))
+        .order_by(desc(TenderOffer.submit_date_time))
+        .limit(20)
+    )
+    return [t.to_dict() for t in result.scalars().all()]
+
+
+async def _fetch_company_info(session, sec_code: str) -> dict | None:
+    """Fetch CompanyInfo for a given sec_code (4-digit)."""
+    result = await session.execute(
+        select(CompanyInfo).where(CompanyInfo.sec_code == sec_code)
+    )
+    ci = result.scalar_one_or_none()
+    return ci.to_dict() if ci else None
+
+
+def _build_timeline(filings) -> list[dict]:
+    """Build a chronological timeline of all filings for chart rendering."""
+    timeline = []
+    for f in filings:
+        timeline.append({
+            "date": f.submit_date_time,
+            "doc_id": f.doc_id,
+            "doc_description": f.doc_description,
+            "filer_name": f.holder_name or f.filer_name,
+            "edinet_code": f.edinet_code,
+            "target_company_name": f.target_company_name,
+            "target_sec_code": f.target_sec_code,
+            "holding_ratio": f.holding_ratio,
+            "previous_holding_ratio": f.previous_holding_ratio,
+            "ratio_change": (
+                round(f.holding_ratio - f.previous_holding_ratio, 2)
+                if f.holding_ratio is not None and f.previous_holding_ratio is not None
+                else None
+            ),
+            "is_amendment": f.is_amendment,
+        })
+    # Return in chronological order (oldest first) for charting
+    timeline.sort(key=lambda t: t["date"] or "")
+    return timeline
 
 
 async def _profile_query(session, where_clause, limit, offset):
@@ -461,6 +508,18 @@ async def filer_profile(
         ratios = [f.holding_ratio for f in filings if f.holding_ratio is not None]
         dates = [f.submit_date_time for f in filings if f.submit_date_time]
 
+        # Collect all target sec_codes for TOB cross-reference
+        target_codes = list({
+            f.target_sec_code for f in filings
+            if f.target_sec_code
+        })
+        # Also include 4-digit variants
+        all_codes = list({c for tc in target_codes for c in (tc, tc[:4]) if c})
+        related_tobs = await _fetch_related_tobs(session, all_codes)
+
+        # Build full timeline for chart rendering
+        timeline = _build_timeline(filings)
+
         return {
             "edinet_code": edinet_code,
             "filer_name": filings[0].filer_name or filings[0].holder_name or edinet_code,
@@ -474,7 +533,9 @@ async def filer_profile(
             },
             "has_more": offset + len(filings) < total_count,
             "targets": sorted(targets.values(), key=lambda t: -t["filing_count"]),
-            "recent_filings": [f.to_dict() for f in filings[:20]],
+            "recent_filings": [f.to_dict() for f in filings],
+            "timeline": timeline,
+            "related_tobs": related_tobs,
         }
 
 
@@ -511,6 +572,15 @@ async def company_profile(
             },
         )
 
+        # Related TOB filings
+        related_tobs = await _fetch_related_tobs(session, codes)
+
+        # Company fundamental info from CompanyInfo
+        company_info = await _fetch_company_info(session, normalized)
+
+        # Build full timeline for chart rendering
+        timeline = _build_timeline(filings)
+
         return {
             "sec_code": normalized,
             "company_name": company_name,
@@ -524,5 +594,8 @@ async def company_profile(
                 key=lambda h: h["latest_ratio"] if h["latest_ratio"] is not None else -1,
                 reverse=True,
             ),
-            "recent_filings": [f.to_dict() for f in filings[:20]],
+            "recent_filings": [f.to_dict() for f in filings],
+            "timeline": timeline,
+            "related_tobs": related_tobs,
+            "company_info": company_info,
         }

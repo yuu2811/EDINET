@@ -76,7 +76,7 @@ def _cache_set(key: str, value: dict) -> None:
 
 # In-memory code list cache:  {4-digit ticker: company_name}
 # Populated from EDINET code list ZIP on first startup.
-_edinet_code_list: dict[str, str] = {}
+_edinet_code_list: dict[str, dict[str, str]] = {}
 _edinet_code_list_loaded = False
 
 
@@ -84,7 +84,8 @@ async def _load_edinet_code_list() -> None:
     """Fetch the EDINET code list (EdinetcodeDlInfo) and populate the cache.
 
     The EDINET v2 API provides a ZIP with a CSV mapping every registered
-    entity to its EDINET code, securities code, and official company name.
+    entity to its EDINET code, securities code, official company name,
+    and industry classification (提出者業種).
     This is the most authoritative source from 金融庁.
 
     CSV format per API v2 spec (ESE140206):
@@ -92,8 +93,9 @@ async def _load_edinet_code_list() -> None:
       - Row 1: metadata line (download date, version) — MUST be skipped
       - Row 2: header row (13 columns)
       - Row 3+: data rows
-      - Column 7: 提出者名 (submitter name, Japanese)
-      - Column 12: 証券コード (securities code, 5-digit with check digit)
+      - Column  6: 提出者名 (submitter name, Japanese)
+      - Column 10: 提出者業種 (industry classification)
+      - Column 11: 証券コード (securities code, 5-digit with check digit)
     """
     global _edinet_code_list_loaded
     if _edinet_code_list_loaded:
@@ -163,6 +165,7 @@ async def _load_edinet_code_list() -> None:
             # Note: header uses full-width characters (ＥＤＩＮＥＴコード).
             sec_code_idx = None
             name_idx = None
+            industry_idx = None
             for i, col in enumerate(header):
                 col_stripped = col.strip()
                 # Match securities code column (full-width or half-width)
@@ -172,12 +175,17 @@ async def _load_edinet_code_list() -> None:
                 # (column 6, Japanese name), not "提出者名（英字）" (column 7)
                 if col_stripped == "提出者名":
                     name_idx = i
+                # Match industry column
+                if col_stripped == "提出者業種" or "業種" in col_stripped:
+                    industry_idx = i
 
             # Fallback: try positional mapping per spec if header matching fails
             if sec_code_idx is None and len(header) >= 12:
                 sec_code_idx = 11  # column 12 (0-indexed: 11)
             if name_idx is None and len(header) >= 7:
                 name_idx = 6  # column 7 (0-indexed: 6)
+            if industry_idx is None and len(header) >= 11:
+                industry_idx = 10  # column 11 (0-indexed: 10)
 
             if sec_code_idx is None or name_idx is None:
                 logger.warning(
@@ -202,7 +210,10 @@ async def _load_edinet_code_list() -> None:
                     ticker = raw_code
                 else:
                     continue
-                _edinet_code_list[ticker] = name
+                industry = ""
+                if industry_idx is not None and len(row) > industry_idx:
+                    industry = row[industry_idx].strip()
+                _edinet_code_list[ticker] = {"name": name, "industry": industry}
                 count += 1
 
             logger.info(
@@ -212,6 +223,20 @@ async def _load_edinet_code_list() -> None:
         logger.warning("Error parsing EDINET code list: %s", exc)
 
     _edinet_code_list_loaded = True
+
+
+async def get_industry_for_ticker(ticker: str) -> str | None:
+    """Return the FSA-official industry classification for a 4-digit ticker.
+
+    Loads the EDINET code list on first call.  Returns None if not found.
+    This function is intended to be called from the poller to populate
+    CompanyInfo.industry.
+    """
+    await _load_edinet_code_list()
+    entry = _edinet_code_list.get(ticker)
+    if entry:
+        return entry.get("industry") or None
+    return None
 
 
 async def _lookup_company_from_filings(ticker: str) -> str | None:
@@ -824,8 +849,9 @@ async def get_stock_data(sec_code: str) -> dict:
 
     # Company name: Filing DB > Code list
     edinet_name = await _lookup_company_from_filings(ticker)
-    if not edinet_name:
-        edinet_name = _edinet_code_list.get(ticker)
+    edinet_entry = _edinet_code_list.get(ticker)
+    if not edinet_name and edinet_entry:
+        edinet_name = edinet_entry.get("name")
 
     # Company fundamentals: CompanyInfo table (from 有報/四半期報告書)
     company_info = await _lookup_company_info(ticker)
@@ -937,10 +963,18 @@ async def get_stock_data(sec_code: str) -> dict:
     # --- Step 4: Apply name priority (金融庁 > API) ---
     name = edinet_name or api_name
 
+    # Industry: CompanyInfo > EDINET code list
+    industry = None
+    if company_info:
+        industry = company_info.get("industry")
+    if not industry and edinet_entry:
+        industry = edinet_entry.get("industry") or None
+
     result: dict = {
         "sec_code": ticker,
         "ticker": f"{ticker}.T",
         "name": name,
+        "industry": industry,
         "current_price": current_price,
         "market_cap": market_cap,
         "market_cap_display": _format_market_cap(market_cap),

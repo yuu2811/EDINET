@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.models import Filing, Watchlist
+from app.models import Filing, TenderOffer, Watchlist
 
 
 @pytest_asyncio.fixture
@@ -35,6 +35,7 @@ async def seed_data(api_session_factory):
         filings = [
             Filing(
                 doc_id="S100API1",
+                edinet_code="E11111",
                 filer_name="野村アセット",
                 doc_type_code="350",
                 doc_description="大量保有報告書",
@@ -51,6 +52,7 @@ async def seed_data(api_session_factory):
             ),
             Filing(
                 doc_id="S100API2",
+                edinet_code="E22222",
                 filer_name="ブラックロック",
                 doc_type_code="350",
                 doc_description="変更報告書（特例対象株券等）",
@@ -82,6 +84,20 @@ async def seed_data(api_session_factory):
 
         wl = Watchlist(company_name="トヨタ自動車", sec_code="72030")
         session.add(wl)
+
+        # TOB seed data
+        tob = TenderOffer(
+            doc_id="S100TOB_API",
+            edinet_code="E88888",
+            filer_name="TOB株式会社",
+            doc_type_code="240",
+            doc_description="公開買付届出書（トヨタ自動車株式会社）",
+            target_company_name="トヨタ自動車株式会社",
+            target_sec_code="72030",
+            submit_date_time="2026-02-18 11:00",
+            pdf_flag=True,
+        )
+        session.add(tob)
         await session.commit()
 
 
@@ -485,4 +501,166 @@ class TestAnalyticsAPI:
         assert "total_filings" in data
         assert "net_direction" in data
         assert "sector_movements" in data
+
+    @pytest.mark.asyncio
+    async def test_movements_consolidated_counts(self, client):
+        """Consolidated query should compute correct increase/decrease counts."""
+        resp = await client.get("/api/analytics/movements?date=2026-02-18")
+        data = resp.json()
+        assert data["total_filings"] == 3
+        # S100API1: 5.12 > 4.80 (increase), S100API2: 6.83 < 7.24 (decrease)
+        assert data["increases"] == 1
+        assert data["decreases"] == 1
+        # unchanged = total - increases - decreases = 3 - 1 - 1 = 1
+        assert data["unchanged"] == 1
+        assert data["avg_increase"] is not None
+        assert data["avg_decrease"] is not None
+
+    @pytest.mark.asyncio
+    async def test_movements_empty_date(self, client):
+        """Empty date should return zero counts."""
+        resp = await client.get("/api/analytics/movements?date=2020-01-01")
+        data = resp.json()
+        assert data["total_filings"] == 0
+        assert data["increases"] == 0
+        assert data["decreases"] == 0
+        assert data["net_direction"] == "neutral"
+
+
+class TestStatsCaching:
+    """Tests for stats endpoint caching behavior."""
+
+    @pytest.mark.asyncio
+    async def test_stats_returns_consistent_data(self, client):
+        """Calling stats twice should return same data (from cache)."""
+        resp1 = await client.get("/api/stats?date=2026-02-18")
+        resp2 = await client.get("/api/stats?date=2026-02-18")
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+        d1 = resp1.json()
+        d2 = resp2.json()
+        assert d1["today_total"] == d2["today_total"]
+        assert d1["total_in_db"] == d2["total_in_db"]
+
+    @pytest.mark.asyncio
+    async def test_stats_consolidated_counts(self, client):
+        """Stats should correctly compute new_reports and amendments."""
+        resp = await client.get("/api/stats?date=2026-02-18")
+        data = resp.json()
+        assert data["today_total"] == 3
+        assert data["today_new_reports"] == 2  # API1 + API2
+        assert data["today_amendments"] == 1  # API3
+
+
+class TestTobAPI:
+    """Tests for /api/tob endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_list_tobs(self, client):
+        resp = await client.get("/api/tob")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "items" in data
+        assert "total" in data
+        assert data["total"] == 1
+        assert data["items"][0]["doc_id"] == "S100TOB_API"
+        assert data["items"][0]["tob_type"] == "公開買付届出"
+
+    @pytest.mark.asyncio
+    async def test_list_tobs_limit(self, client):
+        resp = await client.get("/api/tob?limit=1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["items"]) == 1
+
+
+class TestProfileAPI:
+    """Tests for /api/analytics/filer and /api/analytics/company endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_filer_profile(self, client):
+        """Filer profile should return full history with timeline and related TOBs."""
+        resp = await client.get("/api/analytics/filer/E11111")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["edinet_code"] == "E11111"
+        assert data["filer_name"] == "野村アセット"
+        assert "summary" in data
+        assert data["summary"]["total_filings"] == 1
+        assert "targets" in data
+        assert "recent_filings" in data
+        assert "timeline" in data
+        assert "related_tobs" in data
+        # Timeline should be in chronological order
+        assert isinstance(data["timeline"], list)
+        assert len(data["timeline"]) >= 1
+        assert data["timeline"][0]["holding_ratio"] == 5.12
+
+    @pytest.mark.asyncio
+    async def test_filer_profile_related_tobs(self, client):
+        """Filer profile should include TOB filings targeting the same companies."""
+        resp = await client.get("/api/analytics/filer/E11111")
+        data = resp.json()
+        # E11111 targets 72030, and there's a TOB for 72030
+        assert len(data["related_tobs"]) >= 1
+        assert data["related_tobs"][0]["target_sec_code"] == "72030"
+
+    @pytest.mark.asyncio
+    async def test_filer_profile_all_filings(self, client):
+        """Filer profile should return all filings, not just 20."""
+        resp = await client.get("/api/analytics/filer/E11111")
+        data = resp.json()
+        # recent_filings should now contain all filings (not capped at 20)
+        assert len(data["recent_filings"]) == data["summary"]["total_filings"]
+
+    @pytest.mark.asyncio
+    async def test_filer_profile_not_found(self, client):
+        """Non-existent edinet_code should return 404."""
+        resp = await client.get("/api/analytics/filer/E00000")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_company_profile(self, client):
+        """Company profile should return holders, timeline, TOBs, and company info."""
+        resp = await client.get("/api/analytics/company/7203")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["sec_code"] == "7203"
+        assert "holders" in data
+        assert "recent_filings" in data
+        assert "timeline" in data
+        assert "related_tobs" in data
+        assert "company_info" in data
+        assert len(data["holders"]) >= 1
+        assert len(data["timeline"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_company_profile_related_tobs(self, client):
+        """Company profile should include related TOB filings."""
+        resp = await client.get("/api/analytics/company/7203")
+        data = resp.json()
+        assert len(data["related_tobs"]) >= 1
+        tob_codes = [t["target_sec_code"] for t in data["related_tobs"]]
+        assert "72030" in tob_codes
+
+    @pytest.mark.asyncio
+    async def test_company_profile_all_filings(self, client):
+        """Company profile should return all filings."""
+        resp = await client.get("/api/analytics/company/7203")
+        data = resp.json()
+        assert len(data["recent_filings"]) == data["total_filings"]
+
+    @pytest.mark.asyncio
+    async def test_company_profile_not_found(self, client):
+        """Non-existent sec_code should return 404."""
+        resp = await client.get("/api/analytics/company/0000")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_timeline_chronological_order(self, client):
+        """Timeline should be in chronological order (oldest first)."""
+        resp = await client.get("/api/analytics/company/7203")
+        data = resp.json()
+        dates = [t["date"] for t in data["timeline"] if t["date"]]
+        assert dates == sorted(dates)
 

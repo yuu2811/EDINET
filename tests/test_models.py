@@ -4,7 +4,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
-from app.models import Filing, Watchlist
+from app.models import CompanyInfo, Filing, TenderOffer, Watchlist
 
 
 @pytest.mark.asyncio
@@ -104,3 +104,106 @@ async def test_watchlist_persisted(db_session, sample_watchlist_item):
     found = result.scalar_one_or_none()
     assert found is not None
     assert found.company_name == "サンプル工業株式会社"
+
+
+# ---------------------------------------------------------------------------
+# CompanyInfo model tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_company_info_to_dict_with_bps():
+    """CompanyInfo.to_dict() should compute BPS when data is available."""
+    ci = CompanyInfo(
+        sec_code="1234",
+        company_name="テスト株式会社",
+        shares_outstanding=1_000_000,
+        net_assets=500_000_000,
+    )
+    d = ci.to_dict()
+    assert d["sec_code"] == "1234"
+    assert d["company_name"] == "テスト株式会社"
+    assert d["shares_outstanding"] == 1_000_000
+    assert d["net_assets"] == 500_000_000
+    # BPS = 500_000_000 / 1_000_000 = 500.0
+    assert d["bps"] == 500.0
+
+
+@pytest.mark.asyncio
+async def test_company_info_bps_none_when_no_shares():
+    """BPS should be None when shares_outstanding is missing."""
+    ci = CompanyInfo(sec_code="5678", net_assets=100_000_000)
+    d = ci.to_dict()
+    assert d["bps"] is None
+
+
+@pytest.mark.asyncio
+async def test_company_info_bps_none_when_zero_shares():
+    """BPS should be None when shares_outstanding is 0."""
+    ci = CompanyInfo(sec_code="5678", shares_outstanding=0, net_assets=100_000_000)
+    d = ci.to_dict()
+    assert d["bps"] is None
+
+
+@pytest.mark.asyncio
+async def test_company_info_bps_none_when_no_net_assets():
+    """BPS should be None when net_assets is missing."""
+    ci = CompanyInfo(sec_code="5678", shares_outstanding=1_000_000)
+    d = ci.to_dict()
+    assert d["bps"] is None
+
+
+# ---------------------------------------------------------------------------
+# TenderOffer model tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_tender_offer_to_dict(sample_tob):
+    """TenderOffer.to_dict() should return all expected keys."""
+    d = sample_tob.to_dict()
+    assert d["doc_id"] == "S100TOB01"
+    assert d["filer_name"] == "TOBアクイジション株式会社"
+    assert d["doc_type_code"] == "240"
+    assert d["tob_type"] == "公開買付届出"
+    assert d["target_company_name"] == "サンプル工業株式会社"
+    assert d["target_sec_code"] == "99990"
+    assert d["pdf_url"] == "/api/documents/S100TOB01/pdf"
+    assert "edinet_url" in d
+
+
+@pytest.mark.asyncio
+async def test_tender_offer_tob_type_variants():
+    """tob_type should map correctly for different doc types."""
+    cases = [
+        ("240", "公開買付届出"),
+        ("250", "訂正公開買付届出"),
+        ("260", "公開買付撤回"),
+        ("270", "公開買付報告"),
+        ("280", "訂正公開買付報告"),
+        ("290", "意見表明"),
+        ("300", "訂正意見表明"),
+        ("999", "TOB関連"),
+    ]
+    for code, expected in cases:
+        tob = TenderOffer(doc_id=f"X{code}", doc_type_code=code)
+        assert tob.tob_type == expected
+
+
+@pytest.mark.asyncio
+async def test_tender_offer_persisted(db_session, sample_tob):
+    """TenderOffer should be retrievable from DB."""
+    result = await db_session.execute(
+        select(TenderOffer).where(TenderOffer.doc_id == "S100TOB01")
+    )
+    found = result.scalar_one_or_none()
+    assert found is not None
+    assert found.filer_name == "TOBアクイジション株式会社"
+
+
+@pytest.mark.asyncio
+async def test_tender_offer_doc_id_unique(db_session, sample_tob):
+    """Inserting duplicate doc_id should raise an error."""
+    dup = TenderOffer(doc_id="S100TOB01", filer_name="dup")
+    db_session.add(dup)
+    with pytest.raises(Exception):
+        await db_session.commit()
+    await db_session.rollback()

@@ -22,6 +22,7 @@ function toLocalDateStr(d) {
 const state = {
     filings: [],
     watchlist: [],
+    tobs: [],       // tender offer (公開買付) filings
     stats: {},
     connected: false,
     soundEnabled: true,
@@ -129,16 +130,21 @@ function prepareFilingData(f) {
 /** Build PDF + EDINET link HTML */
 function buildDocLinks(f, linkClass) {
     let html = '';
-    if (f.pdf_url) html += `<a href="${f.pdf_url}" target="_blank" rel="noopener" class="${linkClass}" onclick="event.stopPropagation()">PDF</a>`;
-    if (f.edinet_url) html += `<a href="${f.edinet_url}" target="_blank" rel="noopener" class="${linkClass}" onclick="event.stopPropagation()">EDINET</a>`;
+    if (f.pdf_url) html += `<a href="${escapeHtml(f.pdf_url)}" target="_blank" rel="noopener" class="${linkClass}" onclick="event.stopPropagation()">PDF</a>`;
+    if (f.edinet_url) html += `<a href="${escapeHtml(f.edinet_url)}" target="_blank" rel="noopener" class="${linkClass}" onclick="event.stopPropagation()">EDINET</a>`;
     return html;
+}
+
+/** Escape a string for safe use inside a JavaScript single-quoted string literal. */
+function escapeJsString(s) {
+    return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 /** Build clickable filer link HTML */
 function filerLinkHtml(name, edinetCode) {
     const safe = escapeHtml(name || '(不明)');
     if (!edinetCode) return safe;
-    return `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeHtml(edinetCode)}')">${safe}</a>`;
+    return `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openFilerProfile('${escapeJsString(escapeHtml(edinetCode))}')">${safe}</a>`;
 }
 
 /** Build clickable company link HTML */
@@ -146,7 +152,7 @@ function companyLinkHtml(name, secCode, showCode) {
     const safe = escapeHtml(name || '(対象不明)');
     const codeStr = showCode && secCode ? ` ${escapeHtml('[' + secCode + ']')}` : '';
     if (!secCode) return safe + codeStr;
-    return `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeHtml(secCode)}')">${safe}${codeStr}</a>`;
+    return `<a href="#" class="filer-link" onclick="event.preventDefault();event.stopPropagation();openCompanyProfile('${escapeJsString(escapeHtml(secCode))}')">${safe}${codeStr}</a>`;
 }
 
 /** Build badge HTML for a filing */
@@ -454,11 +460,15 @@ function initEventListeners() {
         }, 3000);
     });
 
-    // Feed search
+    // Feed search (debounced to avoid excessive re-renders on fast typing)
+    let _searchDebounce = null;
     document.getElementById('feed-search').addEventListener('input', (e) => {
         state.searchQuery = e.target.value.toLowerCase();
-        renderFeed();
-        savePreferences();
+        clearTimeout(_searchDebounce);
+        _searchDebounce = setTimeout(() => {
+            renderFeed();
+            savePreferences();
+        }, 150);
     });
 
     // Feed filter
@@ -596,6 +606,11 @@ function initSSE() {
         loadStats();
     });
 
+    eventSource.addEventListener('new_tob', (e) => {
+        const tob = JSON.parse(e.data);
+        handleNewTob(tob);
+    });
+
     eventSource.onopen = () => {
         const reconnected = _wasDisconnected;
         _wasDisconnected = false;
@@ -661,7 +676,7 @@ function setConnectionStatus(status) {
 // ---------------------------------------------------------------------------
 
 async function loadInitialData() {
-    await Promise.all([loadFilings(), loadStats(), loadWatchlist(), loadAnalytics()]);
+    await Promise.all([loadFilings(), loadStats(), loadWatchlist(), loadAnalytics(), loadTobs()]);
 }
 
 async function loadFilings() {
@@ -738,6 +753,68 @@ async function loadStats() {
         console.error('Failed to load stats:', e);
         showToast('統計データの読み込みに失敗しました');
     }
+}
+
+// ---------------------------------------------------------------------------
+// Tender Offer (TOB / 公開買付) Functions
+// ---------------------------------------------------------------------------
+
+async function loadTobs() {
+    try {
+        const resp = await fetch('/api/tob?limit=50');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        state.tobs = data.items || [];
+        renderTobPanel();
+    } catch (e) {
+        console.error('Failed to load TOBs:', e);
+    }
+}
+
+function handleNewTob(tob) {
+    // Avoid duplicates
+    if (state.tobs.some(t => t.doc_id === tob.doc_id)) return;
+    state.tobs.unshift(tob);
+    renderTobPanel();
+    // Play alert sound and show notification
+    if (state.soundEnabled) playAlert();
+    showToast(`TOB: ${tob.tob_type} — ${tob.filer_name || '(不明)'}`);
+    if (state.notificationsEnabled && Notification.permission === 'granted') {
+        new Notification('公開買付 検知', {
+            body: `${tob.tob_type}: ${tob.filer_name || ''} → ${tob.target_company_name || tob.doc_description || ''}`,
+            tag: tob.doc_id,
+        });
+    }
+}
+
+function renderTobPanel() {
+    const container = document.getElementById('tob-list');
+    if (!container) return;
+    const badge = document.getElementById('tob-count');
+    if (badge) badge.textContent = state.tobs.length || '';
+
+    if (state.tobs.length === 0) {
+        container.innerHTML = '<div class="tob-empty">公開買付関連の届出はありません</div>';
+        return;
+    }
+
+    container.innerHTML = state.tobs.slice(0, 30).map(t => {
+        const time = t.submit_date_time ? t.submit_date_time.slice(0, 16).replace('T', ' ') : '';
+        const typeClass = t.doc_type_code === '260' ? 'tob-withdraw' :
+                          t.doc_type_code === '290' || t.doc_type_code === '300' ? 'tob-opinion' : 'tob-filing';
+        let links = '';
+        if (t.pdf_url) links += `<a href="${escapeHtml(t.pdf_url)}" target="_blank" rel="noopener" class="tob-link" onclick="event.stopPropagation()">PDF</a>`;
+        if (t.edinet_url) links += `<a href="${escapeHtml(t.edinet_url)}" target="_blank" rel="noopener" class="tob-link" onclick="event.stopPropagation()">EDINET</a>`;
+        return `<div class="tob-item ${typeClass}">
+            <div class="tob-header">
+                <span class="tob-type-badge">${escapeHtml(t.tob_type)}</span>
+                <span class="tob-time">${escapeHtml(time)}</span>
+            </div>
+            <div class="tob-filer">${escapeHtml(t.filer_name || '(不明)')}</div>
+            <div class="tob-target">${escapeHtml(t.target_company_name || t.doc_description || '')}</div>
+            <div class="tob-links">${links}</div>
+        </div>`;
+    }).join('');
 }
 
 async function loadWatchlist() {
@@ -1311,6 +1388,7 @@ function renderWatchlist() {
     }
 
     container.innerHTML = state.watchlist.map(w => {
+        const code = normalizeSecCode(w.sec_code);
         const sd = getCachedStock(w.sec_code);
         let priceHtml = '';
         if (sd && sd.current_price != null) {
@@ -2291,6 +2369,27 @@ function openModal(filing) {
         }
     }
 
+    // Fund source (取得資金)
+    if (filing.fund_source) {
+        rows.push(['取得資金', filing.fund_source]);
+    }
+
+    // Joint holders (共同保有者)
+    if (filing.joint_holders) {
+        try {
+            const jh = JSON.parse(filing.joint_holders);
+            if (Array.isArray(jh) && jh.length > 0) {
+                const jhHtml = jh.map(h => {
+                    const ratio = h.ratio != null ? ` (${h.ratio}%)` : '';
+                    return `<div class="joint-holder-item">${escapeHtml(h.name)}${ratio}</div>`;
+                }).join('');
+                rows.push(['共同保有者', { html: `<span class="detail-value">${jhHtml}</span>` }]);
+            }
+        } catch (e) {
+            rows.push(['共同保有者', filing.joint_holders]);
+        }
+    }
+
     // Amendment → original link
     if (filing.is_amendment && filing.parent_doc_id) {
         const parentUrl = `https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?${filing.parent_doc_id},,,`;
@@ -2491,13 +2590,25 @@ async function openFilerProfile(edinetCode) {
             if (s.first_filing && s.last_filing) {
                 html += `<div class="profile-period">${escapeHtml(s.first_filing.slice(0,10))} 〜 ${escapeHtml(s.last_filing.slice(0,10))}</div>`;
             }
+            // Timeline chart
+            if (data.timeline && data.timeline.length >= 2) {
+                html += renderTimelineChart(data.timeline, 'filer');
+            }
             html += _profileItemsTable('保有銘柄一覧', ['対象企業','コード','最新割合','件数','推移'], data.targets, (t, ratio, trend) => {
                 const link = t.sec_code
-                    ? `<a href="#" onclick="event.preventDefault();openCompanyProfile('${escapeHtml(t.sec_code)}')">${escapeHtml(t.company_name || '不明')}</a>`
+                    ? `<a href="#" onclick="event.preventDefault();openCompanyProfile('${escapeJsString(t.sec_code)}')">${escapeHtml(t.company_name || '不明')}</a>`
                     : escapeHtml(t.company_name || '不明');
                 return `<tr><td>${link}</td><td>${escapeHtml(t.sec_code || '-')}</td><td>${ratio}</td><td>${t.filing_count}</td><td>${trend}</td></tr>`;
             });
+            // Related TOB filings
+            if (data.related_tobs && data.related_tobs.length > 0) {
+                html += renderRelatedTobs(data.related_tobs);
+            }
+            // All filings (paginated)
             if (data.recent_filings && data.recent_filings.length > 0) html += renderProfileFilings(data.recent_filings);
+            if (data.has_more) {
+                html += `<div class="profile-load-more" data-profile-type="filer" data-profile-key="${escapeHtml(data.edinet_code)}" data-offset="${data.recent_filings.length}">さらに読み込む...</div>`;
+            }
             return html;
         }
     );
@@ -2513,17 +2624,33 @@ async function openCompanyProfile(secCode) {
                 <div class="profile-name">${escapeHtml(data.company_name || secCode)}</div>
                 <div class="profile-meta">[${escapeHtml(data.sec_code)}] ${escapeHtml(data.sector || '')}</div>
             </div>`;
+            // Company info panel (from CompanyInfo model)
+            if (data.company_info) {
+                html += renderCompanyInfoPanel(data.company_info);
+            }
             html += `<div class="profile-stats">
                 <div class="profile-stat"><span class="profile-stat-value">${data.holder_count}</span><span class="profile-stat-label">大量保有者数</span></div>
                 <div class="profile-stat"><span class="profile-stat-value">${data.total_filings}</span><span class="profile-stat-label">報告件数</span></div>
             </div>`;
+            // Timeline chart
+            if (data.timeline && data.timeline.length >= 2) {
+                html += renderTimelineChart(data.timeline, 'company');
+            }
             html += _profileItemsTable('大量保有者一覧', ['保有者','最新割合','件数','推移'], data.holders, (h, ratio, trend) => {
                 const link = h.edinet_code
-                    ? `<a href="#" onclick="event.preventDefault();openFilerProfile('${escapeHtml(h.edinet_code)}')">${escapeHtml(h.filer_name || '不明')}</a>`
+                    ? `<a href="#" onclick="event.preventDefault();openFilerProfile('${escapeJsString(h.edinet_code)}')">${escapeHtml(h.filer_name || '不明')}</a>`
                     : escapeHtml(h.filer_name || '不明');
                 return `<tr><td>${link}</td><td>${ratio}</td><td>${h.filing_count}</td><td>${trend}</td></tr>`;
             });
+            // Related TOB filings
+            if (data.related_tobs && data.related_tobs.length > 0) {
+                html += renderRelatedTobs(data.related_tobs);
+            }
+            // All filings (paginated)
             if (data.recent_filings && data.recent_filings.length > 0) html += renderProfileFilings(data.recent_filings);
+            if (data.has_more) {
+                html += `<div class="profile-load-more" data-profile-type="company" data-profile-key="${escapeHtml(data.sec_code)}" data-offset="${data.recent_filings.length}">さらに読み込む...</div>`;
+            }
             return html;
         }
     );
@@ -2545,13 +2672,15 @@ function miniSparkline(values) {
     return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="vertical-align:middle"><polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 }
 
-/** Render a compact recent filings list for profile views. */
+/** Render a compact filing list for profile views (all filings, collapsible). */
 function renderProfileFilings(filings) {
     // Store filings for click access
     window._profileFilings = filings;
-    let html = '<div class="profile-section-title">最近の報告書</div>';
+    const initialShow = 20;
+    const total = filings.length;
+    let html = `<div class="profile-section-title">報告書一覧 <span class="profile-filing-count">(${total}件)</span></div>`;
     html += '<div class="profile-filings">';
-    for (let i = 0; i < Math.min(filings.length, 10); i++) {
+    for (let i = 0; i < total; i++) {
         const f = filings[i];
         const date = f.submit_date_time ? f.submit_date_time.slice(0, 10) : '-';
         const desc = f.doc_description || '';
@@ -2562,7 +2691,8 @@ function renderProfileFilings(filings) {
             const sign = f.ratio_change > 0 ? '+' : '';
             changeHtml = `<span class="${cls}">${sign}${f.ratio_change.toFixed(2)}%</span>`;
         }
-        html += `<div class="profile-filing-row" data-pf-idx="${i}">
+        const hiddenClass = i >= initialShow ? ' profile-filing-hidden' : '';
+        html += `<div class="profile-filing-row${hiddenClass}" data-pf-idx="${i}">
             <span class="profile-filing-date">${escapeHtml(date)}</span>
             <span class="profile-filing-desc" title="${escapeHtml(desc)}">${escapeHtml(desc)}</span>
             <span class="profile-filing-ratio">${ratio}</span>
@@ -2570,10 +2700,13 @@ function renderProfileFilings(filings) {
         </div>`;
     }
     html += '</div>';
+    if (total > initialShow) {
+        html += `<div class="profile-show-all-btn" onclick="document.querySelectorAll('.profile-filing-hidden').forEach(el=>el.classList.remove('profile-filing-hidden'));this.remove()">全${total}件を表示</div>`;
+    }
     return html;
 }
 
-/** Attach click handlers for profile filing rows (called after innerHTML set). */
+/** Attach click handlers for profile filing rows and load-more buttons. */
 function attachProfileFilingHandlers() {
     document.querySelectorAll('.profile-filing-row[data-pf-idx]').forEach(row => {
         row.addEventListener('click', () => {
@@ -2582,6 +2715,236 @@ function attachProfileFilingHandlers() {
             if (f) openModal(f);
         });
     });
+    // Load more button for paginated profiles
+    const loadMoreBtn = document.querySelector('.profile-load-more');
+    if (loadMoreBtn) {
+        loadMoreBtn.addEventListener('click', async () => {
+            const type = loadMoreBtn.dataset.profileType;
+            const key = loadMoreBtn.dataset.profileKey;
+            const offset = parseInt(loadMoreBtn.dataset.offset, 10);
+            const apiBase = type === 'filer' ? '/api/analytics/filer/' : '/api/analytics/company/';
+            loadMoreBtn.textContent = '読み込み中...';
+            try {
+                const resp = await fetch(`${apiBase}${encodeURIComponent(key)}?offset=${offset}`);
+                if (!resp.ok) { loadMoreBtn.textContent = '読み込み失敗'; return; }
+                const data = await resp.json();
+                if (data.recent_filings && data.recent_filings.length > 0) {
+                    const container = document.querySelector('.profile-filings');
+                    if (container) {
+                        const baseIdx = window._profileFilings.length;
+                        window._profileFilings.push(...data.recent_filings);
+                        for (let i = 0; i < data.recent_filings.length; i++) {
+                            const f = data.recent_filings[i];
+                            const date = f.submit_date_time ? f.submit_date_time.slice(0, 10) : '-';
+                            const desc = f.doc_description || '';
+                            const ratio = f.holding_ratio != null ? f.holding_ratio.toFixed(2) + '%' : '-';
+                            let changeHtml = '';
+                            if (f.ratio_change != null && f.ratio_change !== 0) {
+                                const cls = f.ratio_change > 0 ? 'positive' : 'negative';
+                                const sign = f.ratio_change > 0 ? '+' : '';
+                                changeHtml = `<span class="${cls}">${sign}${f.ratio_change.toFixed(2)}%</span>`;
+                            }
+                            const row = document.createElement('div');
+                            row.className = 'profile-filing-row';
+                            row.dataset.pfIdx = baseIdx + i;
+                            row.innerHTML = `<span class="profile-filing-date">${escapeHtml(date)}</span><span class="profile-filing-desc" title="${escapeHtml(desc)}">${escapeHtml(desc)}</span><span class="profile-filing-ratio">${ratio}</span><span class="profile-filing-change">${changeHtml}</span>`;
+                            row.addEventListener('click', () => {
+                                const idx = baseIdx + i;
+                                const filing = window._profileFilings[idx];
+                                if (filing) openModal(filing);
+                            });
+                            container.appendChild(row);
+                        }
+                    }
+                    // Update count display
+                    const countEl = document.querySelector('.profile-filing-count');
+                    if (countEl) countEl.textContent = `(${window._profileFilings.length}件)`;
+                }
+                if (data.has_more) {
+                    loadMoreBtn.dataset.offset = offset + data.recent_filings.length;
+                    loadMoreBtn.textContent = 'さらに読み込む...';
+                } else {
+                    loadMoreBtn.remove();
+                }
+            } catch (e) {
+                console.error('Load more error:', e);
+                loadMoreBtn.textContent = '読み込み失敗';
+            }
+        });
+    }
+}
+
+/** Render an SVG timeline chart showing holding ratio changes over time. */
+function renderTimelineChart(timeline, mode) {
+    // Filter entries with holding_ratio data
+    const dataPoints = timeline.filter(t => t.holding_ratio != null);
+    if (dataPoints.length < 2) return '';
+
+    const w = 600, h = 180, padL = 50, padR = 20, padT = 20, padB = 35;
+    const chartW = w - padL - padR;
+    const chartH = h - padT - padB;
+
+    // For company profiles, group by filer and render multiple lines
+    if (mode === 'company') {
+        const byFiler = {};
+        for (const p of dataPoints) {
+            const key = p.edinet_code || p.filer_name || 'unknown';
+            if (!byFiler[key]) byFiler[key] = { name: p.filer_name || key, points: [] };
+            byFiler[key].points.push(p);
+        }
+
+        const allRatios = dataPoints.map(p => p.holding_ratio);
+        const minR = Math.max(0, Math.min(...allRatios) - 1);
+        const maxR = Math.max(...allRatios) + 1;
+        const rangeR = maxR - minR || 1;
+
+        const allDates = dataPoints.map(p => new Date(p.date).getTime());
+        const minDate = Math.min(...allDates);
+        const maxDate = Math.max(...allDates);
+        const rangeDate = maxDate - minDate || 1;
+
+        const colors = ['#00d4aa', '#ff6b6b', '#4ecdc4', '#ffe66d', '#a29bfe', '#fd79a8', '#74b9ff', '#ffeaa7'];
+        const filerKeys = Object.keys(byFiler);
+
+        let svg = `<div class="profile-section-title">保有割合推移</div>`;
+        svg += `<div class="timeline-chart-wrapper"><svg width="100%" viewBox="0 0 ${w} ${h}" class="timeline-chart">`;
+
+        // Grid lines
+        const gridSteps = 5;
+        for (let i = 0; i <= gridSteps; i++) {
+            const y = padT + (i / gridSteps) * chartH;
+            const val = (maxR - (i / gridSteps) * rangeR).toFixed(1);
+            svg += `<line x1="${padL}" y1="${y}" x2="${w - padR}" y2="${y}" stroke="var(--border)" stroke-width="0.5"/>`;
+            svg += `<text x="${padL - 5}" y="${y + 4}" text-anchor="end" fill="var(--muted)" font-size="10">${val}%</text>`;
+        }
+
+        // Date labels
+        const dateLabels = 4;
+        for (let i = 0; i <= dateLabels; i++) {
+            const x = padL + (i / dateLabels) * chartW;
+            const ts = minDate + (i / dateLabels) * rangeDate;
+            const d = new Date(ts);
+            svg += `<text x="${x}" y="${h - 5}" text-anchor="middle" fill="var(--muted)" font-size="10">${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}</text>`;
+        }
+
+        // Plot each filer's line
+        filerKeys.forEach((key, fIdx) => {
+            const filer = byFiler[key];
+            const color = colors[fIdx % colors.length];
+            const sorted = filer.points.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+            const pts = sorted.map(p => {
+                const x = padL + ((new Date(p.date).getTime() - minDate) / rangeDate) * chartW;
+                const y = padT + ((maxR - p.holding_ratio) / rangeR) * chartH;
+                return `${x.toFixed(1)},${y.toFixed(1)}`;
+            }).join(' ');
+            svg += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+            // Dots at each data point
+            for (const p of sorted) {
+                const x = padL + ((new Date(p.date).getTime() - minDate) / rangeDate) * chartW;
+                const y = padT + ((maxR - p.holding_ratio) / rangeR) * chartH;
+                svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="${color}"><title>${escapeHtml(filer.name)}: ${p.holding_ratio.toFixed(2)}% (${p.date ? p.date.slice(0,10) : ''})</title></circle>`;
+            }
+        });
+
+        svg += '</svg>';
+        // Legend
+        if (filerKeys.length > 1) {
+            svg += '<div class="timeline-legend">';
+            filerKeys.slice(0, 8).forEach((key, i) => {
+                const color = colors[i % colors.length];
+                const name = byFiler[key].name;
+                svg += `<span class="timeline-legend-item"><span class="timeline-legend-dot" style="background:${color}"></span>${escapeHtml(name.length > 20 ? name.slice(0,18) + '…' : name)}</span>`;
+            });
+            svg += '</div>';
+        }
+        svg += '</div>';
+        return svg;
+    }
+
+    // Filer mode: single line chart across all targets
+    const allRatios = dataPoints.map(p => p.holding_ratio);
+    const minR = Math.max(0, Math.min(...allRatios) - 1);
+    const maxR = Math.max(...allRatios) + 1;
+    const rangeR = maxR - minR || 1;
+
+    const allDates = dataPoints.map(p => new Date(p.date).getTime());
+    const minDate = Math.min(...allDates);
+    const maxDate = Math.max(...allDates);
+    const rangeDate = maxDate - minDate || 1;
+
+    let svg = `<div class="profile-section-title">保有割合推移</div>`;
+    svg += `<div class="timeline-chart-wrapper"><svg width="100%" viewBox="0 0 ${w} ${h}" class="timeline-chart">`;
+
+    // Grid
+    const gridSteps = 5;
+    for (let i = 0; i <= gridSteps; i++) {
+        const y = padT + (i / gridSteps) * chartH;
+        const val = (maxR - (i / gridSteps) * rangeR).toFixed(1);
+        svg += `<line x1="${padL}" y1="${y}" x2="${w - padR}" y2="${y}" stroke="var(--border)" stroke-width="0.5"/>`;
+        svg += `<text x="${padL - 5}" y="${y + 4}" text-anchor="end" fill="var(--muted)" font-size="10">${val}%</text>`;
+    }
+    const dateLabels = 4;
+    for (let i = 0; i <= dateLabels; i++) {
+        const x = padL + (i / dateLabels) * chartW;
+        const ts = minDate + (i / dateLabels) * rangeDate;
+        const d = new Date(ts);
+        svg += `<text x="${x}" y="${h - 5}" text-anchor="middle" fill="var(--muted)" font-size="10">${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}</text>`;
+    }
+
+    // Plot line and dots
+    const pts = dataPoints.map(p => {
+        const x = padL + ((new Date(p.date).getTime() - minDate) / rangeDate) * chartW;
+        const y = padT + ((maxR - p.holding_ratio) / rangeR) * chartH;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    const endColor = dataPoints[dataPoints.length - 1].holding_ratio >= dataPoints[0].holding_ratio ? 'var(--green)' : 'var(--red)';
+    svg += `<polyline points="${pts}" fill="none" stroke="${endColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+    for (const p of dataPoints) {
+        const x = padL + ((new Date(p.date).getTime() - minDate) / rangeDate) * chartW;
+        const y = padT + ((maxR - p.holding_ratio) / rangeR) * chartH;
+        const target = p.target_company_name || '';
+        svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${endColor}"><title>${escapeHtml(target)}: ${p.holding_ratio.toFixed(2)}% (${p.date ? p.date.slice(0,10) : ''})</title></circle>`;
+    }
+    svg += '</svg></div>';
+    return svg;
+}
+
+/** Render related tender offer filings section. */
+function renderRelatedTobs(tobs) {
+    let html = '<div class="profile-section-title">関連TOB (公開買付)</div>';
+    html += '<div class="profile-tob-list">';
+    for (const t of tobs) {
+        const date = t.submit_date_time ? t.submit_date_time.slice(0, 10) : '-';
+        const tobType = t.tob_type || 'TOB関連';
+        const target = t.target_company_name || '';
+        const filer = t.filer_name || '';
+        html += `<div class="profile-tob-item">
+            <span class="profile-tob-date">${escapeHtml(date)}</span>
+            <span class="tob-type-badge tob-type-${escapeHtml(t.doc_type_code || '')}">${escapeHtml(tobType)}</span>
+            <span class="profile-tob-filer">${escapeHtml(filer)}</span>
+            <span class="profile-tob-target">→ ${escapeHtml(target)}</span>
+            ${t.pdf_url ? `<a href="${escapeHtml(t.pdf_url)}" class="profile-tob-pdf" target="_blank">PDF</a>` : ''}
+        </div>`;
+    }
+    html += '</div>';
+    return html;
+}
+
+/** Render company fundamental info panel. */
+function renderCompanyInfoPanel(ci) {
+    const items = [];
+    if (ci.industry) items.push(['業種', ci.industry]);
+    if (ci.shares_outstanding != null) items.push(['発行済株式数', ci.shares_outstanding.toLocaleString()]);
+    if (ci.net_assets != null) items.push(['純資産', '¥' + ci.net_assets.toLocaleString()]);
+    if (ci.bps != null) items.push(['BPS', '¥' + ci.bps.toLocaleString()]);
+    if (ci.period_end) items.push(['決算期末', ci.period_end]);
+    if (items.length === 0) return '';
+    let html = '<div class="profile-company-info">';
+    for (const [label, val] of items) {
+        html += `<div class="profile-ci-item"><span class="profile-ci-label">${escapeHtml(label)}</span><span class="profile-ci-value">${escapeHtml(String(val))}</span></div>`;
+    }
+    html += '</div>';
+    return html;
 }
 
 // ---------------------------------------------------------------------------

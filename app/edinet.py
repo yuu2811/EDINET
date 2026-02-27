@@ -51,6 +51,8 @@ def _empty_holding_result() -> dict:
         "target_sec_code": None,
         "shares_held": None,
         "purpose_of_holding": None,
+        "joint_holders": None,       # JSON string: [{"name": ..., "ratio": ...}, ...]
+        "fund_source": None,         # 取得資金の内訳 (e.g. "自己資金", "借入金")
     }
 
 
@@ -547,8 +549,80 @@ class EdinetClient:
             if result["purpose_of_holding"]:
                 break
 
+        # --- Joint holders (共同保有者) ---
+        result["joint_holders"] = self._extract_joint_holders_xbrl(tree)
+
+        # --- Acquisition fund source (取得資金の内訳) ---
+        fund_patterns = [
+            "DescriptionOfFundsForAcquisition",
+            "FundsForAcquisition",
+            "SourceOfFunds",
+            "BreakdownOfAcquisitionFunds",
+            "AcquisitionFund",
+        ]
+        for pattern in fund_patterns:
+            elements = tree.xpath(
+                f"//*[contains(local-name(), '{pattern}')]"
+            )
+            for elem in elements:
+                if elem.text and elem.text.strip():
+                    result["fund_source"] = elem.text.strip()
+                    break
+            if result["fund_source"]:
+                break
+
         logger.debug("Extracted XBRL data: %s", result)
         return result
+
+    def _extract_joint_holders_xbrl(self, tree) -> str | None:
+        """Extract joint holder info from traditional XBRL tree.
+
+        Joint holders (共同保有者) are listed in the large shareholding
+        report XBRL under elements like:
+          - NameOfJointHolder / JointHolderName
+          - HoldingRatioOfJointHolder / JointHolderRatio
+        Returns a JSON string of [{name, ratio}] or None.
+        """
+        import json as _json
+
+        holders = []
+
+        # Strategy 1: look for numbered joint holder elements
+        # (JointHolder1Name, JointHolder2Name, etc.)
+        name_elements = tree.xpath(
+            "//*[contains(local-name(), 'JointHolder') and contains(local-name(), 'Name')]"
+        )
+        for elem in name_elements:
+            if elem.text and elem.text.strip():
+                local = elem.xpath("local-name()")
+                if "Abstract" in local:
+                    continue
+                holders.append({"name": elem.text.strip(), "ratio": None})
+
+        # Strategy 2: look for ratio elements corresponding to joint holders
+        ratio_elements = tree.xpath(
+            "//*[contains(local-name(), 'JointHolder') and "
+            "(contains(local-name(), 'Ratio') or contains(local-name(), 'HoldingRatio'))]"
+        )
+        for i, elem in enumerate(ratio_elements):
+            try:
+                val = _normalize_ratio(float(elem.text.strip()))
+                if i < len(holders):
+                    holders[i]["ratio"] = val
+            except (ValueError, AttributeError):
+                continue
+
+        # Strategy 3: broader search — NameOfJointHolder (non-numbered)
+        if not holders:
+            for pattern in ("NameOfJointHolder", "JointHolderName"):
+                elements = tree.xpath(f"//*[local-name() = '{pattern}']")
+                for elem in elements:
+                    if elem.text and elem.text.strip():
+                        holders.append({"name": elem.text.strip(), "ratio": None})
+
+        if holders:
+            return _json.dumps(holders, ensure_ascii=False)
+        return None
 
     def _extract_from_inline_xbrl(self, htm_bytes: bytes) -> dict:
         """Extract holding data from inline XBRL (iXBRL) .htm files.
@@ -606,6 +680,10 @@ class EdinetClient:
 
         ix_uri = nsmap.get("ix", IX_NS)
 
+        # Accumulators for joint holder data (inline XBRL)
+        _inline_jh_names: list[str] = []
+        _inline_jh_ratios: list[float] = []
+
         # Find ix:nonFraction and ix:nonNumeric elements
         for elem in tree.iter():
             tag = elem.tag if isinstance(elem.tag, str) else ""
@@ -662,6 +740,29 @@ class EdinetClient:
                 elif _matches_purpose_pattern(local_name):
                     if not result["purpose_of_holding"]:
                         result["purpose_of_holding"] = text
+                elif _matches_fund_source_pattern(local_name):
+                    if not result["fund_source"]:
+                        result["fund_source"] = text
+                elif _matches_joint_holder_name_pattern(local_name):
+                    _inline_jh_names.append(text)
+
+            # Joint holder ratio from nonFraction
+            elif is_nonfraction and _matches_joint_holder_ratio_pattern(local_name):
+                try:
+                    val = _parse_ix_number(elem, text)
+                    if val is not None:
+                        _inline_jh_ratios.append(_normalize_ratio(val))
+                except (ValueError, AttributeError):
+                    pass
+
+        # Assemble joint holders from inline XBRL
+        if _inline_jh_names:
+            import json as _json
+            jh = []
+            for i, name in enumerate(_inline_jh_names):
+                ratio = _inline_jh_ratios[i] if i < len(_inline_jh_ratios) else None
+                jh.append({"name": name, "ratio": ratio})
+            result["joint_holders"] = _json.dumps(jh, ensure_ascii=False)
 
         return result
 
@@ -1041,6 +1142,28 @@ def _matches_sec_code_pattern(name: str) -> bool:
 
 def _matches_purpose_pattern(name: str) -> bool:
     return _name_contains_any(name, _PURPOSE_PATTERNS)
+
+
+def _matches_fund_source_pattern(name: str) -> bool:
+    """Match fund source / acquisition funding elements."""
+    patterns = (
+        "DescriptionOfFundsForAcquisition",
+        "FundsForAcquisition",
+        "SourceOfFunds",
+        "BreakdownOfAcquisitionFunds",
+        "AcquisitionFund",
+    )
+    return any(p in name for p in patterns)
+
+
+def _matches_joint_holder_name_pattern(name: str) -> bool:
+    """Match joint holder name elements."""
+    return ("JointHolder" in name and "Name" in name and "Abstract" not in name)
+
+
+def _matches_joint_holder_ratio_pattern(name: str) -> bool:
+    """Match joint holder ratio elements."""
+    return ("JointHolder" in name and ("Ratio" in name or "HoldingRatio" in name) and "Abstract" not in name)
 
 
 def _parse_ix_number(elem, text: str) -> float | None:

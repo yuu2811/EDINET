@@ -514,7 +514,7 @@ EDINET/
 # テスト用依存パッケージのインストール
 pip install pytest pytest-asyncio
 
-# 全テスト実行 (49件)
+# 全テスト実行 (101件)
 pytest
 
 # 詳細出力

@@ -1,6 +1,7 @@
 """Background polling service for EDINET large shareholding filings."""
 
 import asyncio
+import collections
 import json
 import logging
 import re
@@ -12,7 +13,7 @@ from sqlalchemy import func, select
 from app.config import JST, settings
 from app.database import async_session
 from app.edinet import edinet_client
-from app.models import CompanyInfo, Filing
+from app.models import CompanyInfo, Filing, TenderOffer
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +33,29 @@ class SSEBroadcaster:
     Thread-safe broadcaster using asyncio.Lock with bounded queues,
     client ID tracking, stale client cleanup, and event IDs for
     reconnection support (Last-Event-ID).
+
+    Maintains a ring buffer of recent events so that reconnecting
+    clients can replay missed events via the Last-Event-ID header.
     """
 
     _CLIENT_MAX_AGE = 3600  # 1 hour in seconds
+    _EVENT_BUFFER_SIZE = 200  # keep last N events for replay
 
     def __init__(self):
         self._lock = asyncio.Lock()
         self._clients: dict[int, tuple[asyncio.Queue, float]] = {}
         self._next_id: int = 0
         self._event_id: int = 0  # monotonic event ID for SSE reconnection
+        # Ring buffer: deque of (event_id, formatted_message)
+        self._event_buffer: collections.deque[tuple[int, str]] = collections.deque(
+            maxlen=self._EVENT_BUFFER_SIZE
+        )
 
-    async def subscribe(self) -> tuple[int, asyncio.Queue]:
+    async def subscribe(self, last_event_id: int | None = None) -> tuple[int, asyncio.Queue]:
         """Register a new SSE client.
+
+        Args:
+            last_event_id: If provided, replay buffered events after this ID.
 
         Returns:
             A tuple of (client_id, queue) where the queue is bounded
@@ -54,6 +66,23 @@ class SSEBroadcaster:
             self._next_id += 1
             q: asyncio.Queue = asyncio.Queue(maxsize=100)
             self._clients[client_id] = (q, time.monotonic())
+
+            # Replay missed events from buffer
+            if last_event_id is not None:
+                replayed = 0
+                for eid, message in self._event_buffer:
+                    if eid > last_event_id:
+                        try:
+                            q.put_nowait(message)
+                            replayed += 1
+                        except asyncio.QueueFull:
+                            break
+                if replayed:
+                    logger.info(
+                        "SSE client %d: replayed %d missed events (from id %d)",
+                        client_id, replayed, last_event_id,
+                    )
+
             logger.debug("SSE client %d subscribed (total: %d)",
                          client_id, len(self._clients))
             return client_id, q
@@ -71,10 +100,13 @@ class SSEBroadcaster:
 
         Each event gets a unique monotonic ID for reconnection support.
         If a client's queue is full, the client is dropped with a warning.
+        Events are also stored in a ring buffer for replay on reconnection.
         """
         self._event_id += 1
         payload = json.dumps(data, cls=JsonEncoder, ensure_ascii=False)
         message = f"id: {self._event_id}\nevent: {event}\ndata: {payload}\n\n"
+        # Store in ring buffer for replay
+        self._event_buffer.append((self._event_id, message))
         dead: list[int] = []
         async with self._lock:
             for client_id, (q, _connected_at) in self._clients.items():
@@ -161,16 +193,25 @@ async def poll_edinet(target_date=None):
 
     new_count = 0
     async with async_session() as session:
+        # Batch duplicate check: single IN() query instead of N individual SELECTs
+        all_doc_ids = [doc.get("docID") for doc in filings if doc.get("docID")]
+        existing_ids: set[str] = set()
+        if all_doc_ids:
+            # Process in chunks of 500 to stay within SQLite variable limits
+            for chunk_start in range(0, len(all_doc_ids), 500):
+                chunk = all_doc_ids[chunk_start:chunk_start + 500]
+                result = await session.execute(
+                    select(Filing.doc_id).where(Filing.doc_id.in_(chunk))
+                )
+                existing_ids.update(row[0] for row in result)
+
         for doc in filings:
             doc_id = doc.get("docID")
             if not doc_id:
                 continue
 
-            # Check if already stored
-            existing = await session.execute(
-                select(Filing).where(Filing.doc_id == doc_id)
-            )
-            if existing.scalar_one_or_none():
+            # Skip already-stored filings (checked via batch query above)
+            if doc_id in existing_ids:
                 continue
 
             # New filing detected
@@ -256,6 +297,8 @@ _XBRL_FIELDS = (
     "target_sec_code",
     "shares_held",
     "purpose_of_holding",
+    "joint_holders",
+    "fund_source",
 )
 
 
@@ -448,6 +491,12 @@ async def _poll_company_info(target_date: date) -> None:
                         company.shares_outstanding = info["shares_outstanding"]
                     if info.get("net_assets"):
                         company.net_assets = info["net_assets"]
+                    # Populate industry from EDINET code list (金融庁公式業種)
+                    if not company.industry:
+                        from app.routers.stock import get_industry_for_ticker
+                        industry = await get_industry_for_ticker(ticker)
+                        if industry:
+                            company.industry = industry
                     company.source_doc_id = doc_id
                     company.source_doc_type = doc.get("docTypeCode")
                     company.period_end = doc.get("periodEnd")
@@ -472,6 +521,84 @@ async def _poll_company_info(target_date: date) -> None:
             logger.info("Updated %d company info records from EDINET", updated)
 
 
+async def _poll_tender_offers(target_date: date) -> None:
+    """Detect tender offer (公開買付/TOB) filings from EDINET.
+
+    Scans the daily document list for docTypeCodes 240-300 (TOB-related)
+    and stores new findings in the tender_offers table.  Broadcasts SSE
+    events for real-time dashboard notification.
+    """
+    if not settings.EDINET_API_KEY:
+        return
+
+    all_docs = await edinet_client.fetch_all_document_list(target_date)
+    if not all_docs:
+        return
+
+    tob_docs = [
+        doc for doc in all_docs
+        if doc.get("docTypeCode") in settings.TOB_DOC_TYPES
+        and doc.get("withdrawalStatus", "0") != "1"
+        and doc.get("disclosureStatus", "0") == "0"
+    ]
+
+    if not tob_docs:
+        return
+
+    logger.info(
+        "Found %d TOB-related filings for %s", len(tob_docs), target_date,
+    )
+
+    # Batch duplicate check
+    doc_ids = [d.get("docID") for d in tob_docs if d.get("docID")]
+    async with async_session() as session:
+        existing_result = await session.execute(
+            select(TenderOffer.doc_id).where(TenderOffer.doc_id.in_(doc_ids))
+        )
+        existing_ids = set(existing_result.scalars().all())
+
+        new_count = 0
+        for doc in tob_docs:
+            doc_id = doc.get("docID")
+            if not doc_id or doc_id in existing_ids:
+                continue
+
+            # Extract target company from description (e.g. "公開買付届出書（ソニーグループ株式会社）")
+            target_name = None
+            desc = doc.get("docDescription", "")
+            m = re.search(r"[（(]([^）)]+?(?:株式会社|株式|Inc\.|Ltd\.))[）)]", desc)
+            if m:
+                target_name = m.group(1)
+
+            tob = TenderOffer(
+                doc_id=doc_id,
+                edinet_code=doc.get("edinetCode"),
+                filer_name=doc.get("filerName"),
+                sec_code=doc.get("secCode"),
+                jcn=doc.get("JCN"),
+                doc_type_code=doc.get("docTypeCode"),
+                doc_description=desc,
+                subject_edinet_code=doc.get("subjectEdinetCode"),
+                issuer_edinet_code=doc.get("issuerEdinetCode"),
+                target_company_name=target_name,
+                target_sec_code=doc.get("secCode"),
+                submit_date_time=doc.get("submitDateTime"),
+                period_start=doc.get("periodStart"),
+                period_end=doc.get("periodEnd"),
+                pdf_flag=doc.get("pdfFlag") == "1",
+                xbrl_flag=doc.get("xbrlFlag") == "1",
+            )
+            session.add(tob)
+            new_count += 1
+
+            # Broadcast SSE event for real-time notification
+            await broadcaster.broadcast(tob.to_dict(), event_type="new_tob")
+
+        if new_count > 0:
+            await session.commit()
+            logger.info("Stored %d new TOB filings", new_count)
+
+
 async def run_poller():
     """Run the polling loop."""
     if not settings.EDINET_API_KEY:
@@ -492,6 +619,8 @@ async def run_poller():
             await _retry_xbrl_enrichment()
             # Fetch company fundamentals from 有報/四半期報告書
             await _poll_company_info(today)
+            # Detect tender offer (TOB) filings
+            await _poll_tender_offers(today)
             # Clean up SSE clients that have been connected too long
             await broadcaster._cleanup_stale()
         except asyncio.CancelledError:
