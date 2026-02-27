@@ -2884,6 +2884,126 @@ body {
     width: 60px;
     text-align: right;
 }
+.profile-filing-hidden {
+    display: none;
+}
+.profile-filing-count {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-weight: 400;
+}
+.profile-show-all-btn,
+.profile-load-more {
+    text-align: center;
+    padding: 8px;
+    color: var(--accent-blue);
+    cursor: pointer;
+    font-size: 11px;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+}
+.profile-show-all-btn:hover,
+.profile-load-more:hover {
+    color: var(--text-primary);
+    background: rgba(255,255,255,0.03);
+}
+
+/* Timeline chart */
+.timeline-chart-wrapper {
+    margin: 8px 0 12px;
+    padding: 8px;
+    background: rgba(0,0,0,0.2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+}
+.timeline-chart text {
+    font-family: var(--font-mono);
+}
+.timeline-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    padding: 6px 4px 2px;
+    font-size: 10px;
+    color: var(--text-dim);
+}
+.timeline-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.timeline-legend-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+/* Related TOB */
+.profile-tob-list {
+    margin: 4px 0 8px;
+}
+.profile-tob-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    font-size: 11px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+.profile-tob-item:last-child {
+    border-bottom: none;
+}
+.profile-tob-date {
+    color: var(--text-dim);
+    flex-shrink: 0;
+    width: 80px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+}
+.profile-tob-filer {
+    color: var(--text-secondary);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.profile-tob-target {
+    color: var(--text-dim);
+    flex-shrink: 0;
+}
+.profile-tob-pdf {
+    color: var(--accent-blue);
+    text-decoration: none;
+    font-size: 10px;
+    flex-shrink: 0;
+}
+
+/* Company info panel */
+.profile-company-info {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    padding: 8px 10px;
+    margin: 4px 0 8px;
+    background: rgba(0,212,170,0.05);
+    border: 1px solid rgba(0,212,170,0.15);
+    border-radius: var(--radius-md);
+    font-size: 11px;
+}
+.profile-ci-item {
+    display: flex;
+    gap: 6px;
+}
+.profile-ci-label {
+    color: var(--text-dim);
+}
+.profile-ci-value {
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+}
 
 .stock-no-data {
     text-align: center;

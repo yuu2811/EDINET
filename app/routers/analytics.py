@@ -7,7 +7,7 @@ from sqlalchemy import case, desc, func, select
 
 from app.config import JST
 from app.deps import get_async_session, normalize_sec_code, validate_edinet_code, validate_sec_code
-from app.models import CompanyInfo, Filing
+from app.models import CompanyInfo, Filing, TenderOffer
 
 router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
 
@@ -402,14 +402,64 @@ def _group_filings(filings, key_fn, init_fn):
         key = key_fn(f)
         if key not in groups:
             groups[key] = {**init_fn(f), "filing_count": 0, "history": []}
-        groups[key]["filing_count"] += 1
+        g = groups[key]
+        g["filing_count"] += 1
+        # Always update latest_ratio / latest_date to the most recent filing
         if f.holding_ratio is not None:
-            groups[key]["history"].append({
+            g["history"].append({
                 "date": f.submit_date_time,
                 "ratio": f.holding_ratio,
                 "previous_ratio": f.previous_holding_ratio,
             })
     return groups
+
+
+async def _fetch_related_tobs(session, sec_codes: list[str]) -> list[dict]:
+    """Fetch tender offer filings related to the given sec_codes."""
+    if not sec_codes:
+        return []
+    result = await session.execute(
+        select(TenderOffer)
+        .where(TenderOffer.target_sec_code.in_(sec_codes))
+        .order_by(desc(TenderOffer.submit_date_time))
+        .limit(20)
+    )
+    return [t.to_dict() for t in result.scalars().all()]
+
+
+async def _fetch_company_info(session, sec_code: str) -> dict | None:
+    """Fetch CompanyInfo for a given sec_code (4-digit)."""
+    result = await session.execute(
+        select(CompanyInfo).where(CompanyInfo.sec_code == sec_code)
+    )
+    ci = result.scalar_one_or_none()
+    return ci.to_dict() if ci else None
+
+
+def _build_timeline(filings) -> list[dict]:
+    """Build a chronological timeline of all filings for chart rendering."""
+    timeline = []
+    for f in filings:
+        timeline.append({
+            "date": f.submit_date_time,
+            "doc_id": f.doc_id,
+            "doc_description": f.doc_description,
+            "filer_name": f.holder_name or f.filer_name,
+            "edinet_code": f.edinet_code,
+            "target_company_name": f.target_company_name,
+            "target_sec_code": f.target_sec_code,
+            "holding_ratio": f.holding_ratio,
+            "previous_holding_ratio": f.previous_holding_ratio,
+            "ratio_change": (
+                round(f.holding_ratio - f.previous_holding_ratio, 2)
+                if f.holding_ratio is not None and f.previous_holding_ratio is not None
+                else None
+            ),
+            "is_amendment": f.is_amendment,
+        })
+    # Return in chronological order (oldest first) for charting
+    timeline.sort(key=lambda t: t["date"] or "")
+    return timeline
 
 
 async def _profile_query(session, where_clause, limit, offset):
@@ -458,6 +508,18 @@ async def filer_profile(
         ratios = [f.holding_ratio for f in filings if f.holding_ratio is not None]
         dates = [f.submit_date_time for f in filings if f.submit_date_time]
 
+        # Collect all target sec_codes for TOB cross-reference
+        target_codes = list({
+            f.target_sec_code for f in filings
+            if f.target_sec_code
+        })
+        # Also include 4-digit variants
+        all_codes = list({c for tc in target_codes for c in (tc, tc[:4]) if c})
+        related_tobs = await _fetch_related_tobs(session, all_codes)
+
+        # Build full timeline for chart rendering
+        timeline = _build_timeline(filings)
+
         return {
             "edinet_code": edinet_code,
             "filer_name": filings[0].filer_name or filings[0].holder_name or edinet_code,
@@ -471,7 +533,9 @@ async def filer_profile(
             },
             "has_more": offset + len(filings) < total_count,
             "targets": sorted(targets.values(), key=lambda t: -t["filing_count"]),
-            "recent_filings": [f.to_dict() for f in filings[:20]],
+            "recent_filings": [f.to_dict() for f in filings],
+            "timeline": timeline,
+            "related_tobs": related_tobs,
         }
 
 
@@ -508,6 +572,15 @@ async def company_profile(
             },
         )
 
+        # Related TOB filings
+        related_tobs = await _fetch_related_tobs(session, codes)
+
+        # Company fundamental info from CompanyInfo
+        company_info = await _fetch_company_info(session, normalized)
+
+        # Build full timeline for chart rendering
+        timeline = _build_timeline(filings)
+
         return {
             "sec_code": normalized,
             "company_name": company_name,
@@ -521,5 +594,8 @@ async def company_profile(
                 key=lambda h: h["latest_ratio"] if h["latest_ratio"] is not None else -1,
                 reverse=True,
             ),
-            "recent_filings": [f.to_dict() for f in filings[:20]],
+            "recent_filings": [f.to_dict() for f in filings],
+            "timeline": timeline,
+            "related_tobs": related_tobs,
+            "company_info": company_info,
         }

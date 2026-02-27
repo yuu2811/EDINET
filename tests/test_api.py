@@ -35,6 +35,7 @@ async def seed_data(api_session_factory):
         filings = [
             Filing(
                 doc_id="S100API1",
+                edinet_code="E11111",
                 filer_name="野村アセット",
                 doc_type_code="350",
                 doc_description="大量保有報告書",
@@ -51,6 +52,7 @@ async def seed_data(api_session_factory):
             ),
             Filing(
                 doc_id="S100API2",
+                edinet_code="E22222",
                 filer_name="ブラックロック",
                 doc_type_code="350",
                 doc_description="変更報告書（特例対象株券等）",
@@ -570,4 +572,95 @@ class TestTobAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert len(data["items"]) == 1
+
+
+class TestProfileAPI:
+    """Tests for /api/analytics/filer and /api/analytics/company endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_filer_profile(self, client):
+        """Filer profile should return full history with timeline and related TOBs."""
+        resp = await client.get("/api/analytics/filer/E11111")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["edinet_code"] == "E11111"
+        assert data["filer_name"] == "野村アセット"
+        assert "summary" in data
+        assert data["summary"]["total_filings"] == 1
+        assert "targets" in data
+        assert "recent_filings" in data
+        assert "timeline" in data
+        assert "related_tobs" in data
+        # Timeline should be in chronological order
+        assert isinstance(data["timeline"], list)
+        assert len(data["timeline"]) >= 1
+        assert data["timeline"][0]["holding_ratio"] == 5.12
+
+    @pytest.mark.asyncio
+    async def test_filer_profile_related_tobs(self, client):
+        """Filer profile should include TOB filings targeting the same companies."""
+        resp = await client.get("/api/analytics/filer/E11111")
+        data = resp.json()
+        # E11111 targets 72030, and there's a TOB for 72030
+        assert len(data["related_tobs"]) >= 1
+        assert data["related_tobs"][0]["target_sec_code"] == "72030"
+
+    @pytest.mark.asyncio
+    async def test_filer_profile_all_filings(self, client):
+        """Filer profile should return all filings, not just 20."""
+        resp = await client.get("/api/analytics/filer/E11111")
+        data = resp.json()
+        # recent_filings should now contain all filings (not capped at 20)
+        assert len(data["recent_filings"]) == data["summary"]["total_filings"]
+
+    @pytest.mark.asyncio
+    async def test_filer_profile_not_found(self, client):
+        """Non-existent edinet_code should return 404."""
+        resp = await client.get("/api/analytics/filer/E00000")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_company_profile(self, client):
+        """Company profile should return holders, timeline, TOBs, and company info."""
+        resp = await client.get("/api/analytics/company/7203")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["sec_code"] == "7203"
+        assert "holders" in data
+        assert "recent_filings" in data
+        assert "timeline" in data
+        assert "related_tobs" in data
+        assert "company_info" in data
+        assert len(data["holders"]) >= 1
+        assert len(data["timeline"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_company_profile_related_tobs(self, client):
+        """Company profile should include related TOB filings."""
+        resp = await client.get("/api/analytics/company/7203")
+        data = resp.json()
+        assert len(data["related_tobs"]) >= 1
+        tob_codes = [t["target_sec_code"] for t in data["related_tobs"]]
+        assert "72030" in tob_codes
+
+    @pytest.mark.asyncio
+    async def test_company_profile_all_filings(self, client):
+        """Company profile should return all filings."""
+        resp = await client.get("/api/analytics/company/7203")
+        data = resp.json()
+        assert len(data["recent_filings"]) == data["total_filings"]
+
+    @pytest.mark.asyncio
+    async def test_company_profile_not_found(self, client):
+        """Non-existent sec_code should return 404."""
+        resp = await client.get("/api/analytics/company/0000")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_timeline_chronological_order(self, client):
+        """Timeline should be in chronological order (oldest first)."""
+        resp = await client.get("/api/analytics/company/7203")
+        data = resp.json()
+        dates = [t["date"] for t in data["timeline"] if t["date"]]
+        assert dates == sorted(dates)
 
