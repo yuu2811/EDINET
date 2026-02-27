@@ -333,6 +333,43 @@ class TestWatchlistFilingsAPI:
         assert resp.status_code == 200
         assert resp.json()["filings"] == []
 
+    @pytest.mark.asyncio
+    async def test_watchlist_filings_matches_by_sec_code(self, client):
+        """Watchlist with sec_code should match filings for that company."""
+        # Seed data has watchlist entry for 72030 and a filing for 72030
+        resp = await client.get("/api/watchlist/filings")
+        assert resp.status_code == 200
+        data = resp.json()
+        filings = data["filings"]
+        assert len(filings) >= 1
+        matched_codes = {f["target_sec_code"] for f in filings if f.get("target_sec_code")}
+        assert "72030" in matched_codes
+
+    @pytest.mark.asyncio
+    async def test_watchlist_filings_matches_by_company_name(self, client):
+        """Watchlist entry with company_name should match by name substring."""
+        # Add a watchlist entry by name
+        resp = await client.post("/api/watchlist", json={"company_name": "ソニー"})
+        assert resp.status_code == 200
+
+        resp = await client.get("/api/watchlist/filings")
+        data = resp.json()
+        matched_names = {f["target_company_name"] for f in data["filings"] if f.get("target_company_name")}
+        assert "ソニーグループ" in matched_names
+
+    @pytest.mark.asyncio
+    async def test_watchlist_filings_no_duplicates(self, client):
+        """Multiple watchlist entries matching the same filing should not produce duplicates."""
+        # Add watchlist entries that both match the same filing
+        await client.post("/api/watchlist", json={"company_name": "トヨタ"})
+        # Already have sec_code 72030 for トヨタ
+
+        resp = await client.get("/api/watchlist/filings")
+        data = resp.json()
+        doc_ids = [f["doc_id"] for f in data["filings"]]
+        # No duplicates
+        assert len(doc_ids) == len(set(doc_ids))
+
 
 class TestSSEEndpoint:
     """Tests for /api/stream SSE endpoint."""

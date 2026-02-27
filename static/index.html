@@ -40,6 +40,13 @@
         </div>
     </header>
 
+    <!-- SSE Reconnection Banner (hidden by default) -->
+    <div id="sse-banner" class="sse-banner hidden" role="alert" aria-live="assertive">
+        <span class="sse-banner-icon">&#9888;</span>
+        <span class="sse-banner-text">サーバーとの接続が切断されました。再接続を試みています...</span>
+        <button class="sse-banner-dismiss" onclick="this.parentElement.classList.add('hidden')" aria-label="閉じる">&times;</button>
+    </div>
+
     <!-- Ticker -->
     <div id="ticker-bar" role="marquee" aria-label="最新の報告書">
         <div id="ticker-content">

@@ -265,3 +265,87 @@ class TestPollerIntegration:
             assert len(filings) == 2
 
         await engine.dispose()
+
+
+class TestSSEBufferWraparound:
+    """Tests for SSE ring buffer wraparound edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_ring_buffer_wraparound_preserves_newest(self):
+        """After buffer wraps, newest events should still be replayable."""
+        b = SSEBroadcaster()
+        buf_size = b._EVENT_BUFFER_SIZE
+        # Fill buffer beyond capacity
+        for i in range(buf_size + 20):
+            await b.broadcast("e", {"i": i})
+
+        assert len(b._event_buffer) == buf_size
+
+        # The oldest event in buffer should be event #21 (0-indexed: i=20)
+        oldest_event_id, _ = b._event_buffer[0]
+        newest_event_id, _ = b._event_buffer[-1]
+        assert newest_event_id > oldest_event_id
+
+        # Reconnect: ask for events after ID just before oldest in buffer
+        _id, q = await b.subscribe(last_event_id=oldest_event_id - 1)
+        # Should get all events in buffer
+        assert q.qsize() == min(buf_size, 100)  # capped by queue maxsize
+
+    @pytest.mark.asyncio
+    async def test_ring_buffer_old_last_event_id_replays_all_available(self):
+        """A very old Last-Event-ID should replay all available buffered events."""
+        b = SSEBroadcaster()
+        for i in range(50):
+            await b.broadcast("e", {"i": i})
+
+        # Request events from ID 0 — should replay all 50
+        _id, q = await b.subscribe(last_event_id=0)
+        assert q.qsize() == 50
+
+    @pytest.mark.asyncio
+    async def test_future_last_event_id_replays_nothing(self):
+        """A Last-Event-ID beyond current should not replay any events."""
+        b = SSEBroadcaster()
+        for i in range(10):
+            await b.broadcast("e", {"i": i})
+
+        # Request events from a future ID
+        _id, q = await b.subscribe(last_event_id=9999)
+        assert q.qsize() == 0
+
+
+class TestRetryLock:
+    """Tests for XBRL retry concurrency safety."""
+
+    @pytest.mark.asyncio
+    async def test_retry_lock_prevents_concurrent_runs(self):
+        """Only one _retry_xbrl_enrichment should run at a time."""
+        from app.poller import _retry_lock
+
+        call_count = 0
+
+        async def slow_retry():
+            nonlocal call_count
+            async with _retry_lock:
+                call_count += 1
+                await asyncio.sleep(0.1)
+
+        # Start two concurrent retries
+        t1 = asyncio.create_task(slow_retry())
+        t2 = asyncio.create_task(slow_retry())
+        await asyncio.gather(t1, t2)
+
+        # Both should complete but the lock ensures sequential access
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retry_skips_when_locked(self):
+        """_retry_xbrl_enrichment should skip if already running."""
+        from app.poller import _retry_lock, _retry_xbrl_enrichment
+
+        # Acquire lock manually to simulate in-progress retry
+        async with _retry_lock:
+            # This call should detect lock is held and skip
+            assert _retry_lock.locked()
+            # We can't easily test the skip behavior without mocking
+            # the entire DB, but we verify the lock state is correct

@@ -342,6 +342,7 @@ async def _enrich_from_xbrl(filing: Filing):
 
 
 _retry_offset = 0  # rotating offset for fair retry selection
+_retry_lock = asyncio.Lock()  # prevent concurrent retry runs
 
 
 async def _retry_xbrl_enrichment():
@@ -351,66 +352,76 @@ async def _retry_xbrl_enrichment():
     preventing permanently-unparseable records from starving older ones.
     Each enrichment is bounded to 10s and the total batch to 30s to
     avoid stretching the polling interval.
+
+    Protected by _retry_lock to prevent concurrent access to _retry_offset.
     """
     global _retry_offset
 
-    async with async_session() as session:
-        total_unparsed_result = await session.execute(
-            select(func.count()).select_from(
-                select(Filing.id)
-                .where(Filing.xbrl_flag.is_(True), Filing.xbrl_parsed.is_(False))
-                .subquery()
+    if _retry_lock.locked():
+        logger.debug("XBRL retry already in progress, skipping")
+        return
+
+    async with _retry_lock:
+        async with async_session() as session:
+            total_unparsed_result = await session.execute(
+                select(func.count()).select_from(
+                    select(Filing.id)
+                    .where(Filing.xbrl_flag.is_(True), Filing.xbrl_parsed.is_(False))
+                    .subquery()
+                )
             )
-        )
-        total_unparsed = total_unparsed_result.scalar() or 0
-        if total_unparsed == 0:
-            _retry_offset = 0
-            return
+            total_unparsed = total_unparsed_result.scalar() or 0
+            if total_unparsed == 0:
+                _retry_offset = 0
+                return
 
-        if _retry_offset >= total_unparsed:
-            _retry_offset = 0
+            if _retry_offset >= total_unparsed:
+                _retry_offset = 0
 
-        result = await session.execute(
-            select(Filing)
-            .where(Filing.xbrl_flag.is_(True), Filing.xbrl_parsed.is_(False))
-            .order_by(Filing.id.asc())
-            .offset(_retry_offset)
-            .limit(5)
-        )
-        filings = result.scalars().all()
-        if not filings:
-            _retry_offset = 0
-            return
+            result = await session.execute(
+                select(Filing)
+                .where(Filing.xbrl_flag.is_(True), Filing.xbrl_parsed.is_(False))
+                .order_by(Filing.id.asc())
+                .offset(_retry_offset)
+                .limit(5)
+            )
+            filings = result.scalars().all()
+            if not filings:
+                _retry_offset = 0
+                return
 
-        _retry_offset += len(filings)
+            _retry_offset += len(filings)
 
-        logger.info(
-            "Retrying XBRL enrichment for %d filings (offset=%d, unparsed=%d)",
-            len(filings), _retry_offset - len(filings), total_unparsed,
-        )
+            logger.info(
+                "Retrying XBRL enrichment for %d filings (offset=%d, unparsed=%d)",
+                len(filings), _retry_offset - len(filings), total_unparsed,
+            )
 
-        async def _enrich_one(filing: Filing):
+            async def _enrich_one(filing: Filing):
+                try:
+                    await asyncio.wait_for(_enrich_from_xbrl(filing), timeout=10.0)
+                except asyncio.TimeoutError:
+                    logger.warning("XBRL retry timed out for %s", filing.doc_id)
+                _apply_pre_enrichment(filing)
+
+            # Process sequentially with delay per EDINET API v2 spec recommendation
+            # (several seconds between document downloads to avoid rate limiting)
             try:
-                await asyncio.wait_for(_enrich_from_xbrl(filing), timeout=10.0)
+                for i, f in enumerate(filings):
+                    if i > 0:
+                        await asyncio.sleep(3.0)
+                    await asyncio.wait_for(_enrich_one(f), timeout=15.0)
             except asyncio.TimeoutError:
-                logger.warning("XBRL retry timed out for %s", filing.doc_id)
-            _apply_pre_enrichment(filing)
+                logger.warning("XBRL retry batch timed out")
 
-        # Process sequentially with delay per EDINET API v2 spec recommendation
-        # (several seconds between document downloads to avoid rate limiting)
-        try:
-            for i, f in enumerate(filings):
-                if i > 0:
-                    await asyncio.sleep(3.0)
-                await asyncio.wait_for(_enrich_one(f), timeout=15.0)
-        except asyncio.TimeoutError:
-            logger.warning("XBRL retry batch timed out")
-
-        try:
-            await session.commit()
-        except Exception as exc:
-            logger.error("XBRL retry batch commit failed: %s", exc)
-            await session.rollback()
+            try:
+                await asyncio.wait_for(session.commit(), timeout=30.0)
+            except asyncio.TimeoutError:
+                logger.error("XBRL retry batch commit timed out")
+                await session.rollback()
+            except Exception as exc:
+                logger.error("XBRL retry batch commit failed: %s", exc)
+                await session.rollback()
 
 
 async def _poll_company_info(target_date: date) -> None:
@@ -468,6 +479,27 @@ async def _poll_company_info(target_date: date) -> None:
                 if not info.get("shares_outstanding") and not info.get("net_assets"):
                     continue
 
+                # Sanity check: reject wildly out-of-range values that
+                # indicate a corrupted XBRL or parsing error.
+                # Max shares: 100 billion (largest companies ~10B shares)
+                # Max net_assets: 100 trillion JPY
+                _shares = info.get("shares_outstanding")
+                _net = info.get("net_assets")
+                if _shares is not None and (_shares <= 0 or _shares > 100_000_000_000):
+                    logger.warning(
+                        "Rejected out-of-range shares_outstanding=%s for %s",
+                        _shares, doc_id,
+                    )
+                    info["shares_outstanding"] = None
+                if _net is not None and abs(_net) > 100_000_000_000_000:
+                    logger.warning(
+                        "Rejected out-of-range net_assets=%s for %s",
+                        _net, doc_id,
+                    )
+                    info["net_assets"] = None
+                if not info.get("shares_outstanding") and not info.get("net_assets"):
+                    continue
+
                 # Normalise sec_code to 4 digits
                 ticker = sec_code[:4] if len(sec_code) == 5 else sec_code
 
@@ -517,7 +549,12 @@ async def _poll_company_info(target_date: date) -> None:
                 continue
 
         if updated > 0:
-            await session.commit()
+            try:
+                await asyncio.wait_for(session.commit(), timeout=30.0)
+            except asyncio.TimeoutError:
+                logger.error("Company info commit timed out")
+                await session.rollback()
+                return
             logger.info("Updated %d company info records from EDINET", updated)
 
 
@@ -595,7 +632,12 @@ async def _poll_tender_offers(target_date: date) -> None:
             await broadcaster.broadcast(tob.to_dict(), event_type="new_tob")
 
         if new_count > 0:
-            await session.commit()
+            try:
+                await asyncio.wait_for(session.commit(), timeout=30.0)
+            except asyncio.TimeoutError:
+                logger.error("TOB commit timed out")
+                await session.rollback()
+                return
             logger.info("Stored %d new TOB filings", new_count)
 
 
