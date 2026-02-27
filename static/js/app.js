@@ -661,6 +661,22 @@ function setConnectionStatus(status) {
         text.textContent = 'DISCONNECTED';
     }
 
+    // Show/hide the reconnection banner
+    const banner = document.getElementById('sse-banner');
+    if (banner) {
+        if (status === 'connected') {
+            banner.classList.add('hidden');
+        } else {
+            banner.classList.remove('hidden');
+            const bannerText = banner.querySelector('.sse-banner-text');
+            if (bannerText) {
+                bannerText.textContent = status === 'reconnecting'
+                    ? 'サーバーとの接続が切断されました。再接続を試みています...'
+                    : 'サーバーとの接続が失われました。ページを再読み込みしてください。';
+            }
+        }
+    }
+
     // Update mobile connection status
     const mobileStatus = document.getElementById('mobile-connection-status');
     if (mobileStatus) {

@@ -284,6 +284,46 @@ body {
     50% { opacity: 0.2; }
 }
 
+/* SSE reconnection banner */
+.sse-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: rgba(255, 171, 0, 0.1);
+    border-bottom: 1px solid rgba(255, 171, 0, 0.3);
+    color: var(--amber);
+    font-size: 11px;
+    font-family: var(--font-ui);
+    animation: sse-banner-slide 0.3s ease-out;
+}
+.sse-banner.hidden {
+    display: none;
+}
+.sse-banner-icon {
+    font-size: 14px;
+    flex-shrink: 0;
+}
+.sse-banner-text {
+    flex: 1;
+}
+.sse-banner-dismiss {
+    background: none;
+    border: none;
+    color: var(--amber);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 4px;
+    opacity: 0.7;
+}
+.sse-banner-dismiss:hover {
+    opacity: 1;
+}
+@keyframes sse-banner-slide {
+    from { transform: translateY(-100%); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
 .btn-icon {
     background: var(--bg-card);
     border: 1px solid var(--border-primary);
