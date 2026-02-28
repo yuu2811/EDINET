@@ -5,7 +5,7 @@ import logging
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy import desc, func, or_, select
 
 from app.deps import get_async_session, validate_doc_id
@@ -118,7 +118,10 @@ def _apply_xbrl_data(filing, data: dict) -> bool:
         if value is not None:
             setattr(filing, field, value)
             changed = True
-    filing.xbrl_parsed = True
+    # Only mark as parsed when actual data was extracted;
+    # otherwise leave it eligible for future retry attempts.
+    if changed:
+        filing.xbrl_parsed = True
     return changed
 
 
@@ -273,12 +276,4 @@ async def proxy_document_pdf(doc_id: str) -> Response:
         "PDF not downloadable for %s — redirecting to EDINET viewer",
         doc_id,
     )
-    return JSONResponse(
-        {
-            "error": "PDF not available for direct download",
-            "doc_id": doc_id,
-            "redirect_url": viewer_url,
-        },
-        status_code=302,
-        headers={"Location": viewer_url},
-    )
+    return RedirectResponse(url=viewer_url, status_code=302)

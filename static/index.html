@@ -332,6 +332,15 @@
                 <button class="overlay-close" aria-label="閉じる">&times;</button>
             </div>
             <div class="overlay-body" id="mobile-analytics-body">
+                <div class="mobile-analytics-controls" style="margin-bottom:8px">
+                    <label for="mobile-rankings-period" class="visually-hidden">期間</label>
+                    <select id="mobile-rankings-period" class="filter-select filter-select-sm" aria-label="期間">
+                        <option value="7d">7日</option>
+                        <option value="30d" selected>30日</option>
+                        <option value="90d">90日</option>
+                        <option value="all">全期間</option>
+                    </select>
+                </div>
                 <div id="mobile-rankings-content" class="rankings-content">
                     <div class="summary-empty">読み込み中...</div>
                 </div>

@@ -264,7 +264,7 @@ function savePreferences() {
             soundEnabled: state.soundEnabled,
             notificationsEnabled: state.notificationsEnabled,
             viewMode: state.viewMode,
-            watchlistPanelOpen: !document.getElementById('watchlist-panel').classList.contains('panel-collapsed'),
+            watchlistPanelOpen: !(document.getElementById('watchlist-panel')?.classList.contains('panel-collapsed')),
         };
         localStorage.setItem(PREFS_PREFIX + 'preferences', JSON.stringify(prefs));
     } catch (e) {
@@ -308,6 +308,8 @@ function loadPreferences() {
             state.soundEnabled = prefs.soundEnabled;
             updateToggleBtn(document.getElementById('btn-sound'), state.soundEnabled,
                 'サウンド ON', 'サウンド OFF', 'サウンドアラート: 有効', 'サウンドアラート: 無効');
+            const msb = document.getElementById('mobile-btn-sound');
+            if (msb) { msb.classList.toggle('active', state.soundEnabled); msb.textContent = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF'; }
         }
 
         // Restore notification preference
@@ -315,6 +317,8 @@ function loadPreferences() {
             state.notificationsEnabled = prefs.notificationsEnabled;
             updateToggleBtn(document.getElementById('btn-notify'), state.notificationsEnabled,
                 '通知 ON', '通知 OFF', 'デスクトップ通知: 有効', 'デスクトップ通知: 無効');
+            const mnb = document.getElementById('mobile-btn-notify');
+            if (mnb) { mnb.classList.toggle('active', state.notificationsEnabled); mnb.textContent = state.notificationsEnabled ? '通知 ON' : '通知 OFF'; }
         }
 
         // Restore view mode
@@ -437,6 +441,15 @@ function initPollCountdown() {
 }
 
 function initEventListeners() {
+    // Event delegation for feed cards/rows — single listener instead of per-card
+    document.getElementById('feed-list').addEventListener('click', (e) => {
+        if (e.target.closest('a')) return;
+        const card = e.target.closest('[data-doc-id]');
+        if (!card) return;
+        const filing = state.filings.find(f => f.doc_id === card.dataset.docId);
+        if (filing) openModal(filing);
+    });
+
     // Sound toggle
     document.getElementById('btn-sound').addEventListener('click', toggleSound);
 
@@ -481,6 +494,7 @@ function initEventListeners() {
     document.getElementById('feed-sort').addEventListener('change', (e) => {
         state.sortMode = e.target.value;
         renderFeed();
+        savePreferences();
     });
 
     // View toggle (cards / table)
@@ -523,10 +537,18 @@ function initEventListeners() {
         if (e.key === 'Enter') saveWatchItem();
     });
 
-    // Rankings period selector
-    const rankingsPeriod = document.getElementById('rankings-period');
-    if (rankingsPeriod) {
-        rankingsPeriod.addEventListener('change', () => loadAnalytics());
+    // Rankings period selector (desktop + mobile sync)
+    for (const id of ['rankings-period', 'mobile-rankings-period']) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', () => {
+                // Sync the other selector
+                const otherId = id === 'rankings-period' ? 'mobile-rankings-period' : 'rankings-period';
+                const other = document.getElementById(otherId);
+                if (other) other.value = el.value;
+                loadAnalytics();
+            });
+        }
     }
 
     // Modal close
@@ -555,8 +577,10 @@ function initEventListeners() {
                     }
                 }
             }
-            const idx = parseInt(modal.dataset.filingIndex, 10);
-            if (isNaN(idx) || idx < 0) return;
+            const docId = modal.dataset.filingDocId;
+            if (!docId) return;
+            const idx = _filteredFilings.findIndex(f => f.doc_id === docId);
+            if (idx < 0) return;
             if (e.key === 'ArrowLeft' && idx > 0) {
                 openModal(_filteredFilings[idx - 1]);
             } else if (e.key === 'ArrowRight' && idx < _filteredFilings.length - 1) {
@@ -793,7 +817,7 @@ function handleNewTob(tob) {
     state.tobs.unshift(tob);
     renderTobPanel();
     // Play alert sound and show notification
-    if (state.soundEnabled) playAlert();
+    if (state.soundEnabled) playAlertSound();
     showToast(`TOB: ${tob.tob_type} — ${tob.filer_name || '(不明)'}`);
     if (state.notificationsEnabled && Notification.permission === 'granted') {
         new Notification('公開買付 検知', {
@@ -860,8 +884,9 @@ function handleNewFiling(filing) {
         return;
     }
 
-    // Add to top of list
+    // Add to top of list, cap to prevent unbounded growth
     state.filings.unshift(filing);
+    if (state.filings.length > 1000) state.filings.length = 1000;
 
     // Re-render
     renderFeed();
@@ -977,29 +1002,10 @@ function renderFeed() {
     } else if (mobile) {
         // Mobile: use dedicated mobile card layout
         container.innerHTML = filtered.map(f => createMobileFeedCard(f)).join('');
-
-        container.querySelectorAll('.m-card').forEach(card => {
-            card.addEventListener('click', (e) => {
-                if (e.target.closest('a')) return;
-                const docId = card.dataset.docId;
-                const filing = state.filings.find(f => f.doc_id === docId);
-                if (filing) openModal(filing);
-            });
-        });
     } else {
         container.innerHTML = filtered.map(f => createFeedCard(f)).join('');
-
-        // Add click handlers
-        container.querySelectorAll('.feed-card').forEach(card => {
-            card.addEventListener('click', (e) => {
-                // Don't open modal if clicking a link
-                if (e.target.closest('a')) return;
-                const docId = card.dataset.docId;
-                const filing = state.filings.find(f => f.doc_id === docId);
-                if (filing) openModal(filing);
-            });
-        });
     }
+    // Click handling is done via event delegation on #feed-list (see initEventListeners)
 
     renderSummary();
 }
@@ -1091,14 +1097,7 @@ function renderFeedTable(container, filings) {
     container.innerHTML = html;
 
     // Row click handler
-    container.querySelectorAll('.feed-table tbody tr').forEach(row => {
-        row.addEventListener('click', (e) => {
-            if (e.target.closest('a')) return;
-            const docId = row.dataset.docId;
-            const filing = state.filings.find(f => f.doc_id === docId);
-            if (filing) openModal(filing);
-        });
-    });
+    // Click handling is done via event delegation on #feed-list (see initEventListeners)
 }
 
 function createFeedCard(f) {
@@ -1638,6 +1637,11 @@ function closeConfirmDialog() {
     const dialog = document.getElementById('confirm-dialog');
     if (!dialog.classList.contains('hidden')) {
         dialog.classList.add('hidden');
+        // Clean up stale event listeners to prevent previous delete handlers from firing
+        const confirmBtn = document.getElementById('dialog-confirm');
+        const cancelBtn = document.getElementById('dialog-cancel');
+        if (confirmBtn) confirmBtn.replaceWith(confirmBtn.cloneNode(true));
+        if (cancelBtn) cancelBtn.replaceWith(cancelBtn.cloneNode(true));
     }
 }
 
@@ -2418,13 +2422,13 @@ function openModal(filing) {
     // Links
     const links = [];
     if (filing.pdf_url) {
-        links.push(`<a href="${filing.pdf_url}" target="_blank" rel="noopener">PDF ダウンロード</a>`);
+        links.push(`<a href="${escapeHtml(filing.pdf_url)}" target="_blank" rel="noopener">PDF ダウンロード</a>`);
     }
     if (filing.english_doc_flag && filing.edinet_url) {
-        links.push(`<a href="${filing.edinet_url}" target="_blank" rel="noopener">英文書類 (EDINET)</a>`);
+        links.push(`<a href="${escapeHtml(filing.edinet_url)}" target="_blank" rel="noopener">英文書類 (EDINET)</a>`);
     }
     if (filing.edinet_url) {
-        links.push(`<a href="${filing.edinet_url}" target="_blank" rel="noopener">EDINET で閲覧</a>`);
+        links.push(`<a href="${escapeHtml(filing.edinet_url)}" target="_blank" rel="noopener">EDINET で閲覧</a>`);
     }
     if (links.length > 0) {
         rows.push(['リンク', { html: `<span class="detail-value">${links.join(' | ')}</span>` }]);
@@ -2517,9 +2521,8 @@ function openModal(filing) {
         });
     }
 
-    // Store current filing index for keyboard navigation (uses filtered list)
-    const currentIndex = _filteredFilings.findIndex(f => f.doc_id === filing.doc_id);
-    document.getElementById('detail-modal').dataset.filingIndex = currentIndex;
+    // Store current filing doc_id for keyboard navigation (uses filtered list)
+    document.getElementById('detail-modal').dataset.filingDocId = filing.doc_id;
 
     // H5: Push history state for mobile back button support
     const modal = document.getElementById('detail-modal');
@@ -2541,6 +2544,8 @@ function closeModal() {
     currentModalDocId = null;
     const modal = document.getElementById('detail-modal');
     modal.classList.add('hidden');
+    // Clean up profile data to prevent memory leak
+    window._profileFilings = null;
     // L5: Restore focus
     if (_preFocusedElement) {
         _preFocusedElement.focus();
@@ -3088,6 +3093,14 @@ function syncMobilePanel(panelId) {
             html += statsGrid.outerHTML;
         }
 
+        // Clone market summary
+        const summaryContent = document.getElementById('summary-content');
+        if (summaryContent) {
+            html += '<div class="summary-section"><h3 class="section-title">SUMMARY</h3>';
+            html += summaryContent.outerHTML;
+            html += '</div>';
+        }
+
         // Clone top filers
         const topFilers = document.getElementById('top-filers-list');
         if (topFilers) {
@@ -3577,13 +3590,21 @@ async function autoFetchForDate(dateStr) {
 // ---------------------------------------------------------------------------
 
 
+let _analyticsAbort = null;
 async function loadAnalytics() {
-    const period = document.getElementById('rankings-period')?.value || '30d';
+    // Cancel previous in-flight analytics requests
+    if (_analyticsAbort) _analyticsAbort.abort();
+    _analyticsAbort = new AbortController();
+    const signal = _analyticsAbort.signal;
+
+    const period = document.getElementById('rankings-period')?.value
+        || document.getElementById('mobile-rankings-period')?.value
+        || '30d';
     try {
         const [rankingsResp, sectorsResp, movementsResp] = await Promise.all([
-            fetch(`/api/analytics/rankings?period=${period}`),
-            fetch('/api/analytics/sectors'),
-            fetch(`/api/analytics/movements?date=${state.selectedDate}`),
+            fetch(`/api/analytics/rankings?period=${period}`, { signal }),
+            fetch('/api/analytics/sectors', { signal }),
+            fetch(`/api/analytics/movements?date=${state.selectedDate}`, { signal }),
         ]);
         if (!rankingsResp.ok || !sectorsResp.ok || !movementsResp.ok) {
             throw new Error('Analytics API returned non-OK status');
@@ -3595,6 +3616,7 @@ async function loadAnalytics() {
         renderRankings(rankings, movements);
         renderSectors(sectors);
     } catch (e) {
+        if (e.name === 'AbortError') return; // cancelled by newer request
         console.warn('Analytics load failed:', e);
         // Clear loading indicators so user doesn't see perpetual "読み込み中..."
         for (const id of ['rankings-content', 'mobile-rankings-content']) {
@@ -3733,8 +3755,9 @@ function renderSectors(data) {
 // Utilities
 // ---------------------------------------------------------------------------
 
+const _escapeMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const _escapeRe = /[&<>"']/g;
 function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    if (str == null) return '';
+    return String(str).replace(_escapeRe, ch => _escapeMap[ch]);
 }

@@ -1,7 +1,7 @@
 """Tender offer (公開買付/TOB) API endpoints."""
 
 from fastapi import APIRouter, Query
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 
 from app.deps import get_async_session
 from app.models import TenderOffer
@@ -24,9 +24,8 @@ async def list_tender_offers(
         )
         items = [t.to_dict() for t in result.scalars().all()]
 
-        count_result = await session.execute(
-            select(TenderOffer.id)
-        )
-        total = len(count_result.all())
+        total = (await session.execute(
+            select(func.count(TenderOffer.id))
+        )).scalar()
 
     return {"items": items, "total": total}

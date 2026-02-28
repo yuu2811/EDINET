@@ -1,11 +1,14 @@
 """Manual poll trigger endpoint with rate limiting."""
 
 import asyncio
+import logging
 import time
 from datetime import date as date_type
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Poll"])
 
@@ -15,6 +18,13 @@ _poll_lock = asyncio.Lock()
 
 # Store references to background tasks so they are not garbage-collected mid-execution.
 _background_tasks: set[asyncio.Task] = set()
+
+
+def _on_poll_done(task: asyncio.Task) -> None:
+    """Log exceptions from background poll tasks and remove from tracking set."""
+    _background_tasks.discard(task)
+    if not task.cancelled() and task.exception():
+        logger.error("Background poll failed: %s", task.exception(), exc_info=task.exception())
 
 
 @router.post("/api/poll")
@@ -45,5 +55,5 @@ async def trigger_poll(
 
     task = asyncio.create_task(poll_edinet(target_date))
     _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    task.add_done_callback(_on_poll_done)
     return {"status": "poll_triggered", "date": str(target_date or date_type.today())}

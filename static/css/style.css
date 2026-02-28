@@ -67,6 +67,12 @@
     --radius-md: 6px;
     --radius-lg: 10px;
     --radius-xl: 16px;
+
+    /* Aliases (referenced by timeline charts, profile panels, etc.) */
+    --border: var(--border-primary);
+    --muted: var(--text-dim);
+    --accent-blue: var(--blue);
+    --font-size-base: var(--font-size-md);
 }
 
 /* Reset */
@@ -434,6 +440,10 @@ body {
     background: var(--bg-panel);
     display: flex;
     flex-direction: column;
+}
+
+.panel-collapsed > *:not(.panel-header) {
+    display: none;
 }
 
 .panel-header {
