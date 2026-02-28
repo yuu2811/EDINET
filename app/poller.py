@@ -102,13 +102,12 @@ class SSEBroadcaster:
         If a client's queue is full, the client is dropped with a warning.
         Events are also stored in a ring buffer for replay on reconnection.
         """
-        self._event_id += 1
         payload = json.dumps(data, cls=JsonEncoder, ensure_ascii=False)
-        message = f"id: {self._event_id}\nevent: {event}\ndata: {payload}\n\n"
-        # Store in ring buffer for replay
-        self._event_buffer.append((self._event_id, message))
         dead: list[int] = []
         async with self._lock:
+            self._event_id += 1
+            message = f"id: {self._event_id}\nevent: {event}\ndata: {payload}\n\n"
+            self._event_buffer.append((self._event_id, message))
             for client_id, (q, _connected_at) in self._clients.items():
                 try:
                     q.put_nowait(message)
