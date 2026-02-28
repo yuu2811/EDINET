@@ -264,7 +264,7 @@ function savePreferences() {
             soundEnabled: state.soundEnabled,
             notificationsEnabled: state.notificationsEnabled,
             viewMode: state.viewMode,
-            watchlistPanelOpen: !document.getElementById('watchlist-panel').classList.contains('panel-collapsed'),
+            watchlistPanelOpen: !(document.getElementById('watchlist-panel')?.classList.contains('panel-collapsed')),
         };
         localStorage.setItem(PREFS_PREFIX + 'preferences', JSON.stringify(prefs));
     } catch (e) {
@@ -1653,6 +1653,11 @@ function closeConfirmDialog() {
     const dialog = document.getElementById('confirm-dialog');
     if (!dialog.classList.contains('hidden')) {
         dialog.classList.add('hidden');
+        // Clean up stale event listeners to prevent previous delete handlers from firing
+        const confirmBtn = document.getElementById('dialog-confirm');
+        const cancelBtn = document.getElementById('dialog-cancel');
+        if (confirmBtn) confirmBtn.replaceWith(confirmBtn.cloneNode(true));
+        if (cancelBtn) cancelBtn.replaceWith(cancelBtn.cloneNode(true));
     }
 }
 
@@ -2433,13 +2438,13 @@ function openModal(filing) {
     // Links
     const links = [];
     if (filing.pdf_url) {
-        links.push(`<a href="${filing.pdf_url}" target="_blank" rel="noopener">PDF ダウンロード</a>`);
+        links.push(`<a href="${escapeHtml(filing.pdf_url)}" target="_blank" rel="noopener">PDF ダウンロード</a>`);
     }
     if (filing.english_doc_flag && filing.edinet_url) {
-        links.push(`<a href="${filing.edinet_url}" target="_blank" rel="noopener">英文書類 (EDINET)</a>`);
+        links.push(`<a href="${escapeHtml(filing.edinet_url)}" target="_blank" rel="noopener">英文書類 (EDINET)</a>`);
     }
     if (filing.edinet_url) {
-        links.push(`<a href="${filing.edinet_url}" target="_blank" rel="noopener">EDINET で閲覧</a>`);
+        links.push(`<a href="${escapeHtml(filing.edinet_url)}" target="_blank" rel="noopener">EDINET で閲覧</a>`);
     }
     if (links.length > 0) {
         rows.push(['リンク', { html: `<span class="detail-value">${links.join(' | ')}</span>` }]);
@@ -3757,8 +3762,9 @@ function renderSectors(data) {
 // Utilities
 // ---------------------------------------------------------------------------
 
+const _escapeMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const _escapeRe = /[&<>"']/g;
 function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    if (str == null) return '';
+    return String(str).replace(_escapeRe, ch => _escapeMap[ch]);
 }
