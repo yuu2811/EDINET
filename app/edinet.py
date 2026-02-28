@@ -830,9 +830,15 @@ class EdinetClient:
                 if not result["fund_source"]:
                     result["fund_source"] = clean_val
             elif _matches_joint_holder_name_pattern(local_name):
-                if not result.get("joint_holders"):
-                    result["joint_holders"] = []
-                result["joint_holders"].append({"name": clean_val})
+                # Accumulate as JSON string, consistent with _extract_inline_via_xml
+                existing = []
+                if result.get("joint_holders"):
+                    try:
+                        existing = json.loads(result["joint_holders"])
+                    except (TypeError, ValueError):
+                        existing = []
+                existing.append({"name": clean_val})
+                result["joint_holders"] = json.dumps(existing, ensure_ascii=False)
 
         return result
 
