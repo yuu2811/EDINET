@@ -423,7 +423,7 @@ async def _retry_xbrl_enrichment():
                 await session.rollback()
 
 
-async def _poll_company_info(target_date: date) -> None:
+async def _poll_company_info(target_date: date, all_docs: list | None = None) -> None:
     """Fetch 有報/四半期報告書 from EDINET and extract company fundamentals.
 
     Scans the daily document list for docTypeCodes 120/130/140 and
@@ -433,7 +433,8 @@ async def _poll_company_info(target_date: date) -> None:
     if not settings.EDINET_API_KEY:
         return
 
-    all_docs = await edinet_client.fetch_all_document_list(target_date)
+    if all_docs is None:
+        all_docs = await edinet_client.fetch_all_document_list(target_date)
     if not all_docs:
         return
 
@@ -557,7 +558,7 @@ async def _poll_company_info(target_date: date) -> None:
             logger.info("Updated %d company info records from EDINET", updated)
 
 
-async def _poll_tender_offers(target_date: date) -> None:
+async def _poll_tender_offers(target_date: date, all_docs: list | None = None) -> None:
     """Detect tender offer (公開買付/TOB) filings from EDINET.
 
     Scans the daily document list for docTypeCodes 240-300 (TOB-related)
@@ -567,7 +568,8 @@ async def _poll_tender_offers(target_date: date) -> None:
     if not settings.EDINET_API_KEY:
         return
 
-    all_docs = await edinet_client.fetch_all_document_list(target_date)
+    if all_docs is None:
+        all_docs = await edinet_client.fetch_all_document_list(target_date)
     if not all_docs:
         return
 
@@ -658,10 +660,12 @@ async def run_poller():
             await poll_edinet(today)
             # Also retry enrichment for previously failed XBRL parses
             await _retry_xbrl_enrichment()
+            # Fetch full document list once, shared by company info + TOB polling
+            shared_docs = await edinet_client.fetch_all_document_list(today) if settings.EDINET_API_KEY else []
             # Fetch company fundamentals from 有報/四半期報告書
-            await _poll_company_info(today)
+            await _poll_company_info(today, shared_docs)
             # Detect tender offer (TOB) filings
-            await _poll_tender_offers(today)
+            await _poll_tender_offers(today, shared_docs)
             # Clean up SSE clients that have been connected too long
             await broadcaster._cleanup_stale()
         except asyncio.CancelledError:

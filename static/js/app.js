@@ -441,6 +441,15 @@ function initPollCountdown() {
 }
 
 function initEventListeners() {
+    // Event delegation for feed cards/rows — single listener instead of per-card
+    document.getElementById('feed-list').addEventListener('click', (e) => {
+        if (e.target.closest('a')) return;
+        const card = e.target.closest('[data-doc-id]');
+        if (!card) return;
+        const filing = state.filings.find(f => f.doc_id === card.dataset.docId);
+        if (filing) openModal(filing);
+    });
+
     // Sound toggle
     document.getElementById('btn-sound').addEventListener('click', toggleSound);
 
@@ -875,8 +884,9 @@ function handleNewFiling(filing) {
         return;
     }
 
-    // Add to top of list
+    // Add to top of list, cap to prevent unbounded growth
     state.filings.unshift(filing);
+    if (state.filings.length > 1000) state.filings.length = 1000;
 
     // Re-render
     renderFeed();
@@ -992,29 +1002,10 @@ function renderFeed() {
     } else if (mobile) {
         // Mobile: use dedicated mobile card layout
         container.innerHTML = filtered.map(f => createMobileFeedCard(f)).join('');
-
-        container.querySelectorAll('.m-card').forEach(card => {
-            card.addEventListener('click', (e) => {
-                if (e.target.closest('a')) return;
-                const docId = card.dataset.docId;
-                const filing = state.filings.find(f => f.doc_id === docId);
-                if (filing) openModal(filing);
-            });
-        });
     } else {
         container.innerHTML = filtered.map(f => createFeedCard(f)).join('');
-
-        // Add click handlers
-        container.querySelectorAll('.feed-card').forEach(card => {
-            card.addEventListener('click', (e) => {
-                // Don't open modal if clicking a link
-                if (e.target.closest('a')) return;
-                const docId = card.dataset.docId;
-                const filing = state.filings.find(f => f.doc_id === docId);
-                if (filing) openModal(filing);
-            });
-        });
     }
+    // Click handling is done via event delegation on #feed-list (see initEventListeners)
 
     renderSummary();
 }
@@ -1106,14 +1097,7 @@ function renderFeedTable(container, filings) {
     container.innerHTML = html;
 
     // Row click handler
-    container.querySelectorAll('.feed-table tbody tr').forEach(row => {
-        row.addEventListener('click', (e) => {
-            if (e.target.closest('a')) return;
-            const docId = row.dataset.docId;
-            const filing = state.filings.find(f => f.doc_id === docId);
-            if (filing) openModal(filing);
-        });
-    });
+    // Click handling is done via event delegation on #feed-list (see initEventListeners)
 }
 
 function createFeedCard(f) {
@@ -2560,6 +2544,8 @@ function closeModal() {
     currentModalDocId = null;
     const modal = document.getElementById('detail-modal');
     modal.classList.add('hidden');
+    // Clean up profile data to prevent memory leak
+    window._profileFilings = null;
     // L5: Restore focus
     if (_preFocusedElement) {
         _preFocusedElement.focus();
@@ -3604,15 +3590,21 @@ async function autoFetchForDate(dateStr) {
 // ---------------------------------------------------------------------------
 
 
+let _analyticsAbort = null;
 async function loadAnalytics() {
+    // Cancel previous in-flight analytics requests
+    if (_analyticsAbort) _analyticsAbort.abort();
+    _analyticsAbort = new AbortController();
+    const signal = _analyticsAbort.signal;
+
     const period = document.getElementById('rankings-period')?.value
         || document.getElementById('mobile-rankings-period')?.value
         || '30d';
     try {
         const [rankingsResp, sectorsResp, movementsResp] = await Promise.all([
-            fetch(`/api/analytics/rankings?period=${period}`),
-            fetch('/api/analytics/sectors'),
-            fetch(`/api/analytics/movements?date=${state.selectedDate}`),
+            fetch(`/api/analytics/rankings?period=${period}`, { signal }),
+            fetch('/api/analytics/sectors', { signal }),
+            fetch(`/api/analytics/movements?date=${state.selectedDate}`, { signal }),
         ]);
         if (!rankingsResp.ok || !sectorsResp.ok || !movementsResp.ok) {
             throw new Error('Analytics API returned non-OK status');
@@ -3624,6 +3616,7 @@ async function loadAnalytics() {
         renderRankings(rankings, movements);
         renderSectors(sectors);
     } catch (e) {
+        if (e.name === 'AbortError') return; // cancelled by newer request
         console.warn('Analytics load failed:', e);
         // Clear loading indicators so user doesn't see perpetual "読み込み中..."
         for (const id of ['rankings-content', 'mobile-rankings-content']) {
