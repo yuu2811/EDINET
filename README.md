@@ -48,23 +48,31 @@ EDINETから大量保有報告書・変更報告書をリアルタイムに検�
 - **提出数バッジ**: ヘッダーに当日の提出数をバッジ表示
 
 ### データ分析
-- **XBRL自動解析**: EDINET の XBRL データから保有割合・前回保有割合・保有者名・対象会社名・証券コード・保有株数・保有目的を自動抽出
+- **XBRL自動解析**: EDINET の XBRL データから保有割合・前回保有割合・保有者名・対象会社名・証券コード・保有株数・保有目的・**共同保有者**・**取得資金内訳**を自動抽出
 - **保有割合変動の自動計算**: 前回比の変動幅を算出し、増加(緑)/減少(赤)を色分け表示
 - **報告書分類**: 新規報告(350)/訂正報告(360)/特例対象の自動判定
 - **マーケットサマリー**: 当日の増加/減少件数、平均変動幅、最大変動銘柄を自動集計・表示
 - **株価・時価総額表示**: 6つの無料データソース（stooq / Yahoo Finance / Google Finance / Kabutan）から株価・時価総額・PBR・PER・配当利回り・52週レンジ・出来高を取得。詳細モーダルに52週チャート付き
 - **金融庁データ優先**: 企業名は Filing DB > EDINET コードリスト > 外部API > ハードコードの優先順位。発行済株式数は有報(120)/四半期(140)から取得し、最も正確な時価総額を算出
+- **業種分類**: EDINET コードリスト CSV から金融庁公式業種を取得し、CompanyInfo に保存。セクター分析で優先使用
 - **PDF プロキシ**: EDINET API v2 の Subscription-Key をブラウザに露出させず、サーバー側プロキシ経由で PDF を配信
 - **doc_description からの企業名抽出**: XBRL未解析時でも `変更報告書（トヨタ自動車株式）` から対象企業名を自動抽出
-- **XBRL再解析リトライ**: 未解析のfilingをローテーション方式で最大5件並行リトライ（30秒バッチタイムアウト付き）
+- **XBRL再解析リトライ**: 未解析のfilingをローテーション方式で最大5件並行リトライ（30秒バッチタイムアウト付き、asyncio.Lock で排他制御）
 - **保有割合の精度**: XBRL で decimal/percentage 形式を自動判定。Abstract/個別保有者の要素を除外し、Total（合計）保有割合のみを取得
+- **データバウンドチェック**: 企業基本情報の発行済株式数・純資産に範囲チェックを実施し、異常値を拒否
+
+### 公開買付 (TOB) 検出
+- **TOB自動検出**: EDINET の docTypeCode 240-300（公開買付届出・訂正・撤回・報告・意見表明）を自動検出
+- **TOBパネル**: サイドバーにTOBフィリング一覧をリアルタイム表示（タイプ別色分けバッジ付き）
+- **TOBクロスリファレンス**: 提出者/企業プロファイルで関連するTOBフィリングを自動表示
 
 ### アナリティクス
-- **提出者プロフィール**: 任意のEDINETコードで提出者の全履歴・対象企業一覧・活動サマリーを表示
-- **対象企業プロフィール**: 証券コードで全大量保有報告・主要保有者・保有履歴チャートデータを表示
+- **提出者プロフィール**: 任意のEDINETコードで提出者の全履歴・対象企業一覧・活動サマリーを表示。**保有割合推移チャート**（SVG）・**関連TOBクロスリファレンス**・全報告書一覧（ページネーション対応）付き
+- **対象企業プロフィール**: 証券コードで全大量保有報告・主要保有者を表示。**保有者別マルチラインチャート**（色分け凡例付き）・**企業基本情報パネル**（業種・発行済株式数・純資産・BPS）・**関連TOB**・全報告書一覧付き
+- **過去の提出履歴自動追跡**: 提出者または対象企業を選択すると、当日だけでなく全期間の提出履歴を自動的に取得・表示
 - **アクティビティランキング**: 7日/30日/90日/全期間で活発な提出者・注目銘柄・最大増減をランク表示
 - **マーケットムーブメント**: 日次の買い/売り方向性分析・セクター別集計・注目変動銘柄
-- **セクター分類**: TSE業種コード（33業種）に基づく自動分類・セクター別の件数/社数/平均保有割合
+- **セクター分類**: 金融庁公式業種分類を優先使用（CompanyInfo LEFT JOIN）、フォールバックでTSE業種コード（33業種）マッピング
 
 ### 日付ナビゲーション
 - **日付ピッカー**: カレンダーUIで任意の日付を選択
@@ -91,9 +99,12 @@ EDINETから大量保有報告書・変更報告書をリアルタイムに検�
 - **カード背景グラデーション**: 保有割合が増加した報告書は緑グラデーション、減少は赤グラデーションでカード全体を着色
 - **変動ピル**: 保有割合の変動幅を +/- 付きの色分けバッジで表示
 - **保有割合バー**: 視覚的なプログレスバーで保有割合を直感的に表示
-- **詳細モーダル**: 報告書の全フィールドを表示、EDINET原本・PDFへのリンク、保有割合ゲージ（前回比の視覚的比較）
+- **詳細モーダル**: 報告書の全フィールドを表示、EDINET原本・PDFへのリンク、保有割合ゲージ（前回比の視覚的比較）、**共同保有者一覧**・**取得資金内訳**表示
 - **キーボードナビゲーション**: モーダル表示中に左右矢印キーで前後の報告書を閲覧
 - **マーケットサマリーパネル**: 増加/減少件数、平均変動、最大変動銘柄をサイドバーに表示
+- **TOBパネル**: サイドバーに公開買付関連フィリングをリアルタイム表示（タイプ別色分けバッジ）
+- **SSE再接続バナー**: サーバー接続が切断された際にアニメーション付きバナーを表示し、再接続で自動非表示
+- **プロファイルチャート**: 提出者/企業プロファイルに保有割合推移の SVG チャート（企業プロファイルでは保有者別マルチライン表示・色分け凡例付き）
 - **モバイル専用UI**: ヘッダー/ティッカー/サイドバーを非表示にし、専用の3行カードレイアウトで表示。保有割合・時価総額・PBR を一覧で確認可能
 - **レスポンシブ対応**: PC（テーブル/カード表示）とモバイル（専用カード表示）を完全分離設計
 - **PWA対応**: manifest.json によるホーム画面への追加対応
@@ -102,7 +113,7 @@ EDINETから大量保有報告書・変更報告書をリアルタイムに検�
 
 ### 前提条件
 
-- Python 3.11 以上
+- Python 3.12 以上
 - EDINET API の Subscription Key
 
 ### 1. EDINET APIキーの取得
@@ -176,6 +187,7 @@ Server-Sent Events ストリーム。接続すると以下のイベントが配�
 |------------|---------------|-----------|
 | `connected` | 接続直後 | `{"status": "connected"}` |
 | `new_filing` | 新規報告書検出時 | Filing オブジェクト（後述） |
+| `new_tob` | 新規TOBフィリング検出時 | TenderOffer オブジェクト |
 | `stats_update` | ポーリング完了時（新着あり） | `{"new_count": N, "date": "YYYY-MM-DD"}` |
 | `: keepalive` | 30秒間イベントがない場合 | (コメント行、データなし) |
 
@@ -224,6 +236,8 @@ Server-Sent Events ストリーム。接続すると以下のイベントが配�
       "target_sec_code": "77770",
       "shares_held": 5000000,
       "purpose_of_holding": "純投資",
+      "joint_holders": "[{\"name\": \"共同保有者A\", \"ratio\": 2.5}]",
+      "fund_source": "自己資金",
       "submit_date_time": "2026-02-18 09:15",
       "period_start": null,
       "period_end": null,
@@ -378,11 +392,25 @@ Server-Sent Events ストリーム。接続すると以下のイベントが配�
 
 #### `GET /api/analytics/filer/{edinet_code}`
 
-提出者の全履歴・対象企業一覧・活動サマリーを取得。
+提出者の全履歴・対象企業一覧・活動サマリーを取得。`limit`/`offset` でページネーション対応。
+
+**レスポンスに含まれるフィールド:**
+- `summary`: 提出件数・対象企業数・平均保有割合・初回/最終提出日
+- `targets`: 対象企業一覧（保有割合推移の `history` 配列付き）
+- `recent_filings`: 全報告書（Filing オブジェクト配列）
+- `timeline`: チャート描画用の時系列データ（古い順、保有割合・変動・提出者情報）
+- `related_tobs`: 対象企業に関連する公開買付フィリング
 
 #### `GET /api/analytics/company/{sec_code}`
 
-特定の証券コードに対する全大量保有報告・主要保有者・保有履歴を取得。4桁/5桁コード対応。
+特定の証券コードに対する全大量保有報告・主要保有者を取得。4桁/5桁コード対応。
+
+**レスポンスに含まれるフィールド:**
+- `holders`: 大量保有者一覧（保有割合推移の `history` 配列付き）
+- `recent_filings`: 全報告書
+- `timeline`: チャート描画用の時系列データ（保有者別にグループ化してマルチラインチャート描画可能）
+- `related_tobs`: 関連する公開買付フィリング
+- `company_info`: 企業基本情報（業種・発行済株式数・純資産・BPS・決算期末）
 
 #### `GET /api/analytics/rankings?period=30d`
 
@@ -394,7 +422,34 @@ Server-Sent Events ストリーム。接続すると以下のイベントが配�
 
 #### `GET /api/analytics/sectors`
 
-TSE業種コードに基づくセクター別の件数・社数・平均保有割合の集計を返します。
+金融庁公式業種分類を優先使用したセクター別の件数・社数・平均保有割合の集計を返します。
+
+### 公開買付 (TOB)
+
+#### `GET /api/tob`
+
+公開買付関連フィリングの一覧を取得。`limit`(1-200, default: 50) / `offset` でページネーション対応。
+
+**レスポンス:**
+
+```json
+{
+  "items": [
+    {
+      "doc_id": "S100TOB1",
+      "edinet_code": "E88888",
+      "filer_name": "買収者株式会社",
+      "doc_type_code": "240",
+      "doc_description": "公開買付届出書（ターゲット株式会社）",
+      "target_company_name": "ターゲット株式会社",
+      "target_sec_code": "72030",
+      "tob_type": "公開買付届出",
+      "submit_date_time": "2026-02-18 11:00"
+    }
+  ],
+  "total": 1
+}
+```
 
 ### 手動ポーリング
 
@@ -435,6 +490,8 @@ EDINET から取得した XBRL ZIP ファイルを解析し、大量保有報告
 | `target_sec_code` | 対象証券コード | `SecurityCodeOfIssuer`, `IssuerSecuritiesCode`, `SecurityCode` |
 | `shares_held` | 保有株式数 | `TotalNumberOfShareCertificatesEtcHeld`, `TotalNumberOfSharesHeld`, `NumberOfShareCertificatesEtc` |
 | `purpose_of_holding` | 保有目的 | `PurposeOfHolding`, `PurposeOfHoldingOfShareCertificatesEtc` |
+| `joint_holders` | 共同保有者 (JSON) | `JointHolder` 系要素（名前 + 保有割合のペア） |
+| `fund_source` | 取得資金の内訳 | `FundsForAcquisition`, `SourceOfFunds` 系要素 |
 
 ### 解析フロー
 
@@ -450,14 +507,16 @@ EDINET から取得した XBRL ZIP ファイルを解析し、大量保有報告
 1. **起動時**: アプリケーション lifespan で `asyncio.create_task(run_poller())` として起動
 2. **ポーリング**: `POLL_INTERVAL` 秒ごとに EDINET API v2 の `/documents.json` を呼び出し
 3. **フィルタリング**: `docTypeCode` が `350`（大量保有報告書/変更報告書）または `360`（訂正報告書）の書類のみ抽出
-4. **重複排除**: `doc_id` の一意制約で既存報告書をスキップ
+4. **重複排除**: `doc_id` の一意制約で既存報告書をスキップ（バッチクエリで効率化）
 5. **Document list enrichment**: `secCode`（発行体＝対象企業の証券コード）を `target_sec_code` にコピー。`doc_description` から対象企業名を正規表現で抽出
-6. **XBRL enrichment**: `xbrl_flag=true` の場合、XBRL をダウンロード・解析して保有割合・保有目的等を付与
-7. **XBRL再解析リトライ**: `xbrl_parsed=false` のfilingをローテーションオフセット方式で毎ポーリング時に最大5件並行リトライ。バッチ全体に30秒/個別に10秒のタイムアウトを設定し、ポーリング間隔の肥大化を防止。永続的に失敗するfilingが新しいfilingのリトライを阻害しないようオフセットを毎サイクル進行
-8. **リトライ**: EDINET API 呼び出し失敗時は指数バックオフ（2秒→4秒→最大30秒）で最大3回リトライ
-9. **エラーハンドリング**: 個別の報告書ごとに try/except で処理。失敗時は `session.rollback()` して次へ
-10. **SSE配信**: 新規報告書ごとに `new_filing` イベントを配信。ポーリング完了時に `stats_update` を配信
-11. **シャットダウン**: `CancelledError` を捕捉して正常終了
+6. **XBRL enrichment**: `xbrl_flag=true` の場合、XBRL をダウンロード・解析して保有割合・保有目的・**共同保有者・取得資金**を付与
+7. **XBRL再解析リトライ**: `xbrl_parsed=false` のfilingをローテーションオフセット方式で毎ポーリング時に最大5件並行リトライ。バッチ全体に30秒/個別に10秒のタイムアウトを設定し、ポーリング間隔の肥大化を防止。永続的に失敗するfilingが新しいfilingのリトライを阻害しないようオフセットを毎サイクル進行。`asyncio.Lock` で排他制御
+8. **企業基本情報取得**: 有報(120)/四半期(140)からXBRLをダウンロードし、発行済株式数・純資産を抽出してCompanyInfoに保存。データバウンドチェック（shares <= 100B, net_assets <= 100T）で異常値拒否
+9. **TOB検出**: docTypeCode 240-300（公開買付届出・訂正・撤回・報告・意見表明）を検出し、TenderOfferモデルに保存。SSE `new_tob` イベントでリアルタイム通知
+10. **リトライ**: EDINET API 呼び出し失敗時は指数バックオフ（2秒→4秒→最大30秒）で最大3回リトライ
+11. **エラーハンドリング**: 個別の報告書ごとに try/except で処理。失敗時は `session.rollback()` して次へ。コミットに30秒タイムアウトを設定
+12. **SSE配信**: 新規報告書ごとに `new_filing` イベント、新規TOBごとに `new_tob` イベントを配信。ポーリング完了時に `stats_update` を配信
+13. **シャットダウン**: `CancelledError` を捕捉して正常終了
 
 ## プロジェクト構造
 
@@ -471,18 +530,19 @@ EDINET/
 │   ├── errors.py            # グローバルエラーハンドラ登録
 │   ├── logging_config.py    # ロギング設定
 │   ├── main.py              # FastAPI アプリ (REST API + SSE + lifespan)
-│   ├── models.py            # Filing / CompanyInfo / Watchlist ORM モデル
+│   ├── models.py            # Filing / CompanyInfo / TenderOffer / Watchlist ORM モデル
 │   ├── schemas.py           # Pydantic スキーマ
 │   ├── poller.py            # バックグラウンドポーラー + SSEBroadcaster + XBRLリトライ
 │   └── routers/
 │       ├── __init__.py
-│       ├── analytics.py     # アナリティクス API（提出者/企業/ランキング/セクター）
+│       ├── analytics.py     # アナリティクス API（プロファイル/ランキング/セクター/タイムライン/TOBクロスリファレンス）
 │       ├── filings.py       # 報告書一覧・詳細 API + PDF プロキシ
 │       ├── poll.py          # 手動ポーリング API（日付指定対応）
-│       ├── stats.py         # 統計情報 API（日付指定対応）
+│       ├── stats.py         # 統計情報 API（日付指定対応、5秒TTLキャッシュ）
 │       ├── stock.py         # 株価API（stooq/Google Finance/Yahoo/Kabutan/フォールバック）
-│       │                    #   PER・配当利回り・52週レンジ・出来高も取得
-│       ├── stream.py        # SSE ストリーム
+│       │                    #   PER・配当利回り・52週レンジ・出来高・業種分類も取得
+│       ├── stream.py        # SSE ストリーム（Last-Event-ID リプレイ対応）
+│       ├── tob.py           # 公開買付 (TOB) 一覧 API
 │       └── watchlist.py     # ウォッチリスト CRUD API
 ├── static/
 │   ├── index.html           # ダッシュボード HTML
@@ -495,10 +555,11 @@ EDINET/
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py          # テストフィクスチャ・モックデータ
-│   ├── test_api.py          # REST API エンドポイントテスト (18件)
-│   ├── test_edinet.py       # EDINET クライアント・XBRL パーステスト (11件)
-│   ├── test_models.py       # ORM モデルテスト (9件)
-│   └── test_poller.py       # ポーラー・SSEブロードキャスターテスト (9件)
+│   ├── test_api.py          # REST API エンドポイントテスト (52件)
+│   ├── test_edinet.py       # EDINET クライアント・XBRL パーステスト (26件)
+│   ├── test_models.py       # ORM モデルテスト (17件)
+│   ├── test_poller.py       # ポーラー・SSEブロードキャスターテスト (21件)
+│   └── test_stock.py        # 株価キャッシュ・パーサーテスト (21件)
 ├── .env.example             # 環境変数テンプレート
 ├── .gitignore
 ├── Dockerfile               # Docker ビルド定義
@@ -514,7 +575,7 @@ EDINET/
 # テスト用依存パッケージのインストール
 pip install pytest pytest-asyncio
 
-# 全テスト実行 (101件)
+# 全テスト実行 (164件)
 pytest
 
 # 詳細出力
@@ -533,7 +594,7 @@ pytest tests/test_poller.py
 
 | カテゴリ | 技術 |
 |---------|------|
-| Backend | Python 3.11+ / FastAPI 0.115 / SQLAlchemy 2.0 (async) |
+| Backend | Python 3.12+ / FastAPI 0.115 / SQLAlchemy 2.0 (async) |
 | HTTP Client | httpx (async) |
 | Database | SQLite (aiosqlite) |
 | Real-time | Server-Sent Events (SSE) |
@@ -563,6 +624,18 @@ pytest tests/test_poller.py
 | `120` | 有価証券報告書 | 発行済株式数・純資産の取得 |
 | `130` | 訂正有価証券報告書 | 同上（訂正版） |
 | `140` | 四半期報告書 | 同上（四半期更新） |
+
+### 使用する docTypeCode（公開買付 TOB）
+
+| コード | 種別 |
+|--------|------|
+| `240` | 公開買付届出書 |
+| `250` | 訂正公開買付届出書 |
+| `260` | 公開買付撤回届出書 |
+| `270` | 公開買付報告書 |
+| `280` | 訂正公開買付報告書 |
+| `290` | 意見表明報告書 |
+| `300` | 訂正意見表明報告書 |
 
 ### EDINET API v2 エンドポイント
 
