@@ -481,6 +481,7 @@ function initEventListeners() {
     document.getElementById('feed-sort').addEventListener('change', (e) => {
         state.sortMode = e.target.value;
         renderFeed();
+        savePreferences();
     });
 
     // View toggle (cards / table)
@@ -793,7 +794,7 @@ function handleNewTob(tob) {
     state.tobs.unshift(tob);
     renderTobPanel();
     // Play alert sound and show notification
-    if (state.soundEnabled) playAlert();
+    if (state.soundEnabled) playAlertSound();
     showToast(`TOB: ${tob.tob_type} — ${tob.filer_name || '(不明)'}`);
     if (state.notificationsEnabled && Notification.permission === 'granted') {
         new Notification('公開買付 検知', {

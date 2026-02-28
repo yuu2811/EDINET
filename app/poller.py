@@ -629,7 +629,7 @@ async def _poll_tender_offers(target_date: date) -> None:
             new_count += 1
 
             # Broadcast SSE event for real-time notification
-            await broadcaster.broadcast(tob.to_dict(), event_type="new_tob")
+            await broadcaster.broadcast("new_tob", tob.to_dict())
 
         if new_count > 0:
             try:
