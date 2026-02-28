@@ -333,25 +333,24 @@ class EdinetClient:
                 # --- Try 2: inline XBRL (.htm / .xhtml) ---
                 if htm_files:
                     logger.debug("Trying inline XBRL from %d .htm files", len(htm_files))
+                    # Parse all htm files once (avoid redundant reads)
+                    partial_results = []
                     for htm_file in htm_files:
                         htm_content = zf.read(htm_file)
                         inline_result = self._extract_from_inline_xbrl(htm_content)
                         if inline_result["holding_ratio"] is not None:
                             logger.debug("Extracted data from inline XBRL: %s", htm_file)
                             return inline_result
-                    # Use best result from inline parsing (might have partial data)
-                    if htm_files:
-                        # Merge results: take first non-None value from any .htm file
-                        merged = dict(result)
-                        for htm_file in htm_files:
-                            htm_content = zf.read(htm_file)
-                            partial = self._extract_from_inline_xbrl(htm_content)
-                            for key in merged:
-                                if merged[key] is None and partial[key] is not None:
-                                    merged[key] = partial[key]
-                        if any(v is not None for v in merged.values()):
-                            logger.debug("Merged partial inline XBRL data from %d files", len(htm_files))
-                            return merged
+                        partial_results.append(inline_result)
+                    # Merge partial results: take first non-None value from any file
+                    merged = dict(result)
+                    for partial in partial_results:
+                        for key in merged:
+                            if merged[key] is None and partial.get(key) is not None:
+                                merged[key] = partial[key]
+                    if any(v is not None for v in merged.values()):
+                        logger.debug("Merged partial inline XBRL data from %d files", len(htm_files))
+                        return merged
 
                 if not xbrl_files and not htm_files:
                     logger.warning(
@@ -827,6 +826,13 @@ class EdinetClient:
             elif _matches_purpose_pattern(local_name):
                 if not result["purpose_of_holding"]:
                     result["purpose_of_holding"] = clean_val
+            elif _matches_fund_source_pattern(local_name):
+                if not result["fund_source"]:
+                    result["fund_source"] = clean_val
+            elif _matches_joint_holder_name_pattern(local_name):
+                if not result.get("joint_holders"):
+                    result["joint_holders"] = []
+                result["joint_holders"].append({"name": clean_val})
 
         return result
 
@@ -1190,8 +1196,8 @@ def _parse_ix_number(elem, text: str) -> float | None:
     if scale:
         try:
             val *= 10 ** int(scale)
-        except ValueError:
-            pass
+        except (ValueError, TypeError):
+            logger.warning("Invalid scale attribute '%s' on element %s", scale, elem.tag)
 
     # Apply sign
     sign = elem.get("sign", "")
