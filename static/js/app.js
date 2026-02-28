@@ -308,6 +308,8 @@ function loadPreferences() {
             state.soundEnabled = prefs.soundEnabled;
             updateToggleBtn(document.getElementById('btn-sound'), state.soundEnabled,
                 'サウンド ON', 'サウンド OFF', 'サウンドアラート: 有効', 'サウンドアラート: 無効');
+            const msb = document.getElementById('mobile-btn-sound');
+            if (msb) { msb.classList.toggle('active', state.soundEnabled); msb.textContent = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF'; }
         }
 
         // Restore notification preference
@@ -315,6 +317,8 @@ function loadPreferences() {
             state.notificationsEnabled = prefs.notificationsEnabled;
             updateToggleBtn(document.getElementById('btn-notify'), state.notificationsEnabled,
                 '通知 ON', '通知 OFF', 'デスクトップ通知: 有効', 'デスクトップ通知: 無効');
+            const mnb = document.getElementById('mobile-btn-notify');
+            if (mnb) { mnb.classList.toggle('active', state.notificationsEnabled); mnb.textContent = state.notificationsEnabled ? '通知 ON' : '通知 OFF'; }
         }
 
         // Restore view mode
@@ -524,10 +528,18 @@ function initEventListeners() {
         if (e.key === 'Enter') saveWatchItem();
     });
 
-    // Rankings period selector
-    const rankingsPeriod = document.getElementById('rankings-period');
-    if (rankingsPeriod) {
-        rankingsPeriod.addEventListener('change', () => loadAnalytics());
+    // Rankings period selector (desktop + mobile sync)
+    for (const id of ['rankings-period', 'mobile-rankings-period']) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', () => {
+                // Sync the other selector
+                const otherId = id === 'rankings-period' ? 'mobile-rankings-period' : 'rankings-period';
+                const other = document.getElementById(otherId);
+                if (other) other.value = el.value;
+                loadAnalytics();
+            });
+        }
     }
 
     // Modal close
@@ -556,8 +568,10 @@ function initEventListeners() {
                     }
                 }
             }
-            const idx = parseInt(modal.dataset.filingIndex, 10);
-            if (isNaN(idx) || idx < 0) return;
+            const docId = modal.dataset.filingDocId;
+            if (!docId) return;
+            const idx = _filteredFilings.findIndex(f => f.doc_id === docId);
+            if (idx < 0) return;
             if (e.key === 'ArrowLeft' && idx > 0) {
                 openModal(_filteredFilings[idx - 1]);
             } else if (e.key === 'ArrowRight' && idx < _filteredFilings.length - 1) {
@@ -2518,9 +2532,8 @@ function openModal(filing) {
         });
     }
 
-    // Store current filing index for keyboard navigation (uses filtered list)
-    const currentIndex = _filteredFilings.findIndex(f => f.doc_id === filing.doc_id);
-    document.getElementById('detail-modal').dataset.filingIndex = currentIndex;
+    // Store current filing doc_id for keyboard navigation (uses filtered list)
+    document.getElementById('detail-modal').dataset.filingDocId = filing.doc_id;
 
     // H5: Push history state for mobile back button support
     const modal = document.getElementById('detail-modal');
@@ -3089,6 +3102,14 @@ function syncMobilePanel(panelId) {
             html += statsGrid.outerHTML;
         }
 
+        // Clone market summary
+        const summaryContent = document.getElementById('summary-content');
+        if (summaryContent) {
+            html += '<div class="summary-section"><h3 class="section-title">SUMMARY</h3>';
+            html += summaryContent.outerHTML;
+            html += '</div>';
+        }
+
         // Clone top filers
         const topFilers = document.getElementById('top-filers-list');
         if (topFilers) {
@@ -3579,7 +3600,9 @@ async function autoFetchForDate(dateStr) {
 
 
 async function loadAnalytics() {
-    const period = document.getElementById('rankings-period')?.value || '30d';
+    const period = document.getElementById('rankings-period')?.value
+        || document.getElementById('mobile-rankings-period')?.value
+        || '30d';
     try {
         const [rankingsResp, sectorsResp, movementsResp] = await Promise.all([
             fetch(`/api/analytics/rankings?period=${period}`),

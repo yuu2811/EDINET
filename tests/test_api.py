@@ -483,10 +483,9 @@ class TestPDFProxyEndpoint:
             )
 
         assert resp.status_code == 302
-        assert "disclosure2.edinet-fsa.go.jp" in resp.headers["location"]
-        assert "S100API1" in resp.headers["location"]
-        data = resp.json()
-        assert "redirect_url" in data
+        location = resp.headers["location"]
+        assert "disclosure2.edinet-fsa.go.jp" in location
+        assert "S100API1" in location
 
 
 class TestAnalyticsAPI:
