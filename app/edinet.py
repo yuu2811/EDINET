@@ -576,11 +576,16 @@ class EdinetClient:
             "//*[contains(local-name(), 'JointHolder') and "
             "(contains(local-name(), 'Ratio') or contains(local-name(), 'HoldingRatio'))]"
         )
-        for i, elem in enumerate(ratio_elements):
+        ratio_idx = 0
+        for elem in ratio_elements:
+            local = elem.xpath("local-name()")
+            if "Abstract" in local:
+                continue
             try:
                 val = _normalize_ratio(float(elem.text.strip()))
-                if i < len(holders):
-                    holders[i]["ratio"] = val
+                if ratio_idx < len(holders):
+                    holders[ratio_idx]["ratio"] = val
+                ratio_idx += 1
             except (ValueError, AttributeError):
                 continue
 
@@ -682,7 +687,11 @@ class EdinetClient:
                 try:
                     val = _parse_ix_number(elem, text)
                     if val is not None:
-                        val = _normalize_ratio(val)
+                        # Skip _normalize_ratio when % is in the original text:
+                        # the value is already a percentage and should not be
+                        # re-interpreted as a decimal fraction.
+                        if "%" not in text and "％" not in text:
+                            val = _normalize_ratio(val)
                         if _is_previous_ratio(local_name, context_ref):
                             if result["previous_holding_ratio"] is None:
                                 result["previous_holding_ratio"] = val
@@ -726,7 +735,9 @@ class EdinetClient:
                 try:
                     val = _parse_ix_number(elem, text)
                     if val is not None:
-                        _inline_jh_ratios.append(_normalize_ratio(val))
+                        if "%" not in text and "％" not in text:
+                            val = _normalize_ratio(val)
+                        _inline_jh_ratios.append(val)
                 except (ValueError, AttributeError):
                     pass
 
@@ -837,7 +848,9 @@ class EdinetClient:
             return
 
         if _matches_ratio_pattern(local_name):
-            val = _normalize_ratio(val)
+            # Skip normalization when % was in the original text
+            if "%" not in clean_val and "％" not in clean_val:
+                val = _normalize_ratio(val)
             if _is_previous_ratio(local_name, ctx):
                 if result["previous_holding_ratio"] is None:
                     result["previous_holding_ratio"] = val

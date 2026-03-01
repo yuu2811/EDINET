@@ -173,11 +173,7 @@ async def batch_retry_xbrl() -> dict:
                 select(Filing)
                 .where(
                     Filing.xbrl_flag.is_(True),
-                    or_(
-                        Filing.xbrl_parsed.is_(False),
-                        Filing.holding_ratio.is_(None),
-                        Filing.previous_holding_ratio.is_(None),
-                    ),
+                    Filing.xbrl_parsed.is_(False),
                 )
                 .order_by(desc(Filing.id))
                 .limit(50)
@@ -200,6 +196,8 @@ async def batch_retry_xbrl() -> dict:
                     data = edinet_client.parse_xbrl_for_holding_data(zip_content)
                     if _apply_xbrl_data(filing, data):
                         enriched += 1
+                    # Always mark as parsed to prevent infinite retries
+                    filing.xbrl_parsed = True
                     processed += 1
                 except Exception as exc:
                     logger.warning("XBRL retry failed for %s: %s", filing.doc_id, exc)

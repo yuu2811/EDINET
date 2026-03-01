@@ -192,8 +192,20 @@ def _apply_pre_enrichment(filing: Filing) -> None:
             filing.target_company_name = m.group(1)
 
 
+_poll_lock = asyncio.Lock()
+
+
 async def poll_edinet(target_date=None):
     """Poll EDINET for new large shareholding filings."""
+    if _poll_lock.locked():
+        logger.info("poll_edinet already running, skipping")
+        return
+    async with _poll_lock:
+        await _poll_edinet_impl(target_date)
+
+
+async def _poll_edinet_impl(target_date=None):
+    """Inner implementation — always called under _poll_lock."""
     today = target_date or datetime.now(JST).date()
 
     logger.info("Polling EDINET for date %s...", today)
@@ -506,7 +518,7 @@ async def _poll_company_info(target_date: date, all_docs: list | None = None) ->
                     continue
 
                 info = edinet_client.parse_xbrl_for_company_info(zip_content)
-                if not info.get("shares_outstanding") and not info.get("net_assets"):
+                if info.get("shares_outstanding") is None and info.get("net_assets") is None:
                     continue
 
                 # Sanity check: reject wildly out-of-range values that
@@ -527,7 +539,7 @@ async def _poll_company_info(target_date: date, all_docs: list | None = None) ->
                         _net, doc_id,
                     )
                     info["net_assets"] = None
-                if not info.get("shares_outstanding") and not info.get("net_assets"):
+                if info.get("shares_outstanding") is None and info.get("net_assets") is None:
                     continue
 
                 # Normalise sec_code to 4 digits
@@ -563,7 +575,7 @@ async def _poll_company_info(target_date: date, all_docs: list | None = None) ->
                     company.source_doc_type = doc.get("docTypeCode")
                     company.period_end = doc.get("periodEnd")
 
-                updated += 1
+                    updated += 1
 
                 logger.info(
                     "CompanyInfo updated: %s %s (shares=%s, net_assets=%s)",
@@ -619,6 +631,7 @@ async def _poll_tender_offers(target_date: date, all_docs: list | None = None) -
         existing_ids = await _get_existing_ids(session, TenderOffer.doc_id, doc_ids)
 
         new_count = 0
+        new_tobs: list[TenderOffer] = []
         for doc in tob_docs:
             doc_id = doc.get("docID")
             if not doc_id or doc_id in existing_ids:
@@ -650,6 +663,7 @@ async def _poll_tender_offers(target_date: date, all_docs: list | None = None) -
                 xbrl_flag=doc.get("xbrlFlag") == "1",
             )
             session.add(tob)
+            new_tobs.append(tob)
             new_count += 1
 
         if new_count > 0:
@@ -658,15 +672,8 @@ async def _poll_tender_offers(target_date: date, all_docs: list | None = None) -
             logger.info("Stored %d new TOB filings", new_count)
 
             # Broadcast SSE events after successful commit
-            for doc in tob_docs:
-                doc_id = doc.get("docID")
-                if doc_id and doc_id not in existing_ids:
-                    result = await session.execute(
-                        select(TenderOffer).where(TenderOffer.doc_id == doc_id)
-                    )
-                    tob_obj = result.scalar_one_or_none()
-                    if tob_obj:
-                        await broadcaster.broadcast("new_tob", tob_obj.to_dict())
+            for tob_obj in new_tobs:
+                await broadcaster.broadcast("new_tob", tob_obj.to_dict())
 
 
 async def run_poller():

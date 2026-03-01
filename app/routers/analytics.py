@@ -407,8 +407,13 @@ def _group_filings(filings, key_fn, init_fn):
             groups[key] = {**init_fn(f), "filing_count": 0, "history": []}
         g = groups[key]
         g["filing_count"] += 1
-        # Always update latest_ratio / latest_date to the most recent filing
+        # Update latest_ratio / latest_date to the most recent filing with data.
+        # Filings arrive newest-first, so the first non-None ratio we see is
+        # the most recent known ratio for this group.
         if f.holding_ratio is not None:
+            if g.get("latest_ratio") is None:
+                g["latest_ratio"] = f.holding_ratio
+                g["latest_date"] = f.submit_date_time
             g["history"].append({
                 "date": f.submit_date_time,
                 "ratio": f.holding_ratio,

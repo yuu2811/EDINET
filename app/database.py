@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -20,6 +20,16 @@ if "sqlite" in db_url:
         os.makedirs(db_dir, exist_ok=True)
 
 engine = create_async_engine(settings.DATABASE_URL, echo=False)
+
+# Enable WAL mode and busy_timeout for SQLite to avoid "database is locked" errors
+if "sqlite" in settings.DATABASE_URL:
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.close()
+
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 

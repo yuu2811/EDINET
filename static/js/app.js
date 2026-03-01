@@ -9,6 +9,7 @@
 
 /** Format a Date object as YYYY-MM-DD in **local** time (not UTC). */
 function toLocalDateStr(d) {
+    if (!(d instanceof Date) || isNaN(d.getTime())) return '';
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
@@ -138,7 +139,15 @@ function buildDocLinks(f, linkClass) {
 
 /** Escape a string for safe use inside a JavaScript single-quoted string literal. */
 function escapeJsString(s) {
-    return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+    return String(s)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '\\"')
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029')
+        .replace(/</g, '\\x3c');
 }
 
 /** Build clickable filer link HTML */
@@ -629,8 +638,12 @@ function initSSE() {
     });
 
     eventSource.addEventListener('new_filing', (e) => {
-        const filing = JSON.parse(e.data);
-        handleNewFiling(filing);
+        try {
+            const filing = JSON.parse(e.data);
+            handleNewFiling(filing);
+        } catch (err) {
+            console.warn('Failed to parse new_filing SSE data:', err);
+        }
     });
 
     eventSource.addEventListener('stats_update', (e) => {
@@ -639,8 +652,12 @@ function initSSE() {
     });
 
     eventSource.addEventListener('new_tob', (e) => {
-        const tob = JSON.parse(e.data);
-        handleNewTob(tob);
+        try {
+            const tob = JSON.parse(e.data);
+            handleNewTob(tob);
+        } catch (err) {
+            console.warn('Failed to parse new_tob SSE data:', err);
+        }
     });
 
     eventSource.onopen = () => {
@@ -1653,6 +1670,8 @@ function closeConfirmDialog() {
         const cancelBtn = document.getElementById('dialog-cancel');
         if (confirmBtn) confirmBtn.replaceWith(confirmBtn.cloneNode(true));
         if (cancelBtn) cancelBtn.replaceWith(cancelBtn.cloneNode(true));
+        const overlay = dialog.querySelector('.modal-overlay');
+        if (overlay) overlay.replaceWith(overlay.cloneNode(true));
     }
 }
 
@@ -3415,7 +3434,9 @@ function initDateNav() {
     picker.min = EDINET_MIN_DATE;
 
     picker.addEventListener('change', (e) => {
-        state.selectedDate = e.target.value;
+        const val = e.target.value;
+        if (!val || !/^\d{4}-\d{2}-\d{2}$/.test(val)) return;
+        state.selectedDate = val;
         savePreferences();
         loadDateAndAutoFetch();
     });
