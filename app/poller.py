@@ -17,6 +17,41 @@ from app.models import CompanyInfo, Filing, TenderOffer
 
 logger = logging.getLogger(__name__)
 
+_CHUNK_SIZE = 500  # SQLite variable limit safe chunk size
+
+
+async def _safe_commit(session, label: str) -> bool:
+    """Commit a session with a 30-second timeout.
+
+    Returns True on success, False on timeout or error (with rollback).
+    """
+    try:
+        await asyncio.wait_for(session.commit(), timeout=30.0)
+        return True
+    except asyncio.TimeoutError:
+        logger.error("%s commit timed out", label)
+        await session.rollback()
+        return False
+    except Exception as exc:
+        logger.error("%s commit failed: %s", label, exc)
+        await session.rollback()
+        return False
+
+
+async def _get_existing_ids(session, id_column, doc_ids: list[str]) -> set[str]:
+    """Batch-check which doc_ids already exist in the database.
+
+    Processes in chunks of _CHUNK_SIZE to stay within SQLite variable limits.
+    """
+    existing: set[str] = set()
+    for chunk_start in range(0, len(doc_ids), _CHUNK_SIZE):
+        chunk = doc_ids[chunk_start:chunk_start + _CHUNK_SIZE]
+        result = await session.execute(
+            select(id_column).where(id_column.in_(chunk))
+        )
+        existing.update(row[0] for row in result)
+    return existing
+
 
 class JsonEncoder(json.JSONEncoder):
     """JSON encoder that handles datetime and other types."""
@@ -43,7 +78,7 @@ class SSEBroadcaster:
 
     def __init__(self):
         self._lock = asyncio.Lock()
-        self._clients: dict[int, tuple[asyncio.Queue, float]] = {}
+        self._clients: dict[int, tuple[asyncio.Queue, float]] = {}  # client_id -> (queue, last_active)
         self._next_id: int = 0
         self._event_id: int = 0  # monotonic event ID for SSE reconnection
         # Ring buffer: deque of (event_id, formatted_message)
@@ -106,11 +141,15 @@ class SSEBroadcaster:
         dead: list[int] = []
         async with self._lock:
             self._event_id += 1
+            now = time.monotonic()
             message = f"id: {self._event_id}\nevent: {event}\ndata: {payload}\n\n"
             self._event_buffer.append((self._event_id, message))
-            for client_id, (q, _connected_at) in self._clients.items():
+            for client_id, (q, _last_active) in self._clients.items():
                 try:
                     q.put_nowait(message)
+                    # Update last-activity timestamp so active clients
+                    # are not evicted by _cleanup_stale()
+                    self._clients[client_id] = (q, now)
                 except asyncio.QueueFull:
                     logger.warning(
                         "SSE client %d queue full, dropping client",
@@ -121,7 +160,7 @@ class SSEBroadcaster:
                 del self._clients[client_id]
 
     async def _cleanup_stale(self) -> None:
-        """Remove clients that have been connected longer than _CLIENT_MAX_AGE."""
+        """Remove clients idle longer than _CLIENT_MAX_AGE (no events delivered)."""
         now = time.monotonic()
         async with self._lock:
             stale = [
@@ -194,15 +233,7 @@ async def poll_edinet(target_date=None):
     async with async_session() as session:
         # Batch duplicate check: single IN() query instead of N individual SELECTs
         all_doc_ids = [doc.get("docID") for doc in filings if doc.get("docID")]
-        existing_ids: set[str] = set()
-        if all_doc_ids:
-            # Process in chunks of 500 to stay within SQLite variable limits
-            for chunk_start in range(0, len(all_doc_ids), 500):
-                chunk = all_doc_ids[chunk_start:chunk_start + 500]
-                result = await session.execute(
-                    select(Filing.doc_id).where(Filing.doc_id.in_(chunk))
-                )
-                existing_ids.update(row[0] for row in result)
+        existing_ids = await _get_existing_ids(session, Filing.doc_id, all_doc_ids) if all_doc_ids else set()
 
         for doc in filings:
             doc_id = doc.get("docID")
@@ -356,11 +387,15 @@ async def _retry_xbrl_enrichment():
     """
     global _retry_offset
 
-    if _retry_lock.locked():
+    # Use wait_for with timeout=0 equivalent: try to acquire without blocking.
+    # This avoids the TOCTOU race of checking locked() then acquiring separately.
+    try:
+        await asyncio.wait_for(_retry_lock.acquire(), timeout=0)
+    except (asyncio.TimeoutError, TimeoutError):
         logger.debug("XBRL retry already in progress, skipping")
         return
 
-    async with _retry_lock:
+    try:
         async with async_session() as session:
             total_unparsed_result = await session.execute(
                 select(func.count()).select_from(
@@ -413,14 +448,9 @@ async def _retry_xbrl_enrichment():
             except asyncio.TimeoutError:
                 logger.warning("XBRL retry batch timed out")
 
-            try:
-                await asyncio.wait_for(session.commit(), timeout=30.0)
-            except asyncio.TimeoutError:
-                logger.error("XBRL retry batch commit timed out")
-                await session.rollback()
-            except Exception as exc:
-                logger.error("XBRL retry batch commit failed: %s", exc)
-                await session.rollback()
+            await _safe_commit(session, "XBRL retry batch")
+    finally:
+        _retry_lock.release()
 
 
 async def _poll_company_info(target_date: date, all_docs: list | None = None) -> None:
@@ -519,9 +549,9 @@ async def _poll_company_info(target_date: date, all_docs: list | None = None) ->
                         company.company_name = info["company_name"]
                     elif doc.get("filerName"):
                         company.company_name = doc["filerName"]
-                    if info.get("shares_outstanding"):
+                    if info.get("shares_outstanding") is not None:
                         company.shares_outstanding = info["shares_outstanding"]
-                    if info.get("net_assets"):
+                    if info.get("net_assets") is not None:
                         company.net_assets = info["net_assets"]
                     # Populate industry from EDINET code list (金融庁公式業種)
                     if not company.industry:
@@ -549,11 +579,7 @@ async def _poll_company_info(target_date: date, all_docs: list | None = None) ->
                 continue
 
         if updated > 0:
-            try:
-                await asyncio.wait_for(session.commit(), timeout=30.0)
-            except asyncio.TimeoutError:
-                logger.error("Company info commit timed out")
-                await session.rollback()
+            if not await _safe_commit(session, "Company info"):
                 return
             logger.info("Updated %d company info records from EDINET", updated)
 
@@ -590,10 +616,7 @@ async def _poll_tender_offers(target_date: date, all_docs: list | None = None) -
     # Batch duplicate check
     doc_ids = [d.get("docID") for d in tob_docs if d.get("docID")]
     async with async_session() as session:
-        existing_result = await session.execute(
-            select(TenderOffer.doc_id).where(TenderOffer.doc_id.in_(doc_ids))
-        )
-        existing_ids = set(existing_result.scalars().all())
+        existing_ids = await _get_existing_ids(session, TenderOffer.doc_id, doc_ids)
 
         new_count = 0
         for doc in tob_docs:
@@ -629,17 +652,21 @@ async def _poll_tender_offers(target_date: date, all_docs: list | None = None) -
             session.add(tob)
             new_count += 1
 
-            # Broadcast SSE event for real-time notification
-            await broadcaster.broadcast("new_tob", tob.to_dict())
-
         if new_count > 0:
-            try:
-                await asyncio.wait_for(session.commit(), timeout=30.0)
-            except asyncio.TimeoutError:
-                logger.error("TOB commit timed out")
-                await session.rollback()
+            if not await _safe_commit(session, "TOB"):
                 return
             logger.info("Stored %d new TOB filings", new_count)
+
+            # Broadcast SSE events after successful commit
+            for doc in tob_docs:
+                doc_id = doc.get("docID")
+                if doc_id and doc_id not in existing_ids:
+                    result = await session.execute(
+                        select(TenderOffer).where(TenderOffer.doc_id == doc_id)
+                    )
+                    tob_obj = result.scalar_one_or_none()
+                    if tob_obj:
+                        await broadcaster.broadcast("new_tob", tob_obj.to_dict())
 
 
 async def run_poller():

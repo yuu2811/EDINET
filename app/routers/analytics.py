@@ -176,7 +176,10 @@ async def market_movements(
         try:
             parsed = date.fromisoformat(target_date)
         except ValueError:
-            parsed = datetime.now(JST).date()
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid date format: {target_date!r} (expected YYYY-MM-DD)",
+            )
     else:
         parsed = datetime.now(JST).date()
     date_str = parsed.isoformat()
@@ -491,7 +494,7 @@ async def filer_profile(
         total_count, filings = await _profile_query(
             session, Filing.edinet_code == edinet_code, limit, offset,
         )
-        if not filings:
+        if total_count == 0:
             raise HTTPException(status_code=404, detail="Filer not found")
 
         targets = _group_filings(
@@ -556,7 +559,7 @@ async def company_profile(
 
     async with get_async_session()() as session:
         total_count, filings = await _profile_query(session, where, limit, offset)
-        if not filings:
+        if total_count == 0:
             raise HTTPException(status_code=404, detail="Company not found")
 
         company_name = next((f.target_company_name for f in filings if f.target_company_name), None)

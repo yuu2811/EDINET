@@ -111,11 +111,18 @@ def _make_pdf_response(content: bytes, doc_id: str) -> Response:
     )
 
 
+_XBRL_FIELDS = frozenset({
+    "holding_ratio", "previous_holding_ratio", "holder_name",
+    "target_company_name", "target_sec_code", "shares_held",
+    "purpose_of_holding", "joint_holders", "fund_source",
+})
+
+
 def _apply_xbrl_data(filing, data: dict) -> bool:
     """Apply parsed XBRL data to a filing. Returns True if any field was set."""
     changed = False
     for field, value in data.items():
-        if value is not None:
+        if value is not None and field in _XBRL_FIELDS:
             setattr(filing, field, value)
             changed = True
     # Only mark as parsed when actual data was extracted;
@@ -135,25 +142,30 @@ async def retry_xbrl_enrichment(doc_id: str) -> dict:
             select(Filing).where(Filing.doc_id == doc_id)
         )).scalar_one_or_none()
         if not filing:
-            return {"success": False, "error": "書類が見つかりません"}
+            raise HTTPException(status_code=404, detail="書類が見つかりません")
 
         zip_content = await edinet_client.download_xbrl(doc_id)
         if not zip_content:
-            return {"success": False, "error": "XBRLダウンロード失敗"}
+            raise HTTPException(status_code=502, detail="XBRLダウンロード失敗")
 
         data = edinet_client.parse_xbrl_for_holding_data(zip_content)
         if not any(v is not None for v in data.values()):
-            return {"success": False, "error": "XBRLからデータを抽出できません"}
+            raise HTTPException(status_code=422, detail="XBRLからデータを抽出できません")
 
         _apply_xbrl_data(filing, data)
         await session.commit()
         return {"success": True, "data": data}
 
 
+_batch_lock = asyncio.Lock()
+
+
 @documents_router.post("/batch-retry-xbrl")
 async def batch_retry_xbrl() -> dict:
     """Re-parse XBRL for filings missing data (max 50 at a time)."""
-    async with get_async_session()() as session:
+    if _batch_lock.locked():
+        raise HTTPException(status_code=429, detail="バッチ処理は既に実行中です")
+    async with _batch_lock, get_async_session()() as session:
         filings = (await session.execute(
             select(Filing)
             .where(
@@ -186,7 +198,8 @@ async def batch_retry_xbrl() -> dict:
                 if _apply_xbrl_data(filing, data):
                     enriched += 1
                 processed += 1
-            except Exception:
+            except Exception as exc:
+                logger.warning("XBRL retry failed for %s: %s", filing.doc_id, exc)
                 processed += 1
 
         await session.commit()

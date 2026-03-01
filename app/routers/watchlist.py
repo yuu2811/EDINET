@@ -26,6 +26,8 @@ async def add_to_watchlist(body: WatchlistCreate) -> dict:
     """Add a company to the watchlist (with duplicate detection)."""
     async with get_async_session()() as session:
         name = body.company_name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="企業名は必須です")
         sec_code = body.sec_code.strip() if body.sec_code else None
 
         # M5: Check for duplicates by company_name or sec_code

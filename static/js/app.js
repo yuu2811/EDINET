@@ -54,7 +54,8 @@ const STOCK_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 async function fetchStockData(secCode) {
     if (!secCode) return null;
     // Normalize: strip trailing 0 if 5-digit code
-    const code = secCode.length === 5 ? secCode.slice(0, 4) : secCode;
+    const code = normalizeSecCode(secCode);
+    if (!code) return null;
 
     // Check cache
     const cached = stockCache[code];
@@ -137,7 +138,7 @@ function buildDocLinks(f, linkClass) {
 
 /** Escape a string for safe use inside a JavaScript single-quoted string literal. */
 function escapeJsString(s) {
-    return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r');
 }
 
 /** Build clickable filer link HTML */
@@ -186,13 +187,18 @@ function updateToggleBtn(btn, active, onTitle, offTitle, onAria, offAria) {
     btn.setAttribute('aria-label', active ? onAria : offAria);
 }
 
+/** Sync mobile toggle button text and active class */
+function syncMobileToggle(elementId, active, onText, offText) {
+    const el = document.getElementById(elementId);
+    if (el) { el.classList.toggle('active', active); el.textContent = active ? onText : offText; }
+}
+
 /** Toggle sound on/off — shared by desktop and mobile buttons */
 function toggleSound() {
     state.soundEnabled = !state.soundEnabled;
     updateToggleBtn(document.getElementById('btn-sound'), state.soundEnabled,
         'サウンド ON', 'サウンド OFF', 'サウンドアラート: 有効', 'サウンドアラート: 無効');
-    const msb = document.getElementById('mobile-btn-sound');
-    if (msb) { msb.classList.toggle('active', state.soundEnabled); msb.textContent = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF'; }
+    syncMobileToggle('mobile-btn-sound', state.soundEnabled, 'サウンド ON', 'サウンド OFF');
     savePreferences();
 }
 
@@ -209,8 +215,7 @@ async function toggleNotify() {
     }
     updateToggleBtn(document.getElementById('btn-notify'), state.notificationsEnabled,
         '通知 ON', '通知 OFF', 'デスクトップ通知: 有効', 'デスクトップ通知: 無効');
-    const mnb = document.getElementById('mobile-btn-notify');
-    if (mnb) { mnb.classList.toggle('active', state.notificationsEnabled); mnb.textContent = state.notificationsEnabled ? '通知 ON' : '通知 OFF'; }
+    syncMobileToggle('mobile-btn-notify', state.notificationsEnabled, '通知 ON', '通知 OFF');
     savePreferences();
 }
 
@@ -308,8 +313,7 @@ function loadPreferences() {
             state.soundEnabled = prefs.soundEnabled;
             updateToggleBtn(document.getElementById('btn-sound'), state.soundEnabled,
                 'サウンド ON', 'サウンド OFF', 'サウンドアラート: 有効', 'サウンドアラート: 無効');
-            const msb = document.getElementById('mobile-btn-sound');
-            if (msb) { msb.classList.toggle('active', state.soundEnabled); msb.textContent = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF'; }
+            syncMobileToggle('mobile-btn-sound', state.soundEnabled, 'サウンド ON', 'サウンド OFF');
         }
 
         // Restore notification preference
@@ -317,8 +321,7 @@ function loadPreferences() {
             state.notificationsEnabled = prefs.notificationsEnabled;
             updateToggleBtn(document.getElementById('btn-notify'), state.notificationsEnabled,
                 '通知 ON', '通知 OFF', 'デスクトップ通知: 有効', 'デスクトップ通知: 無効');
-            const mnb = document.getElementById('mobile-btn-notify');
-            if (mnb) { mnb.classList.toggle('active', state.notificationsEnabled); mnb.textContent = state.notificationsEnabled ? '通知 ON' : '通知 OFF'; }
+            syncMobileToggle('mobile-btn-notify', state.notificationsEnabled, '通知 ON', '通知 OFF');
         }
 
         // Restore view mode
@@ -437,7 +440,25 @@ function initPollCountdown() {
     }
 
     update();
+    if (pollCountdownInterval) clearInterval(pollCountdownInterval);
     pollCountdownInterval = setInterval(update, 1000);
+}
+
+/** Shared poll trigger: disable button, POST /api/poll, re-enable after 3s */
+async function triggerManualPoll(btn) {
+    if (!btn) return;
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+    try {
+        await fetch('/api/poll', { method: 'POST' });
+        lastPollTime = Date.now();
+    } catch (e) {
+        console.error('Poll trigger failed:', e);
+    }
+    setTimeout(() => {
+        btn.disabled = false;
+        btn.style.opacity = '1';
+    }, 3000);
 }
 
 function initEventListeners() {
@@ -457,21 +478,7 @@ function initEventListeners() {
     document.getElementById('btn-notify').addEventListener('click', toggleNotify);
 
     // Manual poll
-    document.getElementById('btn-poll').addEventListener('click', async () => {
-        const btn = document.getElementById('btn-poll');
-        btn.disabled = true;
-        btn.style.opacity = '0.5';
-        try {
-            await fetch('/api/poll', { method: 'POST' });
-            lastPollTime = Date.now();
-        } catch (e) {
-            console.error('Poll trigger failed:', e);
-        }
-        setTimeout(() => {
-            btn.disabled = false;
-            btn.style.opacity = '1';
-        }, 3000);
-    });
+    document.getElementById('btn-poll').addEventListener('click', () => triggerManualPoll(document.getElementById('btn-poll')));
 
     // Feed search (debounced to avoid excessive re-renders on fast typing)
     let _searchDebounce = null;
@@ -664,6 +671,7 @@ function setConnectionStatus(status) {
     // status: 'connected' | 'disconnected' | 'reconnecting'
     state.connected = status === 'connected';
     const el = document.getElementById('connection-status');
+    if (!el) return;
     const dot = el.querySelector('.status-dot');
     const text = el.querySelector('.status-text');
 
@@ -755,10 +763,9 @@ async function loadFilings() {
 function preloadStockData() {
     const codes = new Set();
     for (const f of state.filings) {
-        const code = f.target_sec_code || f.sec_code;
+        const code = normalizeSecCode(f.target_sec_code || f.sec_code);
         if (code) {
-            const normalized = code.length === 5 ? code.slice(0, 4) : code;
-            codes.add(normalized);
+            codes.add(code);
         }
     }
     if (codes.size === 0) return;
@@ -779,7 +786,7 @@ function preloadStockData() {
             }
         }
         renderFeed();
-    })();
+    })().catch(err => console.error('Stock preload failed:', err));
 }
 
 async function loadStats() {
@@ -2060,7 +2067,7 @@ async function loadStockView(secCode) {
     const body = document.getElementById('stock-view-body');
     if (!body) return;
 
-    const code = secCode.length === 5 ? secCode.slice(0, 4) : secCode;
+    const code = normalizeSecCode(secCode);
     currentStockView = code;
 
     body.innerHTML = '<div class="stock-loading">株価データ読み込み中...</div>';
@@ -2561,8 +2568,14 @@ async function openProfileModal(apiPath, loadingMsg, errorMsg, renderFn) {
     const body = document.getElementById('modal-body');
     const modal = document.getElementById('detail-modal');
     if (!body || !modal) return;
+    // Save focus for restoration on close (same as openModal)
+    if (!_preFocusedElement) _preFocusedElement = document.activeElement;
     currentModalDocId = null;
     body.innerHTML = `<div class="stock-loading">${loadingMsg}</div>`;
+    // Push history state for mobile back button support (same as openModal)
+    if (modal.classList.contains('hidden')) {
+        history.pushState({ modal: true }, '');
+    }
     modal.classList.remove('hidden');
     try {
         const resp = await fetch(apiPath);
@@ -2693,6 +2706,20 @@ function miniSparkline(values) {
     return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="vertical-align:middle"><polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 }
 
+/** Build the inner HTML for a single profile filing row */
+function profileFilingRowHtml(f) {
+    const date = f.submit_date_time ? f.submit_date_time.slice(0, 10) : '-';
+    const desc = f.doc_description || '';
+    const ratio = f.holding_ratio != null ? f.holding_ratio.toFixed(2) + '%' : '-';
+    let changeHtml = '';
+    if (f.ratio_change != null && f.ratio_change !== 0) {
+        const cls = f.ratio_change > 0 ? 'positive' : 'negative';
+        const sign = f.ratio_change > 0 ? '+' : '';
+        changeHtml = `<span class="${cls}">${sign}${f.ratio_change.toFixed(2)}%</span>`;
+    }
+    return `<span class="profile-filing-date">${escapeHtml(date)}</span><span class="profile-filing-desc" title="${escapeHtml(desc)}">${escapeHtml(desc)}</span><span class="profile-filing-ratio">${ratio}</span><span class="profile-filing-change">${changeHtml}</span>`;
+}
+
 /** Render a compact filing list for profile views (all filings, collapsible). */
 function renderProfileFilings(filings) {
     // Store filings for click access
@@ -2702,22 +2729,9 @@ function renderProfileFilings(filings) {
     let html = `<div class="profile-section-title">報告書一覧 <span class="profile-filing-count">(${total}件)</span></div>`;
     html += '<div class="profile-filings">';
     for (let i = 0; i < total; i++) {
-        const f = filings[i];
-        const date = f.submit_date_time ? f.submit_date_time.slice(0, 10) : '-';
-        const desc = f.doc_description || '';
-        const ratio = f.holding_ratio != null ? f.holding_ratio.toFixed(2) + '%' : '-';
-        let changeHtml = '';
-        if (f.ratio_change != null && f.ratio_change !== 0) {
-            const cls = f.ratio_change > 0 ? 'positive' : 'negative';
-            const sign = f.ratio_change > 0 ? '+' : '';
-            changeHtml = `<span class="${cls}">${sign}${f.ratio_change.toFixed(2)}%</span>`;
-        }
         const hiddenClass = i >= initialShow ? ' profile-filing-hidden' : '';
         html += `<div class="profile-filing-row${hiddenClass}" data-pf-idx="${i}">
-            <span class="profile-filing-date">${escapeHtml(date)}</span>
-            <span class="profile-filing-desc" title="${escapeHtml(desc)}">${escapeHtml(desc)}</span>
-            <span class="profile-filing-ratio">${ratio}</span>
-            <span class="profile-filing-change">${changeHtml}</span>
+            ${profileFilingRowHtml(filings[i])}
         </div>`;
     }
     html += '</div>';
@@ -2755,20 +2769,10 @@ function attachProfileFilingHandlers() {
                         const baseIdx = window._profileFilings.length;
                         window._profileFilings.push(...data.recent_filings);
                         for (let i = 0; i < data.recent_filings.length; i++) {
-                            const f = data.recent_filings[i];
-                            const date = f.submit_date_time ? f.submit_date_time.slice(0, 10) : '-';
-                            const desc = f.doc_description || '';
-                            const ratio = f.holding_ratio != null ? f.holding_ratio.toFixed(2) + '%' : '-';
-                            let changeHtml = '';
-                            if (f.ratio_change != null && f.ratio_change !== 0) {
-                                const cls = f.ratio_change > 0 ? 'positive' : 'negative';
-                                const sign = f.ratio_change > 0 ? '+' : '';
-                                changeHtml = `<span class="${cls}">${sign}${f.ratio_change.toFixed(2)}%</span>`;
-                            }
                             const row = document.createElement('div');
                             row.className = 'profile-filing-row';
                             row.dataset.pfIdx = baseIdx + i;
-                            row.innerHTML = `<span class="profile-filing-date">${escapeHtml(date)}</span><span class="profile-filing-desc" title="${escapeHtml(desc)}">${escapeHtml(desc)}</span><span class="profile-filing-ratio">${ratio}</span><span class="profile-filing-change">${changeHtml}</span>`;
+                            row.innerHTML = profileFilingRowHtml(data.recent_filings[i]);
                             row.addEventListener('click', () => {
                                 const idx = baseIdx + i;
                                 const filing = window._profileFilings[idx];
@@ -3188,10 +3192,8 @@ function syncMobilePanel(panelId) {
         }
 
     } else if (panelId === 'mobile-settings-panel') {
-        const msb = document.getElementById('mobile-btn-sound');
-        if (msb) { msb.classList.toggle('active', state.soundEnabled); msb.textContent = state.soundEnabled ? 'サウンド ON' : 'サウンド OFF'; }
-        const mnb = document.getElementById('mobile-btn-notify');
-        if (mnb) { mnb.classList.toggle('active', state.notificationsEnabled); mnb.textContent = state.notificationsEnabled ? '通知 ON' : '通知 OFF'; }
+        syncMobileToggle('mobile-btn-sound', state.soundEnabled, 'サウンド ON', 'サウンド OFF');
+        syncMobileToggle('mobile-btn-notify', state.notificationsEnabled, '通知 ON', '通知 OFF');
     }
 }
 
@@ -3212,6 +3214,7 @@ function initOverlaySwipe(overlayEl) {
         const rect = sheet.getBoundingClientRect();
         if (e.touches[0].clientY - rect.top > 40) return;
         startY = e.touches[0].clientY;
+        currentY = startY;
         isDragging = true;
         sheet.style.transition = 'none';
     }, { passive: true });
@@ -3308,19 +3311,7 @@ function initMobileNav() {
 
     const mobilePollBtn = document.getElementById('mobile-btn-poll');
     if (mobilePollBtn) {
-        mobilePollBtn.addEventListener('click', async () => {
-            mobilePollBtn.disabled = true;
-            mobilePollBtn.style.opacity = '0.5';
-            try {
-                await fetch('/api/poll', { method: 'POST' });
-            } catch (e) {
-                console.error('Poll trigger failed:', e);
-            }
-            setTimeout(() => {
-                mobilePollBtn.disabled = false;
-                mobilePollBtn.style.opacity = '1';
-            }, 3000);
-        });
+        mobilePollBtn.addEventListener('click', () => triggerManualPoll(mobilePollBtn));
     }
 }
 
@@ -3342,6 +3333,7 @@ function initPullToRefresh() {
         // Only activate when scrolled to top
         if (feedList.scrollTop > 0) return;
         startY = e.touches[0].clientY;
+        currentY = startY;
         isDragging = true;
     }, { passive: true });
 
@@ -3488,6 +3480,13 @@ function initDateNav() {
                 // SSE not connected — fall back to polling
                 clearTimeout(timeout);
                 const checkInterval = setInterval(async () => {
+                    // Stop polling if user navigated to a different date
+                    if (state.selectedDate !== fetchDate) {
+                        clearInterval(checkInterval);
+                        fetchBtn.disabled = false;
+                        fetchBtn.textContent = origText;
+                        return;
+                    }
                     await loadFilings();
                     const newCount = state.filings.length;
                     if (newCount !== prevCount) {
@@ -3531,8 +3530,8 @@ function navigateDate(days) {
 
 async function loadDateAndAutoFetch() {
     // Load existing data in parallel
-    const [filingsResult] = await Promise.all([
-        loadFilings().then(() => state.filings),
+    await Promise.all([
+        loadFilings(),
         loadStats(),
         loadAnalytics(),
     ]);
@@ -3566,6 +3565,12 @@ async function autoFetchForDate(dateStr) {
                 if (state.selectedDate !== dateStr) break;
                 await loadFilings();
                 if (state.filings.length > 0) break;
+            }
+            // Guard: only update UI if user hasn't navigated to a different date
+            if (state.selectedDate !== dateStr) {
+                fetchBtn.disabled = false;
+                fetchBtn.textContent = origText;
+                return;
             }
             loadStats();
             loadAnalytics();
