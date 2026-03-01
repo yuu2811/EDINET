@@ -192,15 +192,24 @@ def _apply_pre_enrichment(filing: Filing) -> None:
             filing.target_company_name = m.group(1)
 
 
-_poll_lock = asyncio.Lock()
+_poll_lock: asyncio.Lock | None = None
+
+
+def _get_poll_lock() -> asyncio.Lock:
+    """Lazily create the poll lock on the running event loop."""
+    global _poll_lock
+    if _poll_lock is None:
+        _poll_lock = asyncio.Lock()
+    return _poll_lock
 
 
 async def poll_edinet(target_date=None):
     """Poll EDINET for new large shareholding filings."""
-    if _poll_lock.locked():
+    lock = _get_poll_lock()
+    if lock.locked():
         logger.info("poll_edinet already running, skipping")
         return
-    async with _poll_lock:
+    async with lock:
         await _poll_edinet_impl(target_date)
 
 

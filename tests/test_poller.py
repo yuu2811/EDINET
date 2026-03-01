@@ -197,6 +197,9 @@ class TestPollerIntegration:
         )
         mock_client.download_xbrl = AsyncMock(return_value=None)
 
+        import app.poller as _poller_mod
+        _poller_mod._poll_lock = None  # Reset lock for test isolation
+
         with patch("app.poller.async_session", session_factory), \
              patch("app.poller.edinet_client", mock_client), \
              patch("app.poller.settings") as mock_settings:
@@ -246,6 +249,9 @@ class TestPollerIntegration:
         mock_client = AsyncMock()
         mock_client.fetch_document_list = AsyncMock(return_value=filings_data)
         mock_client.download_xbrl = AsyncMock(return_value=None)
+
+        import app.poller as _poller_mod
+        _poller_mod._poll_lock = None  # Reset lock for test isolation
 
         with patch("app.poller.async_session", session_factory), \
              patch("app.poller.edinet_client", mock_client), \
