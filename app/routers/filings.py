@@ -163,52 +163,57 @@ _batch_lock = asyncio.Lock()
 @documents_router.post("/batch-retry-xbrl")
 async def batch_retry_xbrl() -> dict:
     """Re-parse XBRL for filings missing data (max 50 at a time)."""
-    if _batch_lock.locked():
+    try:
+        await asyncio.wait_for(_batch_lock.acquire(), timeout=0)
+    except (asyncio.TimeoutError, TimeoutError):
         raise HTTPException(status_code=429, detail="バッチ処理は既に実行中です")
-    async with _batch_lock, get_async_session()() as session:
-        filings = (await session.execute(
-            select(Filing)
-            .where(
-                Filing.xbrl_flag.is_(True),
-                or_(
-                    Filing.xbrl_parsed.is_(False),
-                    Filing.holding_ratio.is_(None),
-                    Filing.previous_holding_ratio.is_(None),
-                ),
-            )
-            .order_by(desc(Filing.id))
-            .limit(50)
-        )).scalars().all()
-        if not filings:
-            return {"success": True, "processed": 0, "message": "対象なし"}
-
-        processed = 0
-        enriched = 0
-        for i, filing in enumerate(filings):
-            if i > 0:
-                await asyncio.sleep(3.0)
-            try:
-                zip_content = await asyncio.wait_for(
-                    edinet_client.download_xbrl(filing.doc_id), timeout=15.0,
+    try:
+        async with get_async_session()() as session:
+            filings = (await session.execute(
+                select(Filing)
+                .where(
+                    Filing.xbrl_flag.is_(True),
+                    or_(
+                        Filing.xbrl_parsed.is_(False),
+                        Filing.holding_ratio.is_(None),
+                        Filing.previous_holding_ratio.is_(None),
+                    ),
                 )
-                if not zip_content:
-                    processed += 1
-                    continue
-                data = edinet_client.parse_xbrl_for_holding_data(zip_content)
-                if _apply_xbrl_data(filing, data):
-                    enriched += 1
-                processed += 1
-            except Exception as exc:
-                logger.warning("XBRL retry failed for %s: %s", filing.doc_id, exc)
-                processed += 1
+                .order_by(desc(Filing.id))
+                .limit(50)
+            )).scalars().all()
+            if not filings:
+                return {"success": True, "processed": 0, "message": "対象なし"}
 
-        await session.commit()
-        return {
-            "success": True,
-            "processed": processed,
-            "enriched": enriched,
-            "total_candidates": len(filings),
-        }
+            processed = 0
+            enriched = 0
+            for i, filing in enumerate(filings):
+                if i > 0:
+                    await asyncio.sleep(3.0)
+                try:
+                    zip_content = await asyncio.wait_for(
+                        edinet_client.download_xbrl(filing.doc_id), timeout=15.0,
+                    )
+                    if not zip_content:
+                        processed += 1
+                        continue
+                    data = edinet_client.parse_xbrl_for_holding_data(zip_content)
+                    if _apply_xbrl_data(filing, data):
+                        enriched += 1
+                    processed += 1
+                except Exception as exc:
+                    logger.warning("XBRL retry failed for %s: %s", filing.doc_id, exc)
+                    processed += 1
+
+            await session.commit()
+            return {
+                "success": True,
+                "processed": processed,
+                "enriched": enriched,
+                "total_candidates": len(filings),
+            }
+    finally:
+        _batch_lock.release()
 
 
 @documents_router.get("/{doc_id}/debug-xbrl")

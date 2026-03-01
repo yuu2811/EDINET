@@ -565,6 +565,7 @@ function initEventListeners() {
         if (e.key === 'Escape') {
             closeModal();
             closeConfirmDialog();
+            return;
         }
         // Arrow key / Tab navigation in modal (uses filtered list, not full list)
         const modal = document.getElementById('detail-modal');
@@ -891,6 +892,9 @@ function handleNewFiling(filing) {
         return;
     }
 
+    // Deduplicate — filing may already exist from loadFilings() after reconnection
+    if (state.filings.some(f => f.doc_id === filing.doc_id)) return;
+
     // Add to top of list, cap to prevent unbounded growth
     state.filings.unshift(filing);
     if (state.filings.length > 1000) state.filings.length = 1000;
@@ -902,11 +906,11 @@ function handleNewFiling(filing) {
 
     // Flash the new card (works for both desktop .feed-card and mobile .m-card)
     setTimeout(() => {
-        const firstCard = document.querySelector('.feed-card, .m-card');
-        if (firstCard) {
-            firstCard.classList.add('flash');
-            firstCard.addEventListener('animationend', () => {
-                firstCard.classList.remove('flash');
+        const newCard = document.querySelector(`[data-doc-id="${filing.doc_id}"]`);
+        if (newCard) {
+            newCard.classList.add('flash');
+            newCard.addEventListener('animationend', () => {
+                newCard.classList.remove('flash');
             }, { once: true });
         }
     }, 50);
@@ -2267,7 +2271,7 @@ function openModal(filing) {
 
     // Clickable filer name -> filer profile
     const filerDisplay = filing.edinet_code
-        ? { html: `<span class="detail-value"><a href="#" onclick="event.preventDefault();openFilerProfile('${escapeHtml(filing.edinet_code)}')">${escapeHtml(filing.filer_name || '-')}</a></span>` }
+        ? { html: `<span class="detail-value"><a href="#" onclick="event.preventDefault();openFilerProfile('${escapeJsString(escapeHtml(filing.edinet_code))}')">${escapeHtml(filing.filer_name || '-')}</a></span>` }
         : (filing.filer_name || '-');
 
     const rows = [
@@ -2284,7 +2288,7 @@ function openModal(filing) {
     const targetName = filing.target_company_name || extractTargetFromDescription(filing.doc_description) || '-';
     const targetSecCode = filing.target_sec_code || filing.sec_code;
     const targetDisplay = targetSecCode
-        ? { html: `<span class="detail-value"><a href="#" onclick="event.preventDefault();openCompanyProfile('${escapeHtml(targetSecCode)}')">${escapeHtml(targetName)}</a></span>` }
+        ? { html: `<span class="detail-value"><a href="#" onclick="event.preventDefault();openCompanyProfile('${escapeJsString(escapeHtml(targetSecCode))}')">${escapeHtml(targetName)}</a></span>` }
         : targetName;
 
     rows.push(
@@ -2380,7 +2384,7 @@ function openModal(filing) {
             <div class="modal-ratio-section">
                 <div class="modal-ratio-header">
                     <span class="xbrl-pending-label">${label}</span>
-                    <button class="btn-retry-xbrl" onclick="retryXbrl('${escapeHtml(filing.doc_id)}')">再取得</button>
+                    <button class="btn-retry-xbrl" onclick="retryXbrl('${escapeJsString(escapeHtml(filing.doc_id))}')">再取得</button>
                 </div>
             </div>
         `;
@@ -3582,7 +3586,7 @@ async function autoFetchForDate(dateStr) {
                 setTimeout(() => { fetchBtn.textContent = origText; }, 3000);
             }
         };
-        poll();
+        await poll();
     } catch (e) {
         console.warn('Auto-fetch failed:', e);
         fetchBtn.disabled = false;

@@ -19,6 +19,7 @@ is_previous 判定 (全抽出パスで共通):
 """
 
 import io
+import json
 import logging
 import re
 import zipfile
@@ -186,16 +187,9 @@ class EdinetClient:
             "Subscription-Key": self.api_key,
         }
 
-        try:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-        except httpx.HTTPStatusError as e:
-            logger.error("EDINET API HTTP error: %s %s", e.response.status_code, e)
-            return []
-        except Exception as e:
-            logger.error("EDINET API request failed: %s", e)
-            return []
+        resp = await client.get(url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
 
         metadata = data.get("metadata", {})
         status = metadata.get("status")
@@ -563,8 +557,6 @@ class EdinetClient:
           - HoldingRatioOfJointHolder / JointHolderRatio
         Returns a JSON string of [{name, ratio}] or None.
         """
-        import json as _json
-
         holders = []
 
         # Strategy 1: look for numbered joint holder elements
@@ -601,7 +593,7 @@ class EdinetClient:
                         holders.append({"name": elem.text.strip(), "ratio": None})
 
         if holders:
-            return _json.dumps(holders, ensure_ascii=False)
+            return json.dumps(holders, ensure_ascii=False)
         return None
 
     def _extract_from_inline_xbrl(self, htm_bytes: bytes) -> dict:
@@ -740,12 +732,11 @@ class EdinetClient:
 
         # Assemble joint holders from inline XBRL
         if _inline_jh_names:
-            import json as _json
             jh = []
             for i, name in enumerate(_inline_jh_names):
                 ratio = _inline_jh_ratios[i] if i < len(_inline_jh_ratios) else None
                 jh.append({"name": name, "ratio": ratio})
-            result["joint_holders"] = _json.dumps(jh, ensure_ascii=False)
+            result["joint_holders"] = json.dumps(jh, ensure_ascii=False)
 
         return result
 
@@ -965,7 +956,11 @@ class EdinetClient:
         Used to discover 有価証券報告書 (120), 四半期報告書 (140), etc.
         for company fundamental data extraction.
         """
-        return await self._fetch_documents_raw(target_date)
+        try:
+            return await self._fetch_documents_raw(target_date)
+        except Exception as e:
+            logger.error("Failed to fetch all document list: %s", e)
+            return []
 
     def parse_xbrl_for_company_info(self, zip_content: bytes) -> dict:
         """Parse 有価証券報告書 / 四半期報告書 XBRL for company fundamentals.
