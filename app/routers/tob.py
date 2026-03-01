@@ -16,6 +16,12 @@ async def list_tender_offers(
 ) -> dict:
     """Return recent tender offer filings, newest first."""
     async with get_async_session()() as session:
+        # Fetch count first so that total >= len(items) is always true
+        # (new rows inserted between queries only increase the count).
+        total = (await session.execute(
+            select(func.count(TenderOffer.id))
+        )).scalar()
+
         result = await session.execute(
             select(TenderOffer)
             .order_by(desc(TenderOffer.submit_date_time))
@@ -23,9 +29,5 @@ async def list_tender_offers(
             .offset(offset)
         )
         items = [t.to_dict() for t in result.scalars().all()]
-
-        total = (await session.execute(
-            select(func.count(TenderOffer.id))
-        )).scalar()
 
     return {"items": items, "total": total}

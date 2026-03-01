@@ -14,7 +14,7 @@ class Settings:
     EDINET_API_BASE: str = os.getenv(
         "EDINET_API_BASE", "https://api.edinet-fsa.go.jp/api/v2"
     )
-    POLL_INTERVAL: int = int(os.getenv("POLL_INTERVAL", "60"))
+    POLL_INTERVAL: int = max(10, int(os.getenv("POLL_INTERVAL", "60")))
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL", "sqlite+aiosqlite:///./edinet_monitor.db"
     )

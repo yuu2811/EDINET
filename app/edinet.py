@@ -19,6 +19,7 @@ is_previous 判定 (全抽出パスで共通):
 """
 
 import io
+import json
 import logging
 import re
 import zipfile
@@ -73,10 +74,78 @@ def _normalize_ratio(val: float) -> float:
     """Convert decimal-format ratios (0.0523) to percentage (5.23).
 
     EDINET stores as percentage but some filings use decimal.
+    Ratios in [0, 1.0] are assumed to be decimal fractions (e.g. 0.0523 = 5.23%).
+    A value of exactly 1.0 means 100%, which is a valid (if rare) holding ratio.
     """
-    if 0 < val < 1.0:
+    if 0 < val <= 1.0:
         return round(val * 100, 4)
     return val
+
+
+def _find_first_text(tree, patterns: list[str]) -> str | None:
+    """Search an XBRL tree for the first text value matching any pattern.
+
+    Iterates through patterns in priority order, using
+    contains(local-name(), ...) XPath to match regardless of namespace.
+    Returns the first non-empty text found, or None.
+    """
+    for pattern in patterns:
+        elements = tree.xpath(
+            f"//*[contains(local-name(), '{pattern}')]"
+        )
+        for elem in elements:
+            if elem.text and elem.text.strip():
+                return elem.text.strip()
+    return None
+
+
+def _find_first_int(tree, patterns: list[str]) -> int | None:
+    """Search an XBRL tree for the first integer value matching any pattern.
+
+    Skips elements with Prior/Previous contextRef (historical values).
+    Returns the first valid integer found, or None.
+    """
+    for pattern in patterns:
+        elements = tree.xpath(
+            f"//*[contains(local-name(), '{pattern}')]"
+        )
+        for elem in elements:
+            try:
+                val = int(float(elem.text.strip()))
+                context_ref = elem.get("contextRef", "")
+                if "Prior" not in context_ref and "Previous" not in context_ref:
+                    return val
+            except (ValueError, AttributeError):
+                continue
+    return None
+
+
+def _discover_xbrl_files(all_files: list[str]) -> tuple[list[str], list[str]]:
+    """Discover XBRL and inline XBRL files in a ZIP archive.
+
+    Prefers PublicDoc/ files but falls back to any suitable file
+    (excluding AuditDoc/ and __MACOSX/).
+
+    Returns (xbrl_files, htm_files).
+    """
+    xbrl_pub = [f for f in all_files
+                if f.endswith(".xbrl") and "PublicDoc" in f]
+    xbrl_any = [f for f in all_files
+                if f.endswith(".xbrl")
+                and "AuditDoc" not in f
+                and "__MACOSX" not in f]
+    xbrl_files = xbrl_pub or xbrl_any
+
+    htm_pub = [f for f in all_files
+               if "PublicDoc" in f
+               and (f.endswith(".htm") or f.endswith(".xhtml"))]
+    htm_any = [f for f in all_files
+               if (f.endswith(".htm") or f.endswith(".xhtml"))
+               and "AuditDoc" not in f
+               and "__MACOSX" not in f]
+    htm_files = htm_pub or htm_any
+
+    return xbrl_files, htm_files
 
 
 def _looks_like_pdf(content: bytes) -> bool:
@@ -118,16 +187,9 @@ class EdinetClient:
             "Subscription-Key": self.api_key,
         }
 
-        try:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-        except httpx.HTTPStatusError as e:
-            logger.error("EDINET API HTTP error: %s %s", e.response.status_code, e)
-            return []
-        except Exception as e:
-            logger.error("EDINET API request failed: %s", e)
-            return []
+        resp = await client.get(url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
 
         metadata = data.get("metadata", {})
         status = metadata.get("status")
@@ -302,25 +364,7 @@ class EdinetClient:
                 logger.debug("XBRL ZIP contains %d files: %s",
                              len(all_files), all_files[:20])
 
-                # Collect candidate files.  Prefer PublicDoc/ but fall back
-                # to any .xbrl/.htm/.xhtml in the ZIP (EDINET large holding
-                # reports may use a flat structure without PublicDoc/).
-                xbrl_pub = [f for f in all_files
-                            if f.endswith(".xbrl") and "PublicDoc" in f]
-                xbrl_any = [f for f in all_files
-                            if f.endswith(".xbrl")
-                            and "AuditDoc" not in f
-                            and "__MACOSX" not in f]
-                xbrl_files = xbrl_pub or xbrl_any
-
-                htm_pub = [f for f in all_files
-                           if "PublicDoc" in f
-                           and (f.endswith(".htm") or f.endswith(".xhtml"))]
-                htm_any = [f for f in all_files
-                           if (f.endswith(".htm") or f.endswith(".xhtml"))
-                           and "AuditDoc" not in f
-                           and "__MACOSX" not in f]
-                htm_files = htm_pub or htm_any
+                xbrl_files, htm_files = _discover_xbrl_files(all_files)
 
                 # --- Try 1: traditional XBRL instance (.xbrl) ---
                 if xbrl_files:
@@ -446,23 +490,13 @@ class EdinetClient:
                 except (ValueError, AttributeError):
                     continue
 
-        # --- Holder name (報告義務発生者 / 提出者) ---
-        holder_patterns = [
+        # --- Text fields: holder, target, sec_code, purpose, fund_source ---
+        result["holder_name"] = _find_first_text(tree, [
             "NameOfLargeShareholdingReporter",
             "NameOfFiler",
             "ReporterName",
             "LargeShareholderName",
-        ]
-        for pattern in holder_patterns:
-            elements = tree.xpath(
-                f"//*[contains(local-name(), '{pattern}')]"
-            )
-            for elem in elements:
-                if elem.text and elem.text.strip():
-                    result["holder_name"] = elem.text.strip()
-                    break
-            if result["holder_name"]:
-                break
+        ])
 
         # jplvh_cor fallback: exact local-name() = 'Name' within jplvh namespace
         if result["holder_name"] is None:
@@ -474,101 +508,42 @@ class EdinetClient:
                         result["holder_name"] = elem.text.strip()
                         break
 
-        # --- Target company name (発行者 / 対象会社) ---
-        target_patterns = [
+        result["target_company_name"] = _find_first_text(tree, [
             "IssuerNameLargeShareholding",
             "IssuerName",
             "NameOfIssuer",
             "TargetCompanyName",
-        ]
-        for pattern in target_patterns:
-            elements = tree.xpath(
-                f"//*[contains(local-name(), '{pattern}')]"
-            )
-            for elem in elements:
-                if elem.text and elem.text.strip():
-                    result["target_company_name"] = elem.text.strip()
-                    break
-            if result["target_company_name"]:
-                break
+        ])
 
-        # --- Target securities code ---
-        sec_code_patterns = [
+        result["target_sec_code"] = _find_first_text(tree, [
             "SecurityCodeOfIssuer",
             "IssuerSecuritiesCode",
             "SecurityCode",
-        ]
-        for pattern in sec_code_patterns:
-            elements = tree.xpath(
-                f"//*[contains(local-name(), '{pattern}')]"
-            )
-            for elem in elements:
-                if elem.text and elem.text.strip():
-                    result["target_sec_code"] = elem.text.strip()
-                    break
-            if result["target_sec_code"]:
-                break
+        ])
 
         # --- Total shares held ---
-        shares_patterns = [
+        result["shares_held"] = _find_first_int(tree, [
             "TotalNumberOfShareCertificatesEtcHeld",
             "TotalNumberOfSharesHeld",
             "NumberOfShareCertificatesEtc",
             "NumberOfStocksEtcHeld",  # jplvh_cor: TotalNumberOfStocksEtcHeld
-        ]
-        for pattern in shares_patterns:
-            elements = tree.xpath(
-                f"//*[contains(local-name(), '{pattern}')]"
-            )
-            for elem in elements:
-                try:
-                    val = int(float(elem.text.strip()))
-                    context_ref = elem.get("contextRef", "")
-                    if "Prior" not in context_ref and "Previous" not in context_ref:
-                        result["shares_held"] = val
-                        break
-                except (ValueError, AttributeError):
-                    continue
-            if result["shares_held"] is not None:
-                break
+        ])
 
-        # --- Purpose of holding (保有目的) ---
-        purpose_patterns = [
+        result["purpose_of_holding"] = _find_first_text(tree, [
             "PurposeOfHolding",
             "PurposeOfHoldingOfShareCertificatesEtc",
-        ]
-        for pattern in purpose_patterns:
-            elements = tree.xpath(
-                f"//*[contains(local-name(), '{pattern}')]"
-            )
-            for elem in elements:
-                if elem.text and elem.text.strip():
-                    result["purpose_of_holding"] = elem.text.strip()
-                    break
-            if result["purpose_of_holding"]:
-                break
+        ])
 
         # --- Joint holders (共同保有者) ---
         result["joint_holders"] = self._extract_joint_holders_xbrl(tree)
 
-        # --- Acquisition fund source (取得資金の内訳) ---
-        fund_patterns = [
+        result["fund_source"] = _find_first_text(tree, [
             "DescriptionOfFundsForAcquisition",
             "FundsForAcquisition",
             "SourceOfFunds",
             "BreakdownOfAcquisitionFunds",
             "AcquisitionFund",
-        ]
-        for pattern in fund_patterns:
-            elements = tree.xpath(
-                f"//*[contains(local-name(), '{pattern}')]"
-            )
-            for elem in elements:
-                if elem.text and elem.text.strip():
-                    result["fund_source"] = elem.text.strip()
-                    break
-            if result["fund_source"]:
-                break
+        ])
 
         logger.debug("Extracted XBRL data: %s", result)
         return result
@@ -582,8 +557,6 @@ class EdinetClient:
           - HoldingRatioOfJointHolder / JointHolderRatio
         Returns a JSON string of [{name, ratio}] or None.
         """
-        import json as _json
-
         holders = []
 
         # Strategy 1: look for numbered joint holder elements
@@ -603,11 +576,16 @@ class EdinetClient:
             "//*[contains(local-name(), 'JointHolder') and "
             "(contains(local-name(), 'Ratio') or contains(local-name(), 'HoldingRatio'))]"
         )
-        for i, elem in enumerate(ratio_elements):
+        ratio_idx = 0
+        for elem in ratio_elements:
+            local = elem.xpath("local-name()")
+            if "Abstract" in local:
+                continue
             try:
                 val = _normalize_ratio(float(elem.text.strip()))
-                if i < len(holders):
-                    holders[i]["ratio"] = val
+                if ratio_idx < len(holders):
+                    holders[ratio_idx]["ratio"] = val
+                ratio_idx += 1
             except (ValueError, AttributeError):
                 continue
 
@@ -620,7 +598,7 @@ class EdinetClient:
                         holders.append({"name": elem.text.strip(), "ratio": None})
 
         if holders:
-            return _json.dumps(holders, ensure_ascii=False)
+            return json.dumps(holders, ensure_ascii=False)
         return None
 
     def _extract_from_inline_xbrl(self, htm_bytes: bytes) -> dict:
@@ -670,12 +648,15 @@ class EdinetClient:
         """
         result = _empty_holding_result()
 
-        # Discover the ix namespace URI dynamically from the document
+        # Discover the ix namespace URI dynamically from the document.
+        # The ix prefix may be declared on a descendant element (not the root),
+        # so we must scan until we find it rather than stopping at the first element.
         nsmap = {}
         for elem in tree.iter():
             if hasattr(elem, "nsmap"):
                 nsmap.update(elem.nsmap)
-                break
+                if "ix" in nsmap:
+                    break
 
         ix_uri = nsmap.get("ix", IX_NS)
 
@@ -706,7 +687,11 @@ class EdinetClient:
                 try:
                     val = _parse_ix_number(elem, text)
                     if val is not None:
-                        val = _normalize_ratio(val)
+                        # Skip _normalize_ratio when % is in the original text:
+                        # the value is already a percentage and should not be
+                        # re-interpreted as a decimal fraction.
+                        if "%" not in text and "％" not in text:
+                            val = _normalize_ratio(val)
                         if _is_previous_ratio(local_name, context_ref):
                             if result["previous_holding_ratio"] is None:
                                 result["previous_holding_ratio"] = val
@@ -750,18 +735,19 @@ class EdinetClient:
                 try:
                     val = _parse_ix_number(elem, text)
                     if val is not None:
-                        _inline_jh_ratios.append(_normalize_ratio(val))
+                        if "%" not in text and "％" not in text:
+                            val = _normalize_ratio(val)
+                        _inline_jh_ratios.append(val)
                 except (ValueError, AttributeError):
                     pass
 
         # Assemble joint holders from inline XBRL
         if _inline_jh_names:
-            import json as _json
             jh = []
             for i, name in enumerate(_inline_jh_names):
                 ratio = _inline_jh_ratios[i] if i < len(_inline_jh_ratios) else None
                 jh.append({"name": name, "ratio": ratio})
-            result["joint_holders"] = _json.dumps(jh, ensure_ascii=False)
+            result["joint_holders"] = json.dumps(jh, ensure_ascii=False)
 
         return result
 
@@ -862,7 +848,9 @@ class EdinetClient:
             return
 
         if _matches_ratio_pattern(local_name):
-            val = _normalize_ratio(val)
+            # Skip normalization when % was in the original text
+            if "%" not in clean_val and "％" not in clean_val:
+                val = _normalize_ratio(val)
             if _is_previous_ratio(local_name, ctx):
                 if result["previous_holding_ratio"] is None:
                     result["previous_holding_ratio"] = val
@@ -896,23 +884,7 @@ class EdinetClient:
                 all_files = zf.namelist()
                 info["files"] = all_files
 
-                # Use same file discovery as parse_xbrl_for_holding_data
-                xbrl_pub = [f for f in all_files
-                            if f.endswith(".xbrl") and "PublicDoc" in f]
-                xbrl_any = [f for f in all_files
-                            if f.endswith(".xbrl")
-                            and "AuditDoc" not in f
-                            and "__MACOSX" not in f]
-                info["xbrl_files"] = xbrl_pub or xbrl_any
-
-                htm_pub = [f for f in all_files
-                           if "PublicDoc" in f
-                           and (f.endswith(".htm") or f.endswith(".xhtml"))]
-                htm_any = [f for f in all_files
-                           if (f.endswith(".htm") or f.endswith(".xhtml"))
-                           and "AuditDoc" not in f
-                           and "__MACOSX" not in f]
-                info["htm_files"] = htm_pub or htm_any
+                info["xbrl_files"], info["htm_files"] = _discover_xbrl_files(all_files)
 
                 # Sample elements from .xbrl files
                 for xf in info["xbrl_files"][:1]:
@@ -997,7 +969,11 @@ class EdinetClient:
         Used to discover 有価証券報告書 (120), 四半期報告書 (140), etc.
         for company fundamental data extraction.
         """
-        return await self._fetch_documents_raw(target_date)
+        try:
+            return await self._fetch_documents_raw(target_date)
+        except Exception as e:
+            logger.error("Failed to fetch all document list: %s", e)
+            return []
 
     def parse_xbrl_for_company_info(self, zip_content: bytes) -> dict:
         """Parse 有価証券報告書 / 四半期報告書 XBRL for company fundamentals.
@@ -1074,44 +1050,18 @@ class EdinetClient:
                 break
 
         # --- 純資産 (Net Assets / Total Equity) ---
-        equity_patterns = [
+        result["net_assets"] = _find_first_int(tree, [
             "NetAssets",
             "EquityAttributableToOwnersOfParent",
             "TotalEquity",
             "ShareholdersEquity",
-        ]
-        for pattern in equity_patterns:
-            elements = tree.xpath(
-                f"//*[contains(local-name(), '{pattern}')]"
-            )
-            for elem in elements:
-                try:
-                    val = int(float(elem.text.strip()))
-                    context_ref = elem.get("contextRef", "")
-                    if "Prior" not in context_ref and "Previous" not in context_ref:
-                        if result["net_assets"] is None:
-                            result["net_assets"] = val
-                            break
-                except (ValueError, AttributeError):
-                    continue
-            if result["net_assets"] is not None:
-                break
+        ])
 
         # --- 会社名 (Company Name) ---
-        name_patterns = [
+        result["company_name"] = _find_first_text(tree, [
             "CompanyName",
             "FilerName",
-        ]
-        for pattern in name_patterns:
-            elements = tree.xpath(
-                f"//*[contains(local-name(), '{pattern}')]"
-            )
-            for elem in elements:
-                if elem.text and elem.text.strip():
-                    result["company_name"] = elem.text.strip()
-                    break
-            if result["company_name"]:
-                break
+        ])
 
         logger.debug("Extracted company info: %s", result)
         return result
@@ -1134,6 +1084,7 @@ _HOLDER_PATTERNS = ("NameOfLargeShareholdingReporter", "NameOfFiler", "ReporterN
 _TARGET_PATTERNS = ("IssuerNameLargeShareholding", "IssuerName", "NameOfIssuer", "TargetCompanyName")
 _SEC_CODE_PATTERNS = ("SecurityCodeOfIssuer", "IssuerSecuritiesCode", "SecurityCode")
 _PURPOSE_PATTERNS = ("PurposeOfHolding",)
+_FUND_SOURCE_PATTERNS = ("DescriptionOfFundsForAcquisition", "FundsForAcquisition", "SourceOfFunds", "BreakdownOfAcquisitionFunds", "AcquisitionFund")
 
 def _matches_ratio_pattern(name: str) -> bool:
     return _name_contains_any(name, _RATIO_PATTERNS, _RATIO_EXCLUDE)
@@ -1158,14 +1109,7 @@ def _matches_purpose_pattern(name: str) -> bool:
 
 def _matches_fund_source_pattern(name: str) -> bool:
     """Match fund source / acquisition funding elements."""
-    patterns = (
-        "DescriptionOfFundsForAcquisition",
-        "FundsForAcquisition",
-        "SourceOfFunds",
-        "BreakdownOfAcquisitionFunds",
-        "AcquisitionFund",
-    )
-    return any(p in name for p in patterns)
+    return _name_contains_any(name, _FUND_SOURCE_PATTERNS)
 
 
 def _matches_joint_holder_name_pattern(name: str) -> bool:

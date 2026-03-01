@@ -144,8 +144,8 @@ class TestFetchDocumentList:
         assert not any(r["docID"] == "S100ABC3" for r in result)
 
     @pytest.mark.asyncio
-    async def test_fetch_handles_api_error(self):
-        """Should return empty list on API HTTP error."""
+    async def test_fetch_raises_on_api_error(self):
+        """Should raise on API HTTP error so callers can retry."""
         mock_response = _mock_response(500)
 
         with patch.object(self.client, "_get_client") as mock_get:
@@ -153,9 +153,8 @@ class TestFetchDocumentList:
             mock_http.get = AsyncMock(return_value=mock_response)
             mock_get.return_value = mock_http
 
-            result = await self.client.fetch_document_list(date(2026, 2, 18))
-
-        assert result == []
+            with pytest.raises(httpx.HTTPStatusError):
+                await self.client.fetch_document_list(date(2026, 2, 18))
 
     @pytest.mark.asyncio
     async def test_fetch_handles_non_200_status(self):
@@ -176,16 +175,15 @@ class TestFetchDocumentList:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_fetch_handles_network_error(self):
-        """Should return empty list on network error."""
+    async def test_fetch_raises_on_network_error(self):
+        """Should raise on network error so callers can retry."""
         with patch.object(self.client, "_get_client") as mock_get:
             mock_http = AsyncMock()
             mock_http.get = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
             mock_get.return_value = mock_http
 
-            result = await self.client.fetch_document_list(date(2026, 2, 18))
-
-        assert result == []
+            with pytest.raises(httpx.ConnectError):
+                await self.client.fetch_document_list(date(2026, 2, 18))
 
     @pytest.mark.asyncio
     async def test_fetch_empty_results(self):

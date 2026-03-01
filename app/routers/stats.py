@@ -16,6 +16,7 @@ router = APIRouter(tags=["Stats"])
 # Lightweight TTL cache for stats responses (avoids hammering DB on every dashboard refresh)
 _stats_cache: dict[str, tuple[float, dict]] = {}
 _STATS_CACHE_TTL = 5.0  # seconds — short enough to feel real-time
+_STATS_CACHE_MAX = 50
 
 
 @router.get("/api/stats")
@@ -87,5 +88,13 @@ async def get_stats(
             "poll_interval": settings.POLL_INTERVAL,
         }
 
+        # Evict expired / oldest entries to prevent unbounded growth
+        if len(_stats_cache) >= _STATS_CACHE_MAX:
+            expired = [k for k, (ts, _) in _stats_cache.items() if now - ts > _STATS_CACHE_TTL]
+            for k in expired:
+                del _stats_cache[k]
+            if len(_stats_cache) >= _STATS_CACHE_MAX:
+                oldest_key = min(_stats_cache, key=lambda k: _stats_cache[k][0])
+                del _stats_cache[oldest_key]
         _stats_cache[today_str] = (now, result)
         return result

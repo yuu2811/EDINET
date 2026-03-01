@@ -176,7 +176,10 @@ async def market_movements(
         try:
             parsed = date.fromisoformat(target_date)
         except ValueError:
-            parsed = datetime.now(JST).date()
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid date format: {target_date!r} (expected YYYY-MM-DD)",
+            )
     else:
         parsed = datetime.now(JST).date()
     date_str = parsed.isoformat()
@@ -404,8 +407,13 @@ def _group_filings(filings, key_fn, init_fn):
             groups[key] = {**init_fn(f), "filing_count": 0, "history": []}
         g = groups[key]
         g["filing_count"] += 1
-        # Always update latest_ratio / latest_date to the most recent filing
+        # Update latest_ratio / latest_date to the most recent filing with data.
+        # Filings arrive newest-first, so the first non-None ratio we see is
+        # the most recent known ratio for this group.
         if f.holding_ratio is not None:
+            if g.get("latest_ratio") is None:
+                g["latest_ratio"] = f.holding_ratio
+                g["latest_date"] = f.submit_date_time
             g["history"].append({
                 "date": f.submit_date_time,
                 "ratio": f.holding_ratio,
@@ -491,7 +499,7 @@ async def filer_profile(
         total_count, filings = await _profile_query(
             session, Filing.edinet_code == edinet_code, limit, offset,
         )
-        if not filings:
+        if total_count == 0:
             raise HTTPException(status_code=404, detail="Filer not found")
 
         targets = _group_filings(
@@ -556,7 +564,7 @@ async def company_profile(
 
     async with get_async_session()() as session:
         total_count, filings = await _profile_query(session, where, limit, offset)
-        if not filings:
+        if total_count == 0:
             raise HTTPException(status_code=404, detail="Company not found")
 
         company_name = next((f.target_company_name for f in filings if f.target_company_name), None)

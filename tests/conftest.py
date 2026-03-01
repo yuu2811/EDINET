@@ -1,9 +1,7 @@
 """Shared fixtures for tests."""
 
-import asyncio
 import os
 
-import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -14,14 +12,6 @@ os.environ["POLL_INTERVAL"] = "9999"
 
 from app.database import Base
 from app.models import Filing, TenderOffer, Watchlist
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create a session-scoped event loop."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest_asyncio.fixture

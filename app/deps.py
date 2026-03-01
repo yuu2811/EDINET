@@ -59,7 +59,7 @@ def validate_edinet_code(edinet_code: str) -> str:
     return code
 
 
-_DOC_ID_RE = re.compile(r"^S\w{7,12}$")
+_DOC_ID_RE = re.compile(r"^S[A-Za-z0-9]{7,12}$")
 
 
 def validate_doc_id(doc_id: str) -> str:

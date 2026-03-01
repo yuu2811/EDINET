@@ -19,8 +19,7 @@ import httpx
 from fastapi import APIRouter
 from sqlalchemy import select
 
-from app.database import async_session
-from app.deps import validate_sec_code
+from app.deps import get_async_session, validate_sec_code
 from app.models import CompanyInfo, Filing
 
 logger = logging.getLogger(__name__)
@@ -31,14 +30,14 @@ router = APIRouter(prefix="/api/stock", tags=["Stock"])
 # In-memory cache with TTL
 # ---------------------------------------------------------------------------
 _cache: dict[str, tuple[float, dict]] = {}
-_CACHE_TTL: int = 0  # populated lazily from settings
+_CACHE_TTL: int | None = None  # populated lazily from settings
 _external_apis_failed_at: float = 0.0  # monotonic timestamp; 0 = not failed
 _EXTERNAL_RETRY_INTERVAL = 5 * 60  # retry external APIs after 5 minutes
 
 
 def _get_cache_ttl() -> int:
     global _CACHE_TTL
-    if _CACHE_TTL == 0:
+    if _CACHE_TTL is None:
         from app.config import settings
         _CACHE_TTL = settings.STOCK_CACHE_TTL
     return _CACHE_TTL
@@ -67,6 +66,11 @@ def _cache_set(key: str, value: dict) -> None:
         expired_keys = [k for k, (ts, _) in _cache.items() if now - ts > ttl]
         for k in expired_keys:
             _cache.pop(k, None)
+        # If still over capacity after evicting expired, evict oldest entries
+        if len(_cache) >= _CACHE_MAX_SIZE:
+            sorted_keys = sorted(_cache, key=lambda k: _cache[k][0])
+            for k in sorted_keys[: len(_cache) - _CACHE_MAX_SIZE + 1]:
+                _cache.pop(k, None)
     _cache[key] = (time.monotonic(), value)
 
 
@@ -250,7 +254,7 @@ async def _lookup_company_from_filings(ticker: str) -> str | None:
     five_digit = ticker + "0"
 
     try:
-        async with async_session() as session:
+        async with get_async_session()() as session:
             stmt = (
                 select(Filing.target_company_name)
                 .where(
@@ -280,7 +284,7 @@ async def _lookup_company_info(ticker: str) -> dict | None:
     Returns dict with shares_outstanding, net_assets, company_name, or None.
     """
     try:
-        async with async_session() as session:
+        async with get_async_session()() as session:
             stmt = select(CompanyInfo).where(CompanyInfo.sec_code == ticker)
             result = await session.execute(stmt)
             info = result.scalar_one_or_none()
@@ -495,7 +499,7 @@ async def _fetch_yahoo_quote_summary(
         # --- price module ---
         price_info = summary.get("price") or {}
         market_cap_raw = _raw(price_info.get("marketCap"))
-        if market_cap_raw:
+        if market_cap_raw is not None:
             result["market_cap"] = market_cap_raw
 
         name = price_info.get("shortName") or price_info.get("longName")
@@ -503,7 +507,7 @@ async def _fetch_yahoo_quote_summary(
             result["name"] = name
 
         reg_price = _raw(price_info.get("regularMarketPrice"))
-        if reg_price:
+        if reg_price is not None:
             result["current_price"] = reg_price
 
         # Change from previous close
@@ -515,7 +519,7 @@ async def _fetch_yahoo_quote_summary(
             result["price_change_pct"] = round(float(change_pct) * 100, 2)
 
         prev_close = _raw(price_info.get("regularMarketPreviousClose"))
-        if prev_close:
+        if prev_close is not None:
             result["previous_close"] = prev_close
 
         # --- defaultKeyStatistics module ---
