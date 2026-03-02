@@ -3024,6 +3024,14 @@ body {
     color: var(--text-dim);
     flex-shrink: 0;
 }
+.profile-tob-filer a.filer-link,
+.profile-tob-target a.filer-link {
+    text-decoration: none;
+}
+.profile-tob-filer a.filer-link:hover,
+.profile-tob-target a.filer-link:hover {
+    color: var(--accent-cyan);
+}
 .profile-tob-pdf {
     color: var(--accent-blue);
     text-decoration: none;
@@ -4107,6 +4115,24 @@ body {
    Tender Offer (TOB / 公開買付) Panel
    ========================================================================== */
 
+.tob-search-input {
+    flex: 1;
+    max-width: 120px;
+    padding: 2px 6px;
+    font-size: var(--font-size-xs);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    outline: none;
+}
+.tob-search-input:focus {
+    border-color: var(--accent-cyan);
+}
+.tob-search-input::placeholder {
+    color: var(--text-dim);
+}
+
 .tob-list {
     max-height: 320px;
     overflow-y: auto;
@@ -4188,6 +4214,12 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
 }
+.tob-filer a.filer-link {
+    color: var(--text-primary);
+}
+.tob-filer a.filer-link:hover {
+    color: var(--accent-cyan);
+}
 
 .tob-target {
     font-size: var(--font-size-xs);
@@ -4196,6 +4228,12 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     margin-top: 2px;
+}
+.tob-target a.filer-link {
+    color: var(--text-secondary);
+}
+.tob-target a.filer-link:hover {
+    color: var(--accent-cyan);
 }
 
 .tob-links {
