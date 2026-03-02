@@ -29,6 +29,7 @@ const state = {
     soundEnabled: true,
     notificationsEnabled: false,
     searchQuery: '',
+    tobSearchQuery: '', // TOB panel search filter
     filterMode: 'all', // all | new | change | amendment
     sortMode: 'time-desc',
     viewMode: 'cards', // cards | table
@@ -490,15 +491,29 @@ function initEventListeners() {
     document.getElementById('btn-poll').addEventListener('click', () => triggerManualPoll(document.getElementById('btn-poll')));
 
     // Feed search (debounced to avoid excessive re-renders on fast typing)
+    // Also syncs to TOB panel when TOB-specific search is empty
     let _searchDebounce = null;
     document.getElementById('feed-search').addEventListener('input', (e) => {
         state.searchQuery = e.target.value.toLowerCase();
         clearTimeout(_searchDebounce);
         _searchDebounce = setTimeout(() => {
             renderFeed();
+            // Sync to TOB panel when its own search is empty
+            if (!state.tobSearchQuery) renderTobPanel();
             savePreferences();
         }, 150);
     });
+
+    // TOB search (debounced)
+    let _tobSearchDebounce = null;
+    const tobSearchEl = document.getElementById('tob-search');
+    if (tobSearchEl) {
+        tobSearchEl.addEventListener('input', (e) => {
+            state.tobSearchQuery = e.target.value.toLowerCase();
+            clearTimeout(_tobSearchDebounce);
+            _tobSearchDebounce = setTimeout(() => renderTobPanel(), 150);
+        });
+    }
 
     // Feed filter
     document.getElementById('feed-filter').addEventListener('change', (e) => {
@@ -858,25 +873,42 @@ function renderTobPanel() {
     const badge = document.getElementById('tob-count');
     if (badge) badge.textContent = state.tobs.length || '';
 
-    if (state.tobs.length === 0) {
-        container.innerHTML = '<div class="tob-empty">公開買付関連の届出はありません</div>';
+    // Filter TOBs by search query (own search takes priority, falls back to main search)
+    let displayTobs = state.tobs;
+    const tobQuery = (state.tobSearchQuery || state.searchQuery || '').toLowerCase();
+    if (tobQuery) {
+        displayTobs = displayTobs.filter(t =>
+            (t.filer_name || '').toLowerCase().includes(tobQuery) ||
+            (t.target_company_name || '').toLowerCase().includes(tobQuery) ||
+            (t.tob_type || '').toLowerCase().includes(tobQuery) ||
+            (t.target_sec_code || '').includes(tobQuery) ||
+            (t.doc_description || '').toLowerCase().includes(tobQuery)
+        );
+    }
+
+    if (displayTobs.length === 0) {
+        container.innerHTML = tobQuery
+            ? '<div class="tob-empty">一致するTOBがありません</div>'
+            : '<div class="tob-empty">公開買付関連の届出はありません</div>';
         return;
     }
 
-    container.innerHTML = state.tobs.slice(0, 30).map(t => {
+    container.innerHTML = displayTobs.slice(0, 30).map(t => {
         const time = t.submit_date_time ? t.submit_date_time.slice(0, 16).replace('T', ' ') : '';
         const typeClass = t.doc_type_code === '260' ? 'tob-withdraw' :
                           t.doc_type_code === '290' || t.doc_type_code === '300' ? 'tob-opinion' : 'tob-filing';
         let links = '';
         if (t.pdf_url) links += `<a href="${escapeHtml(t.pdf_url)}" target="_blank" rel="noopener" class="tob-link" onclick="event.stopPropagation()">PDF</a>`;
         if (t.edinet_url) links += `<a href="${escapeHtml(t.edinet_url)}" target="_blank" rel="noopener" class="tob-link" onclick="event.stopPropagation()">EDINET</a>`;
+        const filerHtml = filerLinkHtml(t.filer_name || '(不明)', t.edinet_code);
+        const targetHtml = companyLinkHtml(t.target_company_name || t.doc_description || '', t.target_sec_code, false);
         return `<div class="tob-item ${typeClass}">
             <div class="tob-header">
                 <span class="tob-type-badge">${escapeHtml(t.tob_type)}</span>
                 <span class="tob-time">${escapeHtml(time)}</span>
             </div>
-            <div class="tob-filer">${escapeHtml(t.filer_name || '(不明)')}</div>
-            <div class="tob-target">${escapeHtml(t.target_company_name || t.doc_description || '')}</div>
+            <div class="tob-filer">${filerHtml}</div>
+            <div class="tob-target">${targetHtml}</div>
             <div class="tob-links">${links}</div>
         </div>`;
     }).join('');
@@ -2964,13 +2996,13 @@ function renderRelatedTobs(tobs) {
     for (const t of tobs) {
         const date = t.submit_date_time ? t.submit_date_time.slice(0, 10) : '-';
         const tobType = t.tob_type || 'TOB関連';
-        const target = t.target_company_name || '';
-        const filer = t.filer_name || '';
+        const filerHtml = filerLinkHtml(t.filer_name || '', t.edinet_code);
+        const targetHtml = companyLinkHtml(t.target_company_name || '', t.target_sec_code, false);
         html += `<div class="profile-tob-item">
             <span class="profile-tob-date">${escapeHtml(date)}</span>
             <span class="tob-type-badge tob-type-${escapeHtml(t.doc_type_code || '')}">${escapeHtml(tobType)}</span>
-            <span class="profile-tob-filer">${escapeHtml(filer)}</span>
-            <span class="profile-tob-target">→ ${escapeHtml(target)}</span>
+            <span class="profile-tob-filer">${filerHtml}</span>
+            <span class="profile-tob-target">→ ${targetHtml}</span>
             ${t.pdf_url ? `<a href="${escapeHtml(t.pdf_url)}" class="profile-tob-pdf" target="_blank">PDF</a>` : ''}
         </div>`;
     }
