@@ -1,6 +1,4 @@
-/* ==========================================================================
-   EDINET Large Shareholding Monitor - Fintech Pro Dashboard
-   ========================================================================== */
+/* EDINET Large Shareholding Monitor - Fintech Pro Dashboard */
 
 :root {
     /* === DEPTH SYSTEM: Layered glassmorphism palette === */
@@ -40,11 +38,7 @@
     --cyan-glow: rgba(0, 212, 240, 0.12);
     --blue: #4488ff;
     --purple: #b080ff;
-    --magenta: #ff40c0;
-    --yellow: #ffe800;
-    --green-bright: #40ffb0;
-    --red-bright: #ff5080;
-    --cyan-bright: #40e8ff;
+    --purple-dim: #7744cc;
 
     /* === TYPOGRAPHY === */
     --font-mono: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
@@ -85,10 +79,14 @@
     --glass-blur-heavy: 24px;
     --glass-border: 1px solid rgba(255, 255, 255, 0.08);
 
-    /* Aliases (referenced by timeline charts, profile panels, etc.) */
+    /* Aliases (referenced by timeline charts, profile panels, TOB, etc.) */
     --border: var(--border-primary);
     --muted: var(--text-dim);
     --accent-blue: var(--blue);
+    --accent-amber: var(--amber);
+    --accent-orange: var(--amber);
+    --accent-cyan: var(--cyan);
+    --text-red: var(--red);
     --font-size-base: var(--font-size-md);
 }
 
@@ -163,9 +161,7 @@ body > * {
     z-index: 1;
 }
 
-/* ==========================================================================
-   Accessibility
-   ========================================================================== */
+/* === Accessibility === */
 
 .visually-hidden {
     position: absolute;
@@ -197,9 +193,7 @@ body > * {
     outline-offset: 2px;
 }
 
-/* ==========================================================================
-   Header
-   ========================================================================== */
+/* === Header === */
 
 #header {
     display: flex;
@@ -290,7 +284,7 @@ body > * {
 }
 
 .poll-countdown.soon {
-    color: #ff9800;
+    color: var(--amber);
 }
 
 .header-right {
@@ -460,9 +454,7 @@ body > * {
     background: rgba(24, 208, 232, 0.08);
 }
 
-/* ==========================================================================
-   Ticker Bar
-   ========================================================================== */
+/* === Ticker Bar === */
 
 #ticker-bar {
     background: linear-gradient(90deg, rgba(10, 10, 20, 0.9) 0%, rgba(20, 14, 8, 0.6) 50%, rgba(10, 10, 20, 0.9) 100%);
@@ -561,9 +553,7 @@ body > * {
     100% { transform: translateX(-200%); }
 }
 
-/* ==========================================================================
-   Main Layout
-   ========================================================================== */
+/* === Main Layout === */
 
 #main-layout {
     display: flex;
@@ -573,9 +563,7 @@ body > * {
     background: linear-gradient(180deg, rgba(40, 40, 80, 0.3) 0%, rgba(20, 20, 40, 0.15) 100%);
 }
 
-/* ==========================================================================
-   Panels
-   ========================================================================== */
+/* === Panels === */
 
 .panel {
     background: var(--bg-panel);
@@ -626,9 +614,7 @@ body > * {
     box-shadow: 0 0 8px rgba(255, 179, 0, 0.4);
 }
 
-/* ==========================================================================
-   Feed Panel
-   ========================================================================== */
+/* === Feed Panel === */
 
 #feed-panel {
     flex: 1;
@@ -729,9 +715,7 @@ body > * {
     max-width: 200px;
 }
 
-/* ==========================================================================
-   Feed Card
-   ========================================================================== */
+/* === Feed Card === */
 
 .feed-card {
     background: var(--bg-card);
@@ -900,7 +884,7 @@ body > * {
 }
 
 .badge-watchlist {
-    background: linear-gradient(135deg, #8855dd 0%, var(--purple) 100%);
+    background: linear-gradient(135deg, var(--purple-dim) 0%, var(--purple) 100%);
     color: #fff;
     margin-left: 4px;
     box-shadow: 0 1px 4px rgba(179, 136, 255, 0.2);
@@ -1061,9 +1045,7 @@ body > * {
     transform: translateY(0) scale(0.97);
 }
 
-/* ==========================================================================
-   Sidebar
-   ========================================================================== */
+/* === Sidebar === */
 
 #sidebar {
     width: 290px;
@@ -1075,9 +1057,7 @@ body > * {
     border-left: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-/* ==========================================================================
-   Stats Panel
-   ========================================================================== */
+/* === Stats Panel === */
 
 .stats-grid {
     display: grid;
@@ -1147,9 +1127,7 @@ body > * {
     color: var(--text-secondary);
 }
 
-/* ==========================================================================
-   Watchlist Panel
-   ========================================================================== */
+/* === Watchlist Panel === */
 
 .panel-header-actions {
     display: flex;
@@ -1310,9 +1288,7 @@ body > * {
     background: rgba(255, 23, 68, 0.1);
 }
 
-/* ==========================================================================
-   Top Filers Panel
-   ========================================================================== */
+/* === Top Filers Panel === */
 
 .top-filers-list {
     padding: 4px;
@@ -1358,9 +1334,7 @@ body > * {
     font-variant-numeric: tabular-nums;
 }
 
-/* ==========================================================================
-   Modal
-   ========================================================================== */
+/* === Modal === */
 
 .modal {
     position: fixed;
@@ -1770,9 +1744,7 @@ body > * {
     font-family: var(--font-ui);
 }
 
-/* ==========================================================================
-   Confirm Dialog
-   ========================================================================== */
+/* === Confirm Dialog === */
 
 .dialog {
     position: relative;
@@ -1844,9 +1816,7 @@ body > * {
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
-/* ==========================================================================
-   Global Touch-Friendly Enhancements
-   ========================================================================== */
+/* === Global Touch-Friendly Enhancements === */
 
 a,
 button,
@@ -1869,9 +1839,7 @@ body {
     -webkit-tap-highlight-color: transparent;
 }
 
-/* ==========================================================================
-   Responsive - Tablet / Small Screens (max-width: 768px)
-   ========================================================================== */
+/* === Responsive - Tablet / Small Screens (max-width: 768px) === */
 
 @media (max-width: 768px) {
     #main-layout {
@@ -1918,9 +1886,7 @@ body {
     }
 }
 
-/* ==========================================================================
-   Responsive - Phone Screens (max-width: 480px) - iPhone 16 Pro = 393px
-   ========================================================================== */
+/* === Responsive - Phone Screens (max-width: 480px) - iPhone 16 Pro = 393px === */
 
 @media (max-width: 480px) {
 
@@ -2096,7 +2062,7 @@ body {
 
     .m-badge-new { background: var(--green-dim); }
     .m-badge-change { background: var(--amber-dim); }
-    .m-badge-amend { background: #8855dd; }
+    .m-badge-amend { background: var(--purple-dim); }
     .m-badge-watch { background: var(--purple); margin-left: 1px; }
     .m-badge-special { background: var(--purple); margin-left: 1px; }
     .m-badge-english { background: var(--blue); margin-left: 1px; font-size: 8px; }
@@ -2383,9 +2349,7 @@ body {
     }
 }
 
-/* ==========================================================================
-   Date Navigation
-   ========================================================================== */
+/* === Date Navigation === */
 
 .date-nav {
     display: flex;
@@ -2483,9 +2447,7 @@ body {
     border-color: var(--cyan);
 }
 
-/* ==========================================================================
-   Ratio Display (improved increase/decrease visibility)
-   ========================================================================== */
+/* === Ratio Display (improved increase/decrease visibility) === */
 
 /* --- Ratio Display: Flow Layout --- */
 .ratio-display {
@@ -2543,17 +2505,6 @@ body {
 .ratio-flow-curr.positive { color: var(--green); }
 .ratio-flow-curr.negative { color: var(--red); }
 .ratio-flow-curr.neutral  { color: var(--text-secondary); }
-
-/* Standalone current ratio (no previous) */
-.card-ratio {
-    font-size: var(--font-size-base);
-    font-weight: 800;
-    font-variant-numeric: tabular-nums;
-}
-
-.card-ratio.positive { color: var(--green); }
-.card-ratio.negative { color: var(--red); }
-.card-ratio.neutral  { color: var(--text-secondary); }
 
 /* Change pill */
 .ratio-change-pill {
@@ -2630,9 +2581,7 @@ body {
     50%      { opacity: 1; }
 }
 
-/* ==========================================================================
-   Market Summary Panel
-   ========================================================================== */
+/* === Market Summary Panel === */
 
 .summary-content {
     padding: 8px;
@@ -2671,17 +2620,9 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
-.summary-value.positive {
-    color: #00e676;
-}
-
-.summary-value.negative {
-    color: #ff1744;
-}
-
-.summary-value.neutral {
-    color: #a0a0b8;
-}
+.summary-value.positive { color: var(--green); }
+.summary-value.negative { color: var(--red); }
+.summary-value.neutral { color: var(--text-secondary); }
 
 .summary-highlight {
     padding: 10px 12px;
@@ -2728,9 +2669,7 @@ body {
     font-size: 11px;
 }
 
-/* ==========================================================================
-   Mobile Bottom Navigation (.mobile-bottom-nav)
-   ========================================================================== */
+/* === Mobile Bottom Navigation (.mobile-bottom-nav) === */
 
 .mobile-bottom-nav {
     display: none;
@@ -2826,9 +2765,7 @@ body {
 
 }
 
-/* ==========================================================================
-   Sidebar Overlay (slide-up panel on mobile)
-   ========================================================================== */
+/* === Sidebar Overlay (slide-up panel on mobile) === */
 
 .sidebar-overlay {
     display: none;
@@ -3041,9 +2978,7 @@ body {
     }
 }
 
-/* ==========================================================================
-   Utility
-   ========================================================================== */
+/* === Utility === */
 
 .hidden {
     display: none !important;
@@ -3055,9 +2990,7 @@ body {
 .text-cyan { color: var(--cyan); }
 .text-dim { color: var(--text-dim); }
 
-/* ==========================================================================
-   Stock Data Section (Modal)
-   ========================================================================== */
+/* === Stock Data Section (Modal) === */
 
 .modal-stock-section {
     margin-top: 20px;
@@ -3434,9 +3367,7 @@ body {
     width: 100%;
 }
 
-/* ==========================================================================
-   View Toggle (Cards / Table)
-   ========================================================================== */
+/* === View Toggle (Cards / Table) === */
 
 .view-toggle {
     display: flex;
@@ -3471,9 +3402,7 @@ body {
     background: var(--amber-glow);
 }
 
-/* ==========================================================================
-   Feed Table View
-   ========================================================================== */
+/* === Feed Table View === */
 
 .feed-table-wrapper {
     overflow-x: auto;
@@ -3671,9 +3600,7 @@ body {
     background: rgba(24, 208, 232, 0.06);
 }
 
-/* ==========================================================================
-   Card Market Data
-   ========================================================================== */
+/* === Card Market Data === */
 
 .card-market-data {
     display: flex;
@@ -3698,9 +3625,7 @@ body {
     border-color: rgba(30, 30, 52, 0.7);
 }
 
-/* ==========================================================================
-   Stock Data Section - Responsive (max-width: 480px)
-   ========================================================================== */
+/* === Stock Data Section - Responsive (max-width: 480px) === */
 
 @media (max-width: 480px) {
     .stock-info-bar {
@@ -3722,9 +3647,7 @@ body {
     }
 }
 
-/* ==========================================================================
-   Global Scrollbar Styling
-   ========================================================================== */
+/* === Global Scrollbar Styling === */
 
 ::-webkit-scrollbar {
     width: 6px;
@@ -3753,9 +3676,7 @@ body {
     scrollbar-color: rgba(60, 60, 110, 0.5) transparent;
 }
 
-/* ==========================================================================
-   Selection Styling
-   ========================================================================== */
+/* === Selection Styling === */
 
 ::selection {
     background: rgba(255, 179, 0, 0.3);
@@ -3763,9 +3684,7 @@ body {
     text-shadow: none;
 }
 
-/* ==========================================================================
-   Subtle panel separator glow
-   ========================================================================== */
+/* === Subtle panel separator glow === */
 
 #sidebar .panel + .panel {
     border-top: 1px solid rgba(255, 179, 0, 0.06);
@@ -3783,9 +3702,7 @@ body {
     pointer-events: none;
 }
 
-/* ==========================================================================
-   Chart Tooltip
-   ========================================================================== */
+/* === Chart Tooltip === */
 
 .chart-tooltip {
     display: none;
@@ -3828,9 +3745,7 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
-/* ==========================================================================
-   Stock Chart View (Dedicated Page)
-   ========================================================================== */
+/* === Stock Chart View (Dedicated Page) === */
 
 .stock-view {
     flex: 1;
@@ -4037,9 +3952,7 @@ body {
     min-height: 400px;
 }
 
-/* ==========================================================================
-   Watchlist Sparkline & Price
-   ========================================================================== */
+/* === Watchlist Sparkline & Price === */
 
 .watch-sparkline {
     flex-shrink: 0;
@@ -4060,9 +3973,7 @@ body {
     cursor: pointer;
 }
 
-/* ==========================================================================
-   Stock View - Responsive (max-width: 480px)
-   ========================================================================== */
+/* === Stock View - Responsive (max-width: 480px) === */
 
 @media (max-width: 480px) {
     .stock-view-header {
@@ -4126,15 +4037,13 @@ body {
     }
 }
 
-/* ====================================================================
-   Analytics & Rankings Panels
-   ==================================================================== */
+/* === Analytics & Rankings Panels === */
 
 .filter-select-sm {
     font-size: 11px;
     padding: 2px 6px;
-    background: var(--bg-card, #12121a);
-    color: var(--text-secondary, #999);
+    background: var(--bg-card);
+    color: var(--text-secondary);
     border: 1px solid #333;
     border-radius: 3px;
 }
@@ -4156,24 +4065,24 @@ body {
 .rankings-dir-label {
     font-size: 10px;
     text-transform: uppercase;
-    color: var(--text-dim, #666);
+    color: var(--text-dim);
     letter-spacing: 0.5px;
 }
 
 .rankings-dir-value {
     font-size: 13px;
     font-weight: 700;
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-mono);
 }
 
-.rankings-dir-value.positive { color: var(--green, #00e676); }
-.rankings-dir-value.negative { color: var(--red, #ff5252); }
-.rankings-dir-value.neutral { color: var(--text-secondary, #999); }
+.rankings-dir-value.positive { color: var(--green); }
+.rankings-dir-value.negative { color: var(--red); }
+.rankings-dir-value.neutral { color: var(--text-secondary); }
 
 .rankings-dir-detail {
     font-size: 11px;
     margin-left: auto;
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-mono);
 }
 
 .rankings-section {
@@ -4184,7 +4093,7 @@ body {
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 1px;
-    color: var(--accent-amber, #ffa500);
+    color: var(--accent-amber);
     padding: 4px 0 2px;
     border-bottom: 1px solid rgba(255,165,0,0.15);
     margin-bottom: 4px;
@@ -4211,14 +4120,14 @@ body {
 
 .sector-name {
     font-size: 12px;
-    color: var(--text-primary, #eee);
+    color: var(--text-primary);
     font-weight: 500;
 }
 
 .sector-stats {
     font-size: 10px;
-    color: var(--text-dim, #666);
-    font-family: var(--font-mono, monospace);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
 }
 
 .sector-bar-bg {
@@ -4236,9 +4145,7 @@ body {
     box-shadow: 0 0 8px rgba(255, 179, 0, 0.2);
 }
 
-/* ==========================================================================
-   Accessibility & UX Enhancements
-   ========================================================================== */
+/* === Accessibility & UX Enhancements === */
 
 /* L3: Respect reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
@@ -4252,9 +4159,7 @@ body {
     .status-dot { animation: none !important; }
 }
 
-/* ==========================================================================
-   UI Polish — Button States, Focus, Touch Targets
-   ========================================================================== */
+/* === UI Polish — Button States, Focus, Touch Targets === */
 
 /* Disabled button states */
 .btn-icon:disabled,
@@ -4290,9 +4195,7 @@ body {
     }
 }
 
-/* ==========================================================================
-   UI Polish — Toast Notification
-   ========================================================================== */
+/* === UI Polish — Toast Notification === */
 
 #toast-container {
     position: fixed;
@@ -4345,9 +4248,7 @@ body {
     text-shadow: 0 1px 2px rgba(255, 255, 255, 0.2);
 }
 
-/* ==========================================================================
-   UI Polish — Click Feedback & Micro-interactions
-   ========================================================================== */
+/* === UI Polish — Click Feedback & Micro-interactions === */
 
 /* Scale-down feedback on tap for mobile cards */
 .m-card:active,
@@ -4393,9 +4294,7 @@ body {
     line-height: 1.6;
 }
 
-/* ==========================================================================
-   UI Polish — Empty States Consistency
-   ========================================================================== */
+/* === UI Polish — Empty States Consistency === */
 
 .feed-empty,
 .watchlist-empty,
@@ -4432,19 +4331,13 @@ body {
     font-family: var(--font-ui);
 }
 
-/* Loading pulse for empty state spinner */
-@keyframes pulse-soft {
-    0%, 100% { opacity: 0.4; }
-    50% { opacity: 0.8; }
-}
+/* Reuse @keyframes pulse for empty state */
 
 .feed-empty .empty-icon[style*="animation"] {
-    animation: pulse-soft 1.5s ease-in-out infinite !important;
+    animation: pulse 1.5s ease-in-out infinite !important;
 }
 
-/* ==========================================================================
-   UI Polish — Mobile Letter Spacing
-   ========================================================================== */
+/* === UI Polish — Mobile Letter Spacing === */
 
 @media (max-width: 480px) {
     .panel-title {
@@ -4461,9 +4354,7 @@ body {
     }
 }
 
-/* ==========================================================================
-   Tender Offer (TOB / 公開買付) Panel
-   ========================================================================== */
+/* === Tender Offer (TOB / 公開買付) Panel === */
 
 .tob-search-input {
     flex: 1;
