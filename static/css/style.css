@@ -126,6 +126,15 @@ body::before {
     animation: ambient-shift 30s ease-in-out infinite alternate;
 }
 
+/* R1: Film-grain noise texture — organic depth via SVG data URI */
+body::before {
+    background-image:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"),
+        radial-gradient(ellipse 800px 600px at 15% 20%, rgba(255, 179, 0, 0.03) 0%, transparent 60%),
+        radial-gradient(ellipse 600px 800px at 85% 70%, rgba(0, 212, 240, 0.03) 0%, transparent 60%),
+        radial-gradient(ellipse 500px 500px at 50% 50%, rgba(176, 128, 255, 0.02) 0%, transparent 60%);
+}
+
 @keyframes ambient-shift {
     0% {
         background:
@@ -203,11 +212,37 @@ body > * {
     background: linear-gradient(180deg, rgba(10, 10, 24, 0.92) 0%, rgba(10, 10, 24, 0.8) 100%);
     backdrop-filter: blur(var(--glass-blur-heavy));
     -webkit-backdrop-filter: blur(var(--glass-blur-heavy));
-    border-bottom: var(--glass-border);
-    box-shadow: 0 1px 0 var(--border-glow), var(--shadow-inset), 0 4px 20px rgba(0, 0, 0, 0.3);
+    border-bottom: none;
+    box-shadow: var(--shadow-inset), 0 4px 20px rgba(0, 0, 0, 0.3);
     flex-shrink: 0;
     height: 44px;
     z-index: 100;
+    position: relative;
+}
+
+/* R2: Flowing gradient border — data-stream motif under header */
+#header::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        var(--amber) 15%,
+        var(--cyan) 40%,
+        var(--purple) 65%,
+        var(--green) 85%,
+        transparent 100%);
+    background-size: 200% 100%;
+    animation: header-border-flow 8s linear infinite;
+    opacity: 0.6;
+}
+
+@keyframes header-border-flow {
+    0% { background-position: 0% center; }
+    100% { background-position: 200% center; }
 }
 
 .header-left {
@@ -335,10 +370,26 @@ body > * {
     flex-shrink: 0;
 }
 
+/* R3: Animated ring indicator for connection status */
 .status-dot.connected {
     background: var(--green);
     box-shadow: 0 0 6px var(--green), 0 0 14px rgba(0, 240, 128, 0.4);
     animation: pulse-connected 2s ease-in-out infinite;
+    position: relative;
+}
+
+.status-dot.connected::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border: 1.5px solid transparent;
+    border-top-color: var(--green);
+    border-radius: 50%;
+    animation: status-ring-spin 1.5s linear infinite;
+}
+
+@keyframes status-ring-spin {
+    to { transform: rotate(360deg); }
 }
 
 .status-dot.disconnected {
@@ -456,6 +507,7 @@ body > * {
 
 /* === Ticker Bar === */
 
+/* R4: Ticker bar with floating dust particles */
 #ticker-bar {
     background: linear-gradient(90deg, rgba(10, 10, 20, 0.9) 0%, rgba(20, 14, 8, 0.6) 50%, rgba(10, 10, 20, 0.9) 100%);
     border-bottom: 1px solid rgba(255, 179, 0, 0.1);
@@ -465,6 +517,24 @@ body > * {
     flex-shrink: 0;
     height: 28px;
     position: relative;
+}
+
+#ticker-bar .ticker-particle {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    background: var(--amber);
+    border-radius: 50%;
+    opacity: 0;
+    animation: ticker-dust 6s linear infinite;
+    pointer-events: none;
+}
+
+@keyframes ticker-dust {
+    0% { opacity: 0; transform: translateY(0) scale(1); }
+    20% { opacity: 0.6; }
+    80% { opacity: 0.3; }
+    100% { opacity: 0; transform: translateY(-18px) scale(0.5); }
 }
 
 #ticker-bar::before {
@@ -4506,4 +4576,485 @@ body {
 .joint-holder-item::before {
     content: "\2022 ";
     color: var(--accent-cyan);
+}
+
+/* ========================================================================
+   R5: Frosted-glass panel headers with animated light leak
+   ======================================================================== */
+
+.panel-header {
+    position: relative;
+    overflow: hidden;
+}
+
+.panel-header::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -100%;
+    width: 60%;
+    height: 200%;
+    background: linear-gradient(
+        105deg,
+        transparent 40%,
+        rgba(255, 255, 255, 0.015) 45%,
+        rgba(255, 255, 255, 0.04) 50%,
+        rgba(255, 255, 255, 0.015) 55%,
+        transparent 60%
+    );
+    animation: panel-light-leak 12s ease-in-out infinite;
+    pointer-events: none;
+}
+
+@keyframes panel-light-leak {
+    0%, 100% { left: -100%; }
+    50% { left: 150%; }
+}
+
+/* ========================================================================
+   R6: Stat items with inner ambient glow on hover
+   ======================================================================== */
+
+.stat-item {
+    position: relative;
+}
+
+.stat-item::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 60%;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--amber), transparent);
+    opacity: 0;
+    transition: opacity var(--duration-normal) ease, width var(--duration-normal) var(--ease-out);
+    border-radius: 1px;
+    box-shadow: 0 0 12px rgba(255, 179, 0, 0.4);
+}
+
+.stat-item:hover::after {
+    opacity: 0.7;
+    width: 80%;
+}
+
+/* ========================================================================
+   R7: Chromatic aberration shift on feed card hover
+   ======================================================================== */
+
+.feed-card {
+    position: relative;
+    isolation: isolate;
+}
+
+.feed-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    opacity: 0;
+    transition: opacity var(--duration-normal) ease;
+    pointer-events: none;
+    box-shadow:
+        -1px 0 0 rgba(0, 212, 240, 0.15),
+        1px 0 0 rgba(255, 32, 80, 0.15);
+    z-index: -1;
+}
+
+.feed-card:hover::before {
+    opacity: 1;
+}
+
+/* ========================================================================
+   R8: Liquid gradient badge evolution — animated color cycling
+   ======================================================================== */
+
+.badge-new {
+    background: linear-gradient(135deg, var(--green-dim) 0%, var(--green) 50%, var(--cyan) 100%);
+    background-size: 200% 200%;
+    animation: badge-hologram 3s ease-in-out infinite, badge-liquid 6s ease-in-out infinite;
+}
+
+.badge-change {
+    background: linear-gradient(135deg, var(--amber-dim) 0%, var(--amber) 50%, #ffe066 100%);
+    background-size: 200% 200%;
+    animation: badge-hologram 3s ease-in-out infinite, badge-liquid 6s ease-in-out infinite;
+}
+
+.badge-amendment {
+    background: linear-gradient(135deg, #7744cc 0%, var(--purple) 50%, var(--cyan) 100%);
+    background-size: 200% 200%;
+    animation: badge-hologram 3s ease-in-out infinite, badge-liquid 6s ease-in-out infinite;
+}
+
+@keyframes badge-liquid {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+}
+
+/* ========================================================================
+   R9: Cinematic modal reveal with vignette overlay
+   ======================================================================== */
+
+.modal-overlay {
+    background:
+        radial-gradient(ellipse at center, rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.85) 100%);
+}
+
+.modal-content {
+    animation: modal-cinematic-in var(--duration-slow) var(--ease-out);
+}
+
+@keyframes modal-cinematic-in {
+    0% {
+        opacity: 0;
+        transform: scale(0.88) translateY(30px) perspective(600px) rotateX(4deg);
+        filter: blur(6px) brightness(1.3);
+    }
+    60% {
+        filter: blur(0) brightness(1.05);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1) translateY(0) perspective(600px) rotateX(0);
+        filter: blur(0) brightness(1);
+    }
+}
+
+/* ========================================================================
+   R10: Data-stream scanline effect on feed list
+   ======================================================================== */
+
+.feed-list {
+    position: relative;
+}
+
+.feed-list::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 100%;
+    background: repeating-linear-gradient(
+        0deg,
+        transparent 0px,
+        transparent 2px,
+        rgba(255, 255, 255, 0.008) 2px,
+        rgba(255, 255, 255, 0.008) 4px
+    );
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0.5;
+}
+
+/* ========================================================================
+   R11: Scrollbar with animated gradient thumb hover glow
+   ======================================================================== */
+
+::-webkit-scrollbar-thumb {
+    transition: box-shadow 0.3s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgba(255, 179, 0, 0.5) 0%, rgba(0, 212, 240, 0.5) 100%);
+    box-shadow: 0 0 12px rgba(255, 179, 0, 0.3), 0 0 6px rgba(0, 212, 240, 0.2);
+}
+
+::-webkit-scrollbar-thumb:active {
+    background: linear-gradient(180deg, var(--amber) 0%, var(--cyan) 100%);
+    box-shadow: 0 0 16px rgba(255, 179, 0, 0.5), 0 0 8px rgba(0, 212, 240, 0.3);
+}
+
+/* ========================================================================
+   R12: Pulse-ring ripple on new filing flash
+   ======================================================================== */
+
+.feed-card.flash::after,
+.m-card.flash::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border: 2px solid var(--amber);
+    border-radius: inherit;
+    opacity: 0;
+    animation: filing-pulse-ring 2s ease-out;
+    pointer-events: none;
+}
+
+@keyframes filing-pulse-ring {
+    0% {
+        inset: 0;
+        opacity: 0.8;
+        border-width: 2px;
+    }
+    100% {
+        inset: -12px;
+        opacity: 0;
+        border-width: 1px;
+    }
+}
+
+/* ========================================================================
+   R13: Aurora borealis effect on sidebar panel separators
+   ======================================================================== */
+
+#sidebar .panel + .panel::before {
+    height: 2px;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        var(--cyan) 20%,
+        var(--green) 40%,
+        var(--amber) 60%,
+        var(--purple) 80%,
+        transparent 100%);
+    background-size: 300% 100%;
+    animation: aurora-flow 10s linear infinite;
+    opacity: 0.4;
+}
+
+@keyframes aurora-flow {
+    0% { background-position: 0% center; }
+    100% { background-position: 300% center; }
+}
+
+/* ========================================================================
+   R14: Enhanced mobile bottom nav — morphic active states with glow pool
+   ======================================================================== */
+
+@media (max-width: 480px) {
+    .mobile-bottom-nav .nav-item.active {
+        position: relative;
+    }
+
+    .mobile-bottom-nav .nav-item.active::after {
+        content: '';
+        position: absolute;
+        bottom: 6px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 24px;
+        height: 24px;
+        background: radial-gradient(circle, rgba(255, 179, 0, 0.2) 0%, transparent 70%);
+        border-radius: 50%;
+        pointer-events: none;
+        animation: nav-glow-pool 2s ease-in-out infinite;
+    }
+
+    @keyframes nav-glow-pool {
+        0%, 100% { opacity: 0.5; transform: translateX(-50%) scale(1); }
+        50% { opacity: 1; transform: translateX(-50%) scale(1.3); }
+    }
+}
+
+/* ========================================================================
+   R15: Typewriter cursor blink on focused search input
+   ======================================================================== */
+
+.search-input:focus,
+.stock-search-input:focus,
+.tob-search-input:focus {
+    caret-color: var(--cyan);
+    animation: input-focus-glow 2s ease-in-out infinite;
+}
+
+@keyframes input-focus-glow {
+    0%, 100% {
+        box-shadow: 0 0 0 3px rgba(0, 212, 240, 0.1), 0 0 16px rgba(0, 212, 240, 0.06);
+    }
+    50% {
+        box-shadow: 0 0 0 3px rgba(0, 212, 240, 0.18), 0 0 24px rgba(0, 212, 240, 0.12);
+    }
+}
+
+/* ========================================================================
+   R16: Holographic card reflection on hover — diagonal sweep
+   ======================================================================== */
+
+.feed-card {
+    overflow: hidden;
+}
+
+.feed-card::after {
+    content: '';
+    position: absolute;
+    top: -100%;
+    left: -100%;
+    width: 60%;
+    height: 300%;
+    background: linear-gradient(
+        115deg,
+        transparent 30%,
+        rgba(255, 255, 255, 0.03) 45%,
+        rgba(255, 255, 255, 0.06) 50%,
+        rgba(255, 255, 255, 0.03) 55%,
+        transparent 70%
+    );
+    transition: left 0.6s var(--ease-out), top 0.6s var(--ease-out);
+    pointer-events: none;
+    z-index: 2;
+}
+
+.feed-card:hover::after {
+    left: 120%;
+    top: -50%;
+}
+
+/* ========================================================================
+   R17: Toast notification with animated progress countdown bar
+   ======================================================================== */
+
+.toast {
+    position: relative;
+    overflow: hidden;
+}
+
+.toast::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    width: 100%;
+    background: rgba(255, 255, 255, 0.4);
+    animation: toast-progress 4s linear forwards;
+}
+
+@keyframes toast-progress {
+    from { width: 100%; }
+    to { width: 0%; }
+}
+
+.toast-error::after {
+    background: rgba(255, 255, 255, 0.6);
+}
+
+.toast-success::after {
+    background: rgba(0, 0, 0, 0.3);
+}
+
+/* ========================================================================
+   R18: Breathing ambient glow for watchlist-matched cards
+   ======================================================================== */
+
+.feed-card.watchlist-match {
+    position: relative;
+}
+
+.feed-card.watchlist-match::before {
+    box-shadow:
+        -1px 0 0 rgba(176, 128, 255, 0.2),
+        1px 0 0 rgba(176, 128, 255, 0.2),
+        0 0 20px rgba(176, 128, 255, 0.1);
+    opacity: 1;
+    animation: watchlist-breathe 3s ease-in-out infinite;
+}
+
+@keyframes watchlist-breathe {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+}
+
+/* ========================================================================
+   R19: Depth-aware shadow system — elevated focus ring
+   ======================================================================== */
+
+.feed-card:focus-visible {
+    outline: none;
+    box-shadow:
+        0 0 0 2px var(--cyan),
+        0 0 0 4px rgba(0, 212, 240, 0.15),
+        0 8px 32px rgba(0, 212, 240, 0.12),
+        0 2px 8px rgba(0, 0, 0, 0.3);
+    transform: translateY(-2px);
+    z-index: 5;
+}
+
+.btn-icon:focus-visible,
+.btn-small:focus-visible {
+    outline: none;
+    box-shadow:
+        0 0 0 2px var(--cyan),
+        0 0 0 4px rgba(0, 212, 240, 0.12),
+        0 4px 16px rgba(0, 212, 240, 0.1);
+    transform: translateY(-1px);
+}
+
+.dialog-btn:focus-visible {
+    outline: none;
+    box-shadow:
+        0 0 0 2px var(--cyan),
+        0 0 0 4px rgba(0, 212, 240, 0.12);
+}
+
+/* ========================================================================
+   R20: Cinematic page transition — stock view & mobile overlay reveals
+   ======================================================================== */
+
+.stock-view {
+    animation: page-reveal 0.5s var(--ease-out) both;
+}
+
+@keyframes page-reveal {
+    from {
+        opacity: 0;
+        transform: translateY(12px) scale(0.98);
+        filter: blur(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: blur(0);
+    }
+}
+
+/* Mobile overlay sheet with spring entrance */
+@media (max-width: 480px) {
+    .overlay-sheet {
+        animation: sheet-spring-up var(--duration-slow) var(--ease-spring);
+    }
+
+    @keyframes sheet-spring-up {
+        0% {
+            transform: translateY(100%);
+            opacity: 0.5;
+        }
+        70% {
+            transform: translateY(-3%);
+            opacity: 1;
+        }
+        100% {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    }
+
+    .overlay-backdrop {
+        animation: overlay-fade-in var(--duration-normal) ease;
+    }
+
+    @keyframes overlay-fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+}
+
+/* Feed list card entrance with stagger — enhanced */
+.feed-card,
+.m-card {
+    animation: card-entrance 0.4s var(--ease-out) both;
+}
+
+@keyframes card-entrance {
+    from {
+        opacity: 0;
+        transform: translateY(12px) scale(0.97);
+        filter: blur(2px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: blur(0);
+    }
 }

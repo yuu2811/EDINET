@@ -381,6 +381,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadInitialData();
     initMobileNav();
     initPullToRefresh();
+    initTickerParticles();
     initStockView();
 
     // C4: Initialize AudioContext on first user gesture to avoid browser autoplay restrictions
@@ -3321,6 +3322,22 @@ function initMobileNav() {
 }
 
 // === Pull-to-Refresh Gesture ===
+
+/** R4: Spawn floating dust particles in ticker bar */
+function initTickerParticles() {
+    const ticker = $el('ticker-bar');
+    if (!ticker) return;
+    for (let i = 0; i < 12; i++) {
+        const p = document.createElement('span');
+        p.className = 'ticker-particle';
+        p.style.left = `${Math.random() * 100}%`;
+        p.style.top = `${14 + Math.random() * 14}px`;
+        p.style.animationDelay = `${Math.random() * 6}s`;
+        p.style.animationDuration = `${4 + Math.random() * 4}s`;
+        p.style.width = p.style.height = `${1 + Math.random() * 1.5}px`;
+        ticker.appendChild(p);
+    }
+}
 
 function initPullToRefresh() {
     const feedList = $el('feed-list');
