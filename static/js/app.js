@@ -3,9 +3,10 @@
  * Bloomberg terminal-style real-time dashboard
  */
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// === Helpers ===
+
+/** Shorthand for document.getElementById */
+const $el = (id) => document.getElementById(id);
 
 /** Format a Date object as YYYY-MM-DD in **local** time (not UTC). */
 function toLocalDateStr(d) {
@@ -16,9 +17,7 @@ function toLocalDateStr(d) {
     return `${y}-${m}-${day}`;
 }
 
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
+// === State ===
 
 const state = {
     filings: [],
@@ -46,9 +45,7 @@ let filingsAbortController = null; // AbortController for date navigation race c
 let _filteredFilings = []; // filtered list for modal arrow navigation
 const POLL_INTERVAL_MS = 60000; // matches server default
 
-// ---------------------------------------------------------------------------
-// Stock Data Cache & Fetcher
-// ---------------------------------------------------------------------------
+// === Stock Data Cache & Fetcher ===
 
 const stockCache = {}; // { secCode: { data, fetchedAt } }
 const STOCK_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
@@ -77,9 +74,7 @@ async function fetchStockData(secCode) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// === Helpers ===
 
 /**
  * Extract target company name from doc_description when target_company_name is null.
@@ -91,9 +86,7 @@ function extractTargetFromDescription(desc) {
     return m ? m[1] : null;
 }
 
-// ---------------------------------------------------------------------------
-// Shared UI Helpers (reduce code duplication)
-// ---------------------------------------------------------------------------
+// === Shared UI Helpers (reduce code duplication) ===
 
 /** Normalize 5-digit sec code to 4-digit */
 function normalizeSecCode(code) {
@@ -199,16 +192,23 @@ function updateToggleBtn(btn, active, onTitle, offTitle, onAria, offAria) {
 
 /** Sync mobile toggle button text and active class */
 function syncMobileToggle(elementId, active, onText, offText) {
-    const el = document.getElementById(elementId);
+    const el = $el(elementId);
     if (el) { el.classList.toggle('active', active); el.textContent = active ? onText : offText; }
 }
+
+/** Sync both desktop and mobile toggle buttons for a given setting */
+function syncToggleUI(btnId, mobileBtnId, active, onTitle, offTitle, onAria, offAria, onText, offText) {
+    updateToggleBtn($el(btnId), active, onTitle, offTitle, onAria, offAria);
+    syncMobileToggle(mobileBtnId, active, onText, offText);
+}
+
+const SOUND_TOGGLE = ['btn-sound', 'mobile-btn-sound', 'サウンド ON', 'サウンド OFF', 'サウンドアラート: 有効', 'サウンドアラート: 無効', 'サウンド ON', 'サウンド OFF'];
+const NOTIFY_TOGGLE = ['btn-notify', 'mobile-btn-notify', '通知 ON', '通知 OFF', 'デスクトップ通知: 有効', 'デスクトップ通知: 無効', '通知 ON', '通知 OFF'];
 
 /** Toggle sound on/off — shared by desktop and mobile buttons */
 function toggleSound() {
     state.soundEnabled = !state.soundEnabled;
-    updateToggleBtn(document.getElementById('btn-sound'), state.soundEnabled,
-        'サウンド ON', 'サウンド OFF', 'サウンドアラート: 有効', 'サウンドアラート: 無効');
-    syncMobileToggle('mobile-btn-sound', state.soundEnabled, 'サウンド ON', 'サウンド OFF');
+    syncToggleUI(...SOUND_TOGGLE.slice(0, 2), state.soundEnabled, ...SOUND_TOGGLE.slice(2));
     savePreferences();
 }
 
@@ -223,18 +223,14 @@ async function toggleNotify() {
     if (perm === 'denied') {
         showToast('通知が拒否されました。ブラウザの設定から許可してください。');
     }
-    updateToggleBtn(document.getElementById('btn-notify'), state.notificationsEnabled,
-        '通知 ON', '通知 OFF', 'デスクトップ通知: 有効', 'デスクトップ通知: 無効');
-    syncMobileToggle('mobile-btn-notify', state.notificationsEnabled, '通知 ON', '通知 OFF');
+    syncToggleUI(...NOTIFY_TOGGLE.slice(0, 2), state.notificationsEnabled, ...NOTIFY_TOGGLE.slice(2));
     savePreferences();
 }
 
-// ---------------------------------------------------------------------------
-// Toast Notifications
-// ---------------------------------------------------------------------------
+// === Toast Notifications ===
 
 function showToast(message, type = 'error') {
-    let container = document.getElementById('toast-container');
+    let container = $el('toast-container');
     if (!container) {
         container = document.createElement('div');
         container.id = 'toast-container';
@@ -255,17 +251,13 @@ function showToast(message, type = 'error') {
     }, 4000);
 }
 
-// ---------------------------------------------------------------------------
-// Mobile Detection
-// ---------------------------------------------------------------------------
+// === Mobile Detection ===
 
 function isMobile() {
     return window.innerWidth <= 480;
 }
 
-// ---------------------------------------------------------------------------
-// localStorage Persistence
-// ---------------------------------------------------------------------------
+// === localStorage Persistence ===
 
 const PREFS_PREFIX = 'edinet_';
 
@@ -279,7 +271,7 @@ function savePreferences() {
             soundEnabled: state.soundEnabled,
             notificationsEnabled: state.notificationsEnabled,
             viewMode: state.viewMode,
-            watchlistPanelOpen: !(document.getElementById('watchlist-panel')?.classList.contains('panel-collapsed')),
+            watchlistPanelOpen: !($el('watchlist-panel')?.classList.contains('panel-collapsed')),
         };
         localStorage.setItem(PREFS_PREFIX + 'preferences', JSON.stringify(prefs));
     } catch (e) {
@@ -296,14 +288,14 @@ function loadPreferences() {
         // Restore filter mode
         if (prefs.filterMode) {
             state.filterMode = prefs.filterMode;
-            const filterEl = document.getElementById('feed-filter');
+            const filterEl = $el('feed-filter');
             if (filterEl) filterEl.value = prefs.filterMode;
         }
 
         // Restore sort mode
         if (prefs.sortMode) {
             state.sortMode = prefs.sortMode;
-            const sortEl = document.getElementById('feed-sort');
+            const sortEl = $el('feed-sort');
             if (sortEl) sortEl.value = prefs.sortMode;
         }
 
@@ -311,7 +303,7 @@ function loadPreferences() {
         if (prefs.selectedDate && /^\d{4}-\d{2}-\d{2}$/.test(prefs.selectedDate)
             && prefs.selectedDate <= toLocalDateStr(new Date())) {
             state.selectedDate = prefs.selectedDate;
-            const pickerEl = document.getElementById('date-picker');
+            const pickerEl = $el('date-picker');
             if (pickerEl) pickerEl.value = prefs.selectedDate;
         }
 
@@ -321,24 +313,20 @@ function loadPreferences() {
         // Restore sound preference
         if (typeof prefs.soundEnabled === 'boolean') {
             state.soundEnabled = prefs.soundEnabled;
-            updateToggleBtn(document.getElementById('btn-sound'), state.soundEnabled,
-                'サウンド ON', 'サウンド OFF', 'サウンドアラート: 有効', 'サウンドアラート: 無効');
-            syncMobileToggle('mobile-btn-sound', state.soundEnabled, 'サウンド ON', 'サウンド OFF');
+            syncToggleUI(...SOUND_TOGGLE.slice(0, 2), state.soundEnabled, ...SOUND_TOGGLE.slice(2));
         }
 
         // Restore notification preference
         if (typeof prefs.notificationsEnabled === 'boolean') {
             state.notificationsEnabled = prefs.notificationsEnabled;
-            updateToggleBtn(document.getElementById('btn-notify'), state.notificationsEnabled,
-                '通知 ON', '通知 OFF', 'デスクトップ通知: 有効', 'デスクトップ通知: 無効');
-            syncMobileToggle('mobile-btn-notify', state.notificationsEnabled, '通知 ON', '通知 OFF');
+            syncToggleUI(...NOTIFY_TOGGLE.slice(0, 2), state.notificationsEnabled, ...NOTIFY_TOGGLE.slice(2));
         }
 
         // Restore view mode
         if (prefs.viewMode === 'table' || prefs.viewMode === 'cards') {
             state.viewMode = prefs.viewMode;
-            const cardsBtn = document.getElementById('view-cards');
-            const tableBtn = document.getElementById('view-table');
+            const cardsBtn = $el('view-cards');
+            const tableBtn = $el('view-table');
             if (cardsBtn && tableBtn) {
                 cardsBtn.classList.toggle('active', state.viewMode === 'cards');
                 cardsBtn.setAttribute('aria-pressed', state.viewMode === 'cards');
@@ -349,7 +337,7 @@ function loadPreferences() {
 
         // Restore watchlist panel open/closed state
         if (typeof prefs.watchlistPanelOpen === 'boolean' && !prefs.watchlistPanelOpen) {
-            const panel = document.getElementById('watchlist-panel');
+            const panel = $el('watchlist-panel');
             if (panel) panel.classList.add('panel-collapsed');
         }
     } catch (e) {
@@ -357,9 +345,7 @@ function loadPreferences() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Initialization
-// ---------------------------------------------------------------------------
+// === Initialization ===
 
 document.addEventListener('DOMContentLoaded', () => {
     // iOS viewport height fix (100vh includes address bar)
@@ -395,6 +381,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadInitialData();
     initMobileNav();
     initPullToRefresh();
+    initTickerParticles();
     initStockView();
 
     // C4: Initialize AudioContext on first user gesture to avoid browser autoplay restrictions
@@ -409,7 +396,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // H5: Mobile back button closes modal
     window.addEventListener('popstate', () => {
-        const modal = document.getElementById('detail-modal');
+        const modal = $el('detail-modal');
         if (modal && !modal.classList.contains('hidden')) {
             closeModal();
         }
@@ -417,7 +404,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initClock() {
-    const clockEl = document.getElementById('current-time');
+    const clockEl = $el('current-time');
     if (!clockEl) return;
     function update() {
         const now = new Date();
@@ -430,7 +417,7 @@ function initClock() {
             second: '2-digit',
         });
         // Update mobile clock
-        const mobileClockEl = document.getElementById('mobile-clock');
+        const mobileClockEl = $el('mobile-clock');
         if (mobileClockEl) mobileClockEl.textContent = clockEl.textContent;
     }
     update();
@@ -439,7 +426,7 @@ function initClock() {
 }
 
 function initPollCountdown() {
-    const el = document.getElementById('poll-countdown');
+    const el = $el('poll-countdown');
     if (!el) return;
 
     function update() {
@@ -473,7 +460,7 @@ async function triggerManualPoll(btn) {
 
 function initEventListeners() {
     // Event delegation for feed cards/rows — single listener instead of per-card
-    document.getElementById('feed-list').addEventListener('click', (e) => {
+    $el('feed-list').addEventListener('click', (e) => {
         if (e.target.closest('a')) return;
         const card = e.target.closest('[data-doc-id]');
         if (!card) return;
@@ -482,18 +469,18 @@ function initEventListeners() {
     });
 
     // Sound toggle
-    document.getElementById('btn-sound').addEventListener('click', toggleSound);
+    $el('btn-sound').addEventListener('click', toggleSound);
 
     // Notification permission
-    document.getElementById('btn-notify').addEventListener('click', toggleNotify);
+    $el('btn-notify').addEventListener('click', toggleNotify);
 
     // Manual poll
-    document.getElementById('btn-poll').addEventListener('click', () => triggerManualPoll(document.getElementById('btn-poll')));
+    $el('btn-poll').addEventListener('click', () => triggerManualPoll($el('btn-poll')));
 
     // Feed search (debounced to avoid excessive re-renders on fast typing)
     // Also syncs to TOB panel when TOB-specific search is empty
     let _searchDebounce = null;
-    document.getElementById('feed-search').addEventListener('input', (e) => {
+    $el('feed-search').addEventListener('input', (e) => {
         state.searchQuery = e.target.value.toLowerCase();
         clearTimeout(_searchDebounce);
         _searchDebounce = setTimeout(() => {
@@ -506,7 +493,7 @@ function initEventListeners() {
 
     // TOB search (debounced)
     let _tobSearchDebounce = null;
-    const tobSearchEl = document.getElementById('tob-search');
+    const tobSearchEl = $el('tob-search');
     if (tobSearchEl) {
         tobSearchEl.addEventListener('input', (e) => {
             state.tobSearchQuery = e.target.value.toLowerCase();
@@ -516,13 +503,13 @@ function initEventListeners() {
     }
 
     // Feed filter
-    document.getElementById('feed-filter').addEventListener('change', (e) => {
+    $el('feed-filter').addEventListener('change', (e) => {
         state.filterMode = e.target.value;
         renderFeed();
         savePreferences();
     });
 
-    document.getElementById('feed-sort').addEventListener('change', (e) => {
+    $el('feed-sort').addEventListener('change', (e) => {
         state.sortMode = e.target.value;
         renderFeed();
         savePreferences();
@@ -530,52 +517,52 @@ function initEventListeners() {
 
     // View toggle (cards / table)
     for (const mode of ['cards', 'table']) {
-        document.getElementById(`view-${mode}`).addEventListener('click', () => {
+        $el(`view-${mode}`).addEventListener('click', () => {
             state.viewMode = mode;
             const other = mode === 'cards' ? 'table' : 'cards';
-            document.getElementById(`view-${mode}`).classList.add('active');
-            document.getElementById(`view-${mode}`).setAttribute('aria-pressed', 'true');
-            document.getElementById(`view-${other}`).classList.remove('active');
-            document.getElementById(`view-${other}`).setAttribute('aria-pressed', 'false');
+            $el(`view-${mode}`).classList.add('active');
+            $el(`view-${mode}`).setAttribute('aria-pressed', 'true');
+            $el(`view-${other}`).classList.remove('active');
+            $el(`view-${other}`).setAttribute('aria-pressed', 'false');
             renderFeed();
             savePreferences();
         });
     }
 
     // Watchlist add
-    document.getElementById('btn-add-watch').addEventListener('click', () => {
-        document.getElementById('watchlist-form').classList.toggle('hidden');
-        document.getElementById('watch-name').focus();
+    $el('btn-add-watch').addEventListener('click', () => {
+        $el('watchlist-form').classList.toggle('hidden');
+        $el('watch-name').focus();
     });
 
     // Watchlist panel stock chart button
-    const watchlistStockBtn = document.getElementById('btn-watchlist-stock');
+    const watchlistStockBtn = $el('btn-watchlist-stock');
     if (watchlistStockBtn) {
         watchlistStockBtn.addEventListener('click', () => showStockView());
     }
 
-    document.getElementById('btn-cancel-watch').addEventListener('click', () => {
-        document.getElementById('watchlist-form').classList.add('hidden');
+    $el('btn-cancel-watch').addEventListener('click', () => {
+        $el('watchlist-form').classList.add('hidden');
     });
 
-    document.getElementById('btn-save-watch').addEventListener('click', saveWatchItem);
+    $el('btn-save-watch').addEventListener('click', saveWatchItem);
 
     // Enter key in watchlist form
-    document.getElementById('watch-name').addEventListener('keydown', (e) => {
+    $el('watch-name').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') saveWatchItem();
     });
-    document.getElementById('watch-code').addEventListener('keydown', (e) => {
+    $el('watch-code').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') saveWatchItem();
     });
 
     // Rankings period selector (desktop + mobile sync)
     for (const id of ['rankings-period', 'mobile-rankings-period']) {
-        const el = document.getElementById(id);
+        const el = $el(id);
         if (el) {
             el.addEventListener('change', () => {
                 // Sync the other selector
                 const otherId = id === 'rankings-period' ? 'mobile-rankings-period' : 'rankings-period';
-                const other = document.getElementById(otherId);
+                const other = $el(otherId);
                 if (other) other.value = el.value;
                 loadAnalytics();
             });
@@ -592,7 +579,7 @@ function initEventListeners() {
             return;
         }
         // Arrow key / Tab navigation in modal (uses filtered list, not full list)
-        const modal = document.getElementById('detail-modal');
+        const modal = $el('detail-modal');
         if (modal && !modal.classList.contains('hidden')) {
             // L5: Focus trap — keep Tab within the modal
             if (e.key === 'Tab') {
@@ -627,15 +614,13 @@ function initEventListeners() {
         else if (e.key === ']' || e.key === 'ArrowRight') { navigateDate(1); }
         else if (e.key === 't' || e.key === 'T') {
             state.selectedDate = toLocalDateStr(new Date());
-            document.getElementById('date-picker').value = state.selectedDate;
+            $el('date-picker').value = state.selectedDate;
             savePreferences(); loadDateAndAutoFetch();
         }
     });
 }
 
-// ---------------------------------------------------------------------------
-// SSE Connection
-// ---------------------------------------------------------------------------
+// === SSE Connection ===
 
 let _wasDisconnected = false;
 
@@ -703,7 +688,7 @@ function initSSE() {
 function setConnectionStatus(status) {
     // status: 'connected' | 'disconnected' | 'reconnecting'
     state.connected = status === 'connected';
-    const el = document.getElementById('connection-status');
+    const el = $el('connection-status');
     if (!el) return;
     const dot = el.querySelector('.status-dot');
     const text = el.querySelector('.status-text');
@@ -727,7 +712,7 @@ function setConnectionStatus(status) {
     }
 
     // Show/hide the reconnection banner
-    const banner = document.getElementById('sse-banner');
+    const banner = $el('sse-banner');
     if (banner) {
         if (status === 'connected') {
             banner.classList.add('hidden');
@@ -743,7 +728,7 @@ function setConnectionStatus(status) {
     }
 
     // Update mobile connection status
-    const mobileStatus = document.getElementById('mobile-connection-status');
+    const mobileStatus = $el('mobile-connection-status');
     if (mobileStatus) {
         mobileStatus.textContent = status === 'connected' ? 'LIVE' :
                                     status === 'reconnecting' ? 'RECONNECTING...' : 'DISCONNECTED';
@@ -752,9 +737,7 @@ function setConnectionStatus(status) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Data Loading
-// ---------------------------------------------------------------------------
+// === Data Loading ===
 
 async function loadInitialData() {
     await Promise.all([loadFilings(), loadStats(), loadWatchlist(), loadAnalytics(), loadTobs()]);
@@ -767,7 +750,7 @@ async function loadFilings() {
     const signal = filingsAbortController.signal;
 
     // H1: Show loading indicator
-    const container = document.getElementById('feed-list');
+    const container = $el('feed-list');
     if (!container) return;
     if (state.filings.length === 0) {
         container.innerHTML = '<div class="feed-empty"><div class="empty-icon" style="animation:pulse 1s infinite">&#8987;</div><div class="empty-text">読み込み中...</div></div>';
@@ -835,9 +818,7 @@ async function loadStats() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tender Offer (TOB / 公開買付) Functions
-// ---------------------------------------------------------------------------
+// === Tender Offer (TOB / 公開買付) Functions ===
 
 async function loadTobs() {
     try {
@@ -868,9 +849,9 @@ function handleNewTob(tob) {
 }
 
 function renderTobPanel() {
-    const container = document.getElementById('tob-list');
+    const container = $el('tob-list');
     if (!container) return;
-    const badge = document.getElementById('tob-count');
+    const badge = $el('tob-count');
     if (badge) badge.textContent = state.tobs.length || '';
 
     // Filter TOBs by search query (own search takes priority, falls back to main search)
@@ -927,9 +908,7 @@ async function loadWatchlist() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// New Filing Handler
-// ---------------------------------------------------------------------------
+// === New Filing Handler ===
 
 function handleNewFiling(filing) {
     lastPollTime = Date.now();
@@ -979,12 +958,10 @@ function handleNewFiling(filing) {
     checkWatchlistMatch(filing);
 }
 
-// ---------------------------------------------------------------------------
-// Rendering
-// ---------------------------------------------------------------------------
+// === Rendering ===
 
 function renderFeed() {
-    const container = document.getElementById('feed-list');
+    const container = $el('feed-list');
     if (!container) return;
     let filtered = [...state.filings];
 
@@ -1352,12 +1329,12 @@ function createMobileFeedCard(f) {
 function renderStats() {
     const s = state.stats;
     const fmt = v => v != null ? Number(v).toLocaleString() : '-';
-    const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    const setEl = (id, val) => { const el = $el(id); if (el) el.textContent = val; };
     setEl('stat-total', fmt(s.today_total));
     // Update header filing count badges (desktop + mobile)
-    const badge = document.getElementById('filing-count-badge');
+    const badge = $el('filing-count-badge');
     if (badge) badge.textContent = fmt(s.today_total);
-    const badgeMobile = document.getElementById('filing-count-badge-mobile');
+    const badgeMobile = $el('filing-count-badge-mobile');
     if (badgeMobile) badgeMobile.textContent = fmt(s.today_total);
     setEl('stat-new', fmt(s.today_new_reports));
     setEl('stat-amendments', fmt(s.today_amendments));
@@ -1371,7 +1348,7 @@ function renderStats() {
     }
 
     // Top filers
-    const filersList = document.getElementById('top-filers-list');
+    const filersList = $el('top-filers-list');
     if (!filersList) return;
     if (s.top_filers && s.top_filers.length > 0) {
         filersList.innerHTML = s.top_filers.map(f => {
@@ -1389,7 +1366,7 @@ function renderStats() {
 }
 
 function renderSummary() {
-    const container = document.getElementById('summary-content');
+    const container = $el('summary-content');
     if (!container) return;
 
     const filings = state.filings.filter(f => f.ratio_change != null && f.ratio_change !== 0);
@@ -1452,7 +1429,7 @@ function renderSummary() {
 }
 
 function renderWatchlist() {
-    const container = document.getElementById('watchlist-items');
+    const container = $el('watchlist-items');
     if (!container) return;
     if (state.watchlist.length === 0) {
         container.innerHTML = `<div class="watchlist-empty">
@@ -1499,7 +1476,7 @@ function renderWatchlist() {
             if (e.target.closest('.watch-delete')) return;
             const code = item.dataset.secCode;
             if (code) {
-                document.getElementById('stock-search-input').value = code;
+                $el('stock-search-input').value = code;
                 showStockView();
                 loadStockView(code);
                 // Activate stock nav on mobile
@@ -1546,7 +1523,7 @@ function renderWatchlistSparklines() {
 function updateTicker() {
     const recent = state.filings.slice(0, 10);
     if (recent.length === 0) {
-        document.getElementById('ticker-text').textContent =
+        $el('ticker-text').textContent =
             'EDINET APIからデータを取得しています...';
         return;
     }
@@ -1562,20 +1539,18 @@ function updateTicker() {
         return `${type} ${filer} → ${target} ${ratio}${change}`;
     });
 
-    document.getElementById('ticker-text').textContent = items.join('    |    ');
+    $el('ticker-text').textContent = items.join('    |    ');
 }
 
-// ---------------------------------------------------------------------------
-// Watchlist Actions
-// ---------------------------------------------------------------------------
+// === Watchlist Actions ===
 
 async function saveWatchItem() {
-    const name = document.getElementById('watch-name').value.trim();
-    const code = document.getElementById('watch-code').value.trim();
+    const name = $el('watch-name').value.trim();
+    const code = $el('watch-code').value.trim();
 
     if (!name) {
         showToast('企業名を入力してください');
-        document.getElementById('watch-name').focus();
+        $el('watch-name').focus();
         return;
     }
 
@@ -1586,9 +1561,9 @@ async function saveWatchItem() {
             body: JSON.stringify({ company_name: name, sec_code: code || null }),
         });
         if (resp.ok) {
-            document.getElementById('watch-name').value = '';
-            document.getElementById('watch-code').value = '';
-            document.getElementById('watchlist-form').classList.add('hidden');
+            $el('watch-name').value = '';
+            $el('watch-code').value = '';
+            $el('watchlist-form').classList.add('hidden');
             await loadWatchlist();
         } else {
             const errData = await resp.json().catch(() => ({}));
@@ -1657,18 +1632,16 @@ function checkWatchlistMatch(filing) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Confirm Dialog
-// ---------------------------------------------------------------------------
+// === Confirm Dialog ===
 
 function showDeleteConfirm(companyName, itemId) {
-    const dialog = document.getElementById('confirm-dialog');
-    const message = document.getElementById('dialog-message');
+    const dialog = $el('confirm-dialog');
+    const message = $el('dialog-message');
     message.textContent = `「${companyName}」をウォッチリストから削除しますか？`;
     dialog.classList.remove('hidden');
 
-    const confirmBtn = document.getElementById('dialog-confirm');
-    const cancelBtn = document.getElementById('dialog-cancel');
+    const confirmBtn = $el('dialog-confirm');
+    const cancelBtn = $el('dialog-cancel');
 
     const cleanup = () => {
         dialog.classList.add('hidden');
@@ -1694,12 +1667,12 @@ function showDeleteConfirm(companyName, itemId) {
 }
 
 function closeConfirmDialog() {
-    const dialog = document.getElementById('confirm-dialog');
+    const dialog = $el('confirm-dialog');
     if (!dialog.classList.contains('hidden')) {
         dialog.classList.add('hidden');
         // Clean up stale event listeners to prevent previous delete handlers from firing
-        const confirmBtn = document.getElementById('dialog-confirm');
-        const cancelBtn = document.getElementById('dialog-cancel');
+        const confirmBtn = $el('dialog-confirm');
+        const cancelBtn = $el('dialog-cancel');
         if (confirmBtn) confirmBtn.replaceWith(confirmBtn.cloneNode(true));
         if (cancelBtn) cancelBtn.replaceWith(cancelBtn.cloneNode(true));
         const overlay = dialog.querySelector('.modal-overlay');
@@ -1707,9 +1680,7 @@ function closeConfirmDialog() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Stock Chart Renderer (Canvas-based Candlestick + SMA + Tooltip)
-// ---------------------------------------------------------------------------
+// === Stock Chart Renderer (Canvas-based Candlestick + SMA + Tooltip) ===
 
 /**
  * Compute simple moving average for an array of close prices.
@@ -1986,9 +1957,7 @@ function attachChartTooltip(canvas, tooltipEl) {
     });
 }
 
-// ---------------------------------------------------------------------------
-// Mini Sparkline Chart (for watchlist)
-// ---------------------------------------------------------------------------
+// === Mini Sparkline Chart (for watchlist) ===
 
 function renderSparkline(canvas, prices, width, height) {
     if (!prices || prices.length < 2) return;
@@ -2044,15 +2013,13 @@ function renderSparkline(canvas, prices, width, height) {
     ctx.stroke();
 }
 
-// ---------------------------------------------------------------------------
-// Dedicated Stock Chart View
-// ---------------------------------------------------------------------------
+// === Dedicated Stock Chart View ===
 
 let currentStockView = null; // tracks which stock is displayed in stock view
 
 function initStockView() {
-    const searchInput = document.getElementById('stock-search-input');
-    const searchBtn = document.getElementById('stock-search-btn');
+    const searchInput = $el('stock-search-input');
+    const searchBtn = $el('stock-search-btn');
     if (!searchInput || !searchBtn) return;
 
     const doSearch = () => {
@@ -2070,10 +2037,10 @@ function initStockView() {
     });
 
     // Header stock view toggle button
-    const stockViewBtn = document.getElementById('btn-stock-view');
+    const stockViewBtn = $el('btn-stock-view');
     if (stockViewBtn) {
         stockViewBtn.addEventListener('click', () => {
-            const stockView = document.getElementById('stock-view');
+            const stockView = $el('stock-view');
             if (stockView && !stockView.classList.contains('hidden')) {
                 hideStockView();
             } else {
@@ -2083,7 +2050,7 @@ function initStockView() {
     }
 
     // Back button in stock view
-    const backBtn = document.getElementById('stock-view-back');
+    const backBtn = $el('stock-view-back');
     if (backBtn) {
         backBtn.addEventListener('click', () => {
             hideStockView();
@@ -2096,7 +2063,7 @@ function initStockView() {
 }
 
 function updateStockQuickList() {
-    const container = document.getElementById('stock-quick-list');
+    const container = $el('stock-quick-list');
     if (!container) return;
 
     if (state.watchlist.length === 0) {
@@ -2112,14 +2079,14 @@ function updateStockQuickList() {
     container.querySelectorAll('.stock-quick-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const code = btn.dataset.code;
-            document.getElementById('stock-search-input').value = code;
+            $el('stock-search-input').value = code;
             loadStockView(code);
         });
     });
 }
 
 async function loadStockView(secCode) {
-    const body = document.getElementById('stock-view-body');
+    const body = $el('stock-view-body');
     if (!body) return;
 
     const code = normalizeSecCode(secCode);
@@ -2185,12 +2152,12 @@ async function loadStockView(secCode) {
     body.innerHTML = html;
 
     // Render chart
-    const chartCanvas = document.getElementById('stock-view-canvas');
+    const chartCanvas = $el('stock-view-canvas');
     if (chartCanvas && stockData.weekly_prices && stockData.weekly_prices.length > 0) {
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
                 renderStockChart(chartCanvas, stockData.weekly_prices, { height: 400, showSMA: true });
-                const tooltip = document.getElementById('stock-view-tooltip');
+                const tooltip = $el('stock-view-tooltip');
                 if (tooltip) attachChartTooltip(chartCanvas, tooltip);
             });
         });
@@ -2198,31 +2165,29 @@ async function loadStockView(secCode) {
 }
 
 function showStockView() {
-    const stockView = document.getElementById('stock-view');
-    const mainLayout = document.getElementById('main-layout');
+    const stockView = $el('stock-view');
+    const mainLayout = $el('main-layout');
     if (stockView && mainLayout) {
         mainLayout.classList.add('hidden');
         stockView.classList.remove('hidden');
         updateStockQuickList();
-        const btn = document.getElementById('btn-stock-view');
+        const btn = $el('btn-stock-view');
         if (btn) btn.classList.add('active');
     }
 }
 
 function hideStockView() {
-    const stockView = document.getElementById('stock-view');
-    const mainLayout = document.getElementById('main-layout');
+    const stockView = $el('stock-view');
+    const mainLayout = $el('main-layout');
     if (stockView && mainLayout) {
         stockView.classList.add('hidden');
         mainLayout.classList.remove('hidden');
-        const btn = document.getElementById('btn-stock-view');
+        const btn = $el('btn-stock-view');
         if (btn) btn.classList.remove('active');
     }
 }
 
-// ---------------------------------------------------------------------------
-// Modal
-// ---------------------------------------------------------------------------
+// === Modal ===
 
 async function retryXbrl(docId) {
     const btn = document.querySelector('.btn-retry-xbrl');
@@ -2290,7 +2255,7 @@ function exportFilingsCSV() {
 }
 
 async function batchRetryXbrl() {
-    const btn = document.getElementById('btn-batch-retry');
+    const btn = $el('btn-batch-retry');
     if (!btn) return;
     btn.disabled = true;
     btn.textContent = '一括再取得中...';
@@ -2318,7 +2283,7 @@ function openModal(filing) {
     // L5: Save current focus for restoration on close
     if (!_preFocusedElement) _preFocusedElement = document.activeElement;
     currentModalDocId = filing.doc_id;
-    const body = document.getElementById('modal-body');
+    const body = $el('modal-body');
 
     // Clickable filer name -> filer profile
     const filerDisplay = filing.edinet_code
@@ -2567,7 +2532,7 @@ function openModal(filing) {
 
             stockSection.innerHTML = infoHtml + '<div class="stock-chart-container"><canvas id="stock-chart-canvas"></canvas><div id="modal-chart-tooltip" class="chart-tooltip"></div></div>';
 
-            const chartCanvas = document.getElementById('stock-chart-canvas');
+            const chartCanvas = $el('stock-chart-canvas');
             if (chartCanvas && stockData.weekly_prices && stockData.weekly_prices.length > 0) {
                 // Defer rendering: double-rAF ensures the browser has fully
                 // reflowed the DOM after innerHTML and completed any CSS
@@ -2575,7 +2540,7 @@ function openModal(filing) {
                 requestAnimationFrame(() => {
                     requestAnimationFrame(() => {
                         renderStockChart(chartCanvas, stockData.weekly_prices, { showSMA: true });
-                        const tooltip = document.getElementById('modal-chart-tooltip');
+                        const tooltip = $el('modal-chart-tooltip');
                         if (tooltip) attachChartTooltip(chartCanvas, tooltip);
                     });
                 });
@@ -2584,10 +2549,10 @@ function openModal(filing) {
     }
 
     // Store current filing doc_id for keyboard navigation (uses filtered list)
-    document.getElementById('detail-modal').dataset.filingDocId = filing.doc_id;
+    $el('detail-modal').dataset.filingDocId = filing.doc_id;
 
     // H5: Push history state for mobile back button support
-    const modal = document.getElementById('detail-modal');
+    const modal = $el('detail-modal');
     if (modal.classList.contains('hidden')) {
         history.pushState({ modal: true }, '');
     }
@@ -2604,7 +2569,7 @@ let _preFocusedElement = null; // L5: Store element to restore focus on modal cl
 
 function closeModal() {
     currentModalDocId = null;
-    const modal = document.getElementById('detail-modal');
+    const modal = $el('detail-modal');
     modal.classList.add('hidden');
     // Clean up profile data to prevent memory leak
     window._profileFilings = null;
@@ -2615,13 +2580,11 @@ function closeModal() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Profile Views (Filer / Company)
-// ---------------------------------------------------------------------------
+// === Profile Views (Filer / Company) ===
 
 async function openProfileModal(apiPath, loadingMsg, errorMsg, renderFn) {
-    const body = document.getElementById('modal-body');
-    const modal = document.getElementById('detail-modal');
+    const body = $el('modal-body');
+    const modal = $el('detail-modal');
     if (!body || !modal) return;
     // Save focus for restoration on close (same as openModal)
     if (!_preFocusedElement) _preFocusedElement = document.activeElement;
@@ -3027,9 +2990,7 @@ function renderCompanyInfoPanel(ci) {
     return html;
 }
 
-// ---------------------------------------------------------------------------
-// Audio
-// ---------------------------------------------------------------------------
+// === Audio ===
 
 function playAlertSound(freq = 660) {
     try {
@@ -3074,9 +3035,7 @@ function playAlertSound(freq = 660) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Desktop Notifications
-// ---------------------------------------------------------------------------
+// === Desktop Notifications ===
 
 function sendDesktopNotification(filing) {
     if (!state.notificationsEnabled) return;
@@ -3108,19 +3067,17 @@ function sendDesktopNotification(filing) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Mobile Overlay Management
-// ---------------------------------------------------------------------------
+// === Mobile Overlay Management ===
 
 function openMobileOverlay(panelId) {
-    const panel = document.getElementById(panelId);
+    const panel = $el(panelId);
     if (!panel) return;
     panel.classList.remove('hidden');
     syncMobilePanel(panelId);
 }
 
 function closeMobileOverlay(panelId) {
-    const panel = document.getElementById(panelId);
+    const panel = $el(panelId);
     if (!panel) return;
     panel.classList.add('hidden');
     // Reset nav active state to feed
@@ -3135,13 +3092,11 @@ function closeAllMobileOverlays() {
     });
 }
 
-// ---------------------------------------------------------------------------
-// Mobile Panel Content Sync
-// ---------------------------------------------------------------------------
+// === Mobile Panel Content Sync ===
 
 function syncMobilePanel(panelId) {
     if (panelId === 'mobile-stats-panel') {
-        const mobileStatsBody = document.getElementById('mobile-stats-body');
+        const mobileStatsBody = $el('mobile-stats-body');
         if (!mobileStatsBody) return;
 
         let html = '';
@@ -3153,7 +3108,7 @@ function syncMobilePanel(panelId) {
         }
 
         // Clone market summary
-        const summaryContent = document.getElementById('summary-content');
+        const summaryContent = $el('summary-content');
         if (summaryContent) {
             html += '<div class="summary-section"><h3 class="section-title">SUMMARY</h3>';
             html += summaryContent.outerHTML;
@@ -3161,7 +3116,7 @@ function syncMobilePanel(panelId) {
         }
 
         // Clone top filers
-        const topFilers = document.getElementById('top-filers-list');
+        const topFilers = $el('top-filers-list');
         if (topFilers) {
             html += '<div class="top-filers-section"><h3 class="section-title">TOP FILERS</h3>';
             html += topFilers.outerHTML;
@@ -3171,19 +3126,19 @@ function syncMobilePanel(panelId) {
         mobileStatsBody.innerHTML = html;
 
     } else if (panelId === 'mobile-watchlist-panel') {
-        const mobileWatchBody = document.getElementById('mobile-watchlist-body');
+        const mobileWatchBody = $el('mobile-watchlist-body');
         if (!mobileWatchBody) return;
 
         let html = '';
 
         // Clone watchlist items
-        const watchlistItems = document.getElementById('watchlist-items');
+        const watchlistItems = $el('watchlist-items');
         if (watchlistItems) {
             html += watchlistItems.innerHTML;
         }
 
         // Clone watchlist form
-        const watchlistForm = document.getElementById('watchlist-form');
+        const watchlistForm = $el('watchlist-form');
         if (watchlistForm) {
             html += `<div class="mobile-watchlist-form">
                 <div class="form-group">
@@ -3214,11 +3169,11 @@ function syncMobilePanel(panelId) {
         });
 
         // Re-attach form button listeners
-        const mobileSaveBtn = document.getElementById('mobile-btn-save-watch');
+        const mobileSaveBtn = $el('mobile-btn-save-watch');
         if (mobileSaveBtn) {
             mobileSaveBtn.addEventListener('click', async () => {
-                const name = document.getElementById('mobile-watch-name').value.trim();
-                const code = document.getElementById('mobile-watch-code').value.trim();
+                const name = $el('mobile-watch-name').value.trim();
+                const code = $el('mobile-watch-code').value.trim();
                 if (!name) return;
                 try {
                     const resp = await fetch('/api/watchlist', {
@@ -3236,11 +3191,11 @@ function syncMobilePanel(panelId) {
             });
         }
 
-        const mobileCancelBtn = document.getElementById('mobile-btn-cancel-watch');
+        const mobileCancelBtn = $el('mobile-btn-cancel-watch');
         if (mobileCancelBtn) {
             mobileCancelBtn.addEventListener('click', () => {
-                const nameInput = document.getElementById('mobile-watch-name');
-                const codeInput = document.getElementById('mobile-watch-code');
+                const nameInput = $el('mobile-watch-name');
+                const codeInput = $el('mobile-watch-code');
                 if (nameInput) nameInput.value = '';
                 if (codeInput) codeInput.value = '';
             });
@@ -3252,9 +3207,7 @@ function syncMobilePanel(panelId) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Overlay Swipe-to-Close Gesture
-// ---------------------------------------------------------------------------
+// === Overlay Swipe-to-Close Gesture ===
 
 function initOverlaySwipe(overlayEl) {
     const sheet = overlayEl.querySelector('.overlay-sheet');
@@ -3296,12 +3249,10 @@ function initOverlaySwipe(overlayEl) {
     });
 }
 
-// ---------------------------------------------------------------------------
-// Mobile Bottom Nav
-// ---------------------------------------------------------------------------
+// === Mobile Bottom Nav ===
 
 function initMobileNav() {
-    const mobileNav = document.getElementById('mobile-nav');
+    const mobileNav = $el('mobile-nav');
     if (!mobileNav) return;
 
     const navItems = mobileNav.querySelectorAll('.nav-item');
@@ -3358,24 +3309,38 @@ function initMobileNav() {
     });
 
     // Mobile settings panel handlers
-    const mobileSoundBtn = document.getElementById('mobile-btn-sound');
+    const mobileSoundBtn = $el('mobile-btn-sound');
     if (mobileSoundBtn) mobileSoundBtn.addEventListener('click', toggleSound);
 
-    const mobileNotifyBtn = document.getElementById('mobile-btn-notify');
+    const mobileNotifyBtn = $el('mobile-btn-notify');
     if (mobileNotifyBtn) mobileNotifyBtn.addEventListener('click', toggleNotify);
 
-    const mobilePollBtn = document.getElementById('mobile-btn-poll');
+    const mobilePollBtn = $el('mobile-btn-poll');
     if (mobilePollBtn) {
         mobilePollBtn.addEventListener('click', () => triggerManualPoll(mobilePollBtn));
     }
 }
 
-// ---------------------------------------------------------------------------
-// Pull-to-Refresh Gesture
-// ---------------------------------------------------------------------------
+// === Pull-to-Refresh Gesture ===
+
+/** R4: Spawn floating dust particles in ticker bar */
+function initTickerParticles() {
+    const ticker = $el('ticker-bar');
+    if (!ticker) return;
+    for (let i = 0; i < 12; i++) {
+        const p = document.createElement('span');
+        p.className = 'ticker-particle';
+        p.style.left = `${Math.random() * 100}%`;
+        p.style.top = `${14 + Math.random() * 14}px`;
+        p.style.animationDelay = `${Math.random() * 6}s`;
+        p.style.animationDuration = `${4 + Math.random() * 4}s`;
+        p.style.width = p.style.height = `${1 + Math.random() * 1.5}px`;
+        ticker.appendChild(p);
+    }
+}
 
 function initPullToRefresh() {
-    const feedList = document.getElementById('feed-list');
+    const feedList = $el('feed-list');
     if (!feedList) return;
 
     let startY = 0;
@@ -3448,16 +3413,14 @@ function initPullToRefresh() {
     });
 }
 
-// ---------------------------------------------------------------------------
-// Date Navigation
-// ---------------------------------------------------------------------------
+// === Date Navigation ===
 
 function initDateNav() {
-    const picker = document.getElementById('date-picker');
-    const prevBtn = document.getElementById('date-prev');
-    const nextBtn = document.getElementById('date-next');
-    const todayBtn = document.getElementById('date-today');
-    const fetchBtn = document.getElementById('date-fetch');
+    const picker = $el('date-picker');
+    const prevBtn = $el('date-prev');
+    const nextBtn = $el('date-next');
+    const todayBtn = $el('date-today');
+    const fetchBtn = $el('date-fetch');
 
     if (!picker) return;
 
@@ -3575,7 +3538,7 @@ function navigateDate(days) {
     if (toLocalDateStr(d) < EDINET_MIN_DATE) return;
 
     state.selectedDate = toLocalDateStr(d);
-    document.getElementById('date-picker').value = state.selectedDate;
+    $el('date-picker').value = state.selectedDate;
     savePreferences();
     loadDateAndAutoFetch();
 }
@@ -3599,7 +3562,7 @@ async function loadDateAndAutoFetch() {
 }
 
 async function autoFetchForDate(dateStr) {
-    const fetchBtn = document.getElementById('date-fetch');
+    const fetchBtn = $el('date-fetch');
     if (!fetchBtn || fetchBtn.disabled) return;
     fetchBtn.disabled = true;
     const origText = fetchBtn.textContent;
@@ -3647,10 +3610,7 @@ async function autoFetchForDate(dateStr) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Analytics
-// ---------------------------------------------------------------------------
-
+// === Analytics ===
 
 let _analyticsAbort = null;
 async function loadAnalytics() {
@@ -3659,8 +3619,8 @@ async function loadAnalytics() {
     _analyticsAbort = new AbortController();
     const signal = _analyticsAbort.signal;
 
-    const period = document.getElementById('rankings-period')?.value
-        || document.getElementById('mobile-rankings-period')?.value
+    const period = $el('rankings-period')?.value
+        || $el('mobile-rankings-period')?.value
         || '30d';
     try {
         const [rankingsResp, sectorsResp, movementsResp] = await Promise.all([
@@ -3682,11 +3642,11 @@ async function loadAnalytics() {
         console.warn('Analytics load failed:', e);
         // Clear loading indicators so user doesn't see perpetual "読み込み中..."
         for (const id of ['rankings-content', 'mobile-rankings-content']) {
-            const el = document.getElementById(id);
+            const el = $el(id);
             if (el) el.innerHTML = '<div class="summary-empty">分析データなし</div>';
         }
         for (const id of ['sector-content', 'mobile-sector-content']) {
-            const el = document.getElementById(id);
+            const el = $el(id);
             if (el) el.innerHTML = '<div class="summary-empty">セクターデータなし</div>';
         }
     }
@@ -3703,7 +3663,7 @@ function rankingSection(title, items, limit, rowFn) {
 function renderRankings(rankings, movements) {
     const targets = ['rankings-content', 'mobile-rankings-content'];
     for (const targetId of targets) {
-        const container = document.getElementById(targetId);
+        const container = $el(targetId);
         if (!container) continue;
 
         let html = '';
@@ -3786,7 +3746,7 @@ function renderRankings(rankings, movements) {
 function renderSectors(data) {
     const targets = ['sector-content', 'mobile-sector-content'];
     for (const targetId of targets) {
-        const container = document.getElementById(targetId);
+        const container = $el(targetId);
         if (!container) continue;
 
         if (!data.sectors || data.sectors.length === 0) {
@@ -3813,9 +3773,7 @@ function renderSectors(data) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
+// === Utilities ===
 
 const _escapeMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const _escapeRe = /[&<>"']/g;
