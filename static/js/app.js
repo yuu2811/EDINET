@@ -382,6 +382,9 @@ document.addEventListener('DOMContentLoaded', () => {
     initMobileNav();
     initPullToRefresh();
     initTickerParticles();
+    initCollapsiblePanels();
+    initSidebarResize();
+    initFooterStatus();
     initStockView();
 
     // C4: Initialize AudioContext on first user gesture to avoid browser autoplay restrictions
@@ -617,6 +620,8 @@ function initEventListeners() {
             $el('date-picker').value = state.selectedDate;
             savePreferences(); loadDateAndAutoFetch();
         }
+        // R17: Keyboard shortcut help overlay
+        else if (e.key === '?') { toggleShortcutOverlay(); }
     });
 }
 
@@ -1044,7 +1049,23 @@ function renderFeed() {
     }
     // Click handling is done via event delegation on #feed-list (see initEventListeners)
 
+    // R3: Render inline sparklines on desktop cards
+    if (!mobile) renderCardSparklines();
+
     renderSummary();
+}
+
+/** R3: Render mini sparklines embedded in feed cards */
+function renderCardSparklines() {
+    document.querySelectorAll('.card-sparkline').forEach(canvas => {
+        const code = canvas.dataset.code;
+        if (!code) return;
+        const cached = stockCache[code];
+        if (cached && cached.data && cached.data.weekly_prices) {
+            renderSparkline(canvas, cached.data.weekly_prices, 80, 24);
+        }
+        // Don't fetch — stock data is already fetched by the main stock enrichment
+    });
 }
 
 function isWatchlistMatch(f) {
@@ -1115,7 +1136,17 @@ function renderFeedTable(container, filings) {
         else if (f.ratio_change < 0) rowClass = 'row-down';
         if (isWatchlistMatch(f)) rowClass += ' row-watch';
 
-        html += `<tr class="${rowClass}" data-doc-id="${escapeHtml(f.doc_id)}">
+        // R5: Heatmap intensity based on change magnitude
+        let heatStyle = '';
+        if (f.ratio_change > 0) {
+            const intensity = Math.min(f.ratio_change / 5, 1) * 0.15;
+            heatStyle = ` style="background:rgba(0,240,128,${intensity.toFixed(3)})"`;
+        } else if (f.ratio_change < 0) {
+            const intensity = Math.min(Math.abs(f.ratio_change) / 5, 1) * 0.15;
+            heatStyle = ` style="background:rgba(255,32,80,${intensity.toFixed(3)})"`;
+        }
+
+        html += `<tr class="${rowClass}" data-doc-id="${escapeHtml(f.doc_id)}"${heatStyle}>
             ${phone ? '' : `<td class="col-type">${typeBadge}</td>`}
             <td class="col-filer" title="${escapeHtml(filerName)}">${filer}</td>
             <td class="col-target" title="${escapeHtml(targetName)}">${target}${codeDisplay ? ' ' + codeDisplay : ''}</td>
@@ -1209,15 +1240,16 @@ function createFeedCard(f) {
 
     const links = buildDocLinks(f, 'card-link');
 
-    // Market data from cache (desktop only)
+    // Market data from cache (desktop only) — R3: with inline sparkline
     let marketDataHtml = '';
     if (sd) {
         const parts = [];
         if (sd.market_cap_display) parts.push(`時価:${sd.market_cap_display}`);
         if (sd.pbr != null) parts.push(`PBR:${Number(sd.pbr).toFixed(2)}倍`);
         if (sd.current_price != null) parts.push(`\u00a5${Math.round(sd.current_price).toLocaleString()}`);
-        if (parts.length > 0) {
-            marketDataHtml = `<div class="card-market-data">${parts.map(p => `<span>${p}</span>`).join('')}</div>`;
+        const sparkHtml = secCode ? `<canvas class="card-sparkline" data-code="${escapeHtml(secCode)}" width="80" height="24"></canvas>` : '';
+        if (parts.length > 0 || sparkHtml) {
+            marketDataHtml = `<div class="card-market-data">${parts.map(p => `<span>${p}</span>`).join('')}${sparkHtml}</div>`;
         }
     }
 
@@ -1227,16 +1259,20 @@ function createFeedCard(f) {
                 <div>${badge}</div>
                 <span class="card-time">${escapeHtml(time)}</span>
             </div>
-            <div class="card-main">
-                <span class="card-filer">${filerHtml}</span>
-                <span class="card-arrow">&#x2192;</span>
-                <span class="card-target">${targetHtml}</span>
-                <div class="card-desc">${escapeHtml(f.doc_description || '')}</div>
-                ${marketDataHtml}
-            </div>
-            <div class="card-bottom">
-                ${ratioHtml}
-                <div class="card-links">${purposeHtml}${links}</div>
+            <div class="card-body-2col">
+                <div class="card-ratio-hero">
+                    ${ratioHtml}
+                </div>
+                <div class="card-info-col">
+                    <div class="card-main">
+                        <span class="card-filer">${filerHtml}</span>
+                        <span class="card-arrow">&#x2192;</span>
+                        <span class="card-target">${targetHtml}</span>
+                    </div>
+                    <div class="card-desc">${escapeHtml(f.doc_description || '')}</div>
+                    ${marketDataHtml}
+                    <div class="card-links">${purposeHtml}${links}</div>
+                </div>
             </div>
         </div>
     `;
@@ -1326,19 +1362,38 @@ function createMobileFeedCard(f) {
 </div>`;
 }
 
+/** R18: Animated count-up for stat values */
+function animateValue(el, end) {
+    if (!el || end == null) { if (el) el.textContent = '-'; return; }
+    const target = Number(end);
+    const start = parseInt(el.textContent) || 0;
+    if (start === target) return;
+    const duration = 600;
+    const startTime = performance.now();
+    function tick(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+        const current = Math.round(start + (target - start) * eased);
+        el.textContent = current.toLocaleString();
+        if (progress < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+}
+
 function renderStats() {
     const s = state.stats;
     const fmt = v => v != null ? Number(v).toLocaleString() : '-';
-    const setEl = (id, val) => { const el = $el(id); if (el) el.textContent = val; };
-    setEl('stat-total', fmt(s.today_total));
+    // R18: Animate stat values with count-up
+    animateValue($el('stat-total'), s.today_total);
     // Update header filing count badges (desktop + mobile)
     const badge = $el('filing-count-badge');
     if (badge) badge.textContent = fmt(s.today_total);
     const badgeMobile = $el('filing-count-badge-mobile');
     if (badgeMobile) badgeMobile.textContent = fmt(s.today_total);
-    setEl('stat-new', fmt(s.today_new_reports));
-    setEl('stat-amendments', fmt(s.today_amendments));
-    setEl('stat-clients', fmt(s.connected_clients));
+    animateValue($el('stat-new'), s.today_new_reports);
+    animateValue($el('stat-amendments'), s.today_amendments);
+    animateValue($el('stat-clients'), s.connected_clients);
 
     // Update panel title to show the selected date
     const isToday = state.selectedDate === toLocalDateStr(new Date());
@@ -1347,15 +1402,18 @@ function renderStats() {
         statsTitle.textContent = isToday ? 'TODAY' : state.selectedDate;
     }
 
-    // Top filers
+    // Top filers — R12: with horizontal bar chart
     const filersList = $el('top-filers-list');
     if (!filersList) return;
     if (s.top_filers && s.top_filers.length > 0) {
+        const maxCount = Math.max(...s.top_filers.map(f => f.count));
         filersList.innerHTML = s.top_filers.map(f => {
             const name = f.name || '(不明)';
+            const barWidth = maxCount > 0 ? (f.count / maxCount * 100) : 0;
             return `<div class="filer-row">
                 <span class="filer-name" title="${escapeHtml(name)}">${filerLinkHtml(name, f.edinet_code)}</span>
                 <span class="filer-count">${f.count}</span>
+                <div class="filer-bar" style="width:${barWidth}%"></div>
             </div>`;
         }).join('');
     } else {
@@ -1395,7 +1453,16 @@ function renderSummary() {
     const avgClass = avgChange > 0 ? 'positive' : avgChange < 0 ? 'negative' : 'neutral';
     const avgSign = avgChange > 0 ? '+' : '';
 
+    // R9: Visual ratio bar for increases vs decreases
+    const total = increases.length + decreases.length;
+    const upPct = total > 0 ? (increases.length / total * 100).toFixed(0) : 50;
+    const downPct = total > 0 ? (decreases.length / total * 100).toFixed(0) : 50;
+
     let html = `
+        <div class="summary-direction-bar">
+            <div class="summary-dir-up" style="width:${upPct}%"><span>${increases.length}</span></div>
+            <div class="summary-dir-down" style="width:${downPct}%"><span>${decreases.length}</span></div>
+        </div>
         <div class="summary-row">
             <span class="summary-label">増加</span>
             <span class="summary-value positive">${increases.length}件</span>
@@ -3323,7 +3390,104 @@ function initMobileNav() {
 
 // === Pull-to-Refresh Gesture ===
 
-/** R4: Spawn floating dust particles in ticker bar */
+/** R17: Keyboard shortcut help overlay */
+function toggleShortcutOverlay() {
+    let overlay = document.getElementById('shortcut-overlay');
+    if (overlay) { overlay.remove(); return; }
+    overlay = document.createElement('div');
+    overlay.id = 'shortcut-overlay';
+    overlay.className = 'shortcut-overlay';
+    overlay.innerHTML = `
+        <div class="shortcut-panel">
+            <div class="shortcut-title">KEYBOARD SHORTCUTS</div>
+            <div class="shortcut-grid">
+                <div class="shortcut-key"><kbd>[</kbd></div><div class="shortcut-desc">前日</div>
+                <div class="shortcut-key"><kbd>]</kbd></div><div class="shortcut-desc">翌日</div>
+                <div class="shortcut-key"><kbd>T</kbd></div><div class="shortcut-desc">今日に移動</div>
+                <div class="shortcut-key"><kbd>←</kbd> <kbd>→</kbd></div><div class="shortcut-desc">モーダル内移動</div>
+                <div class="shortcut-key"><kbd>Esc</kbd></div><div class="shortcut-desc">閉じる</div>
+                <div class="shortcut-key"><kbd>?</kbd></div><div class="shortcut-desc">このヘルプ</div>
+            </div>
+            <div class="shortcut-dismiss">Press <kbd>?</kbd> or <kbd>Esc</kbd> to close</div>
+        </div>
+    `;
+    overlay.addEventListener('click', () => overlay.remove());
+    document.body.appendChild(overlay);
+}
+
+/** R16: Footer status bar updater */
+function initFooterStatus() {
+    function update() {
+        const dateEl = $el('footer-date');
+        const countEl = $el('footer-count');
+        const pollEl = $el('footer-poll');
+        if (dateEl) dateEl.textContent = `DATE: ${state.selectedDate}`;
+        if (countEl) countEl.textContent = `FILINGS: ${state.filings.length}`;
+        if (pollEl) pollEl.textContent = state.connected ? 'SSE: CONNECTED' : 'SSE: DISCONNECTED';
+    }
+    update();
+    setInterval(update, 2000);
+}
+
+/** R19: Sidebar resize handle */
+function initSidebarResize() {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar || window.innerWidth <= 768) return;
+    const handle = document.createElement('div');
+    handle.className = 'sidebar-resize-handle';
+    sidebar.appendChild(handle);
+    let startX, startW;
+    handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        startX = e.clientX;
+        startW = sidebar.offsetWidth;
+        handle.classList.add('active');
+        const onMove = (ev) => {
+            const delta = startX - ev.clientX; // sidebar is on right, so invert
+            sidebar.style.width = Math.max(200, Math.min(500, startW + delta)) + 'px';
+        };
+        const onUp = () => {
+            handle.classList.remove('active');
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            localStorage.setItem('sidebar-width', sidebar.style.width);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    });
+    // Restore width
+    const saved = localStorage.getItem('sidebar-width');
+    if (saved) sidebar.style.width = saved;
+}
+
+/** R4: Collapsible sidebar panels */
+function initCollapsiblePanels() {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return;
+    sidebar.querySelectorAll('.panel-header .panel-title').forEach(title => {
+        title.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const panel = title.closest('.panel');
+            if (panel) {
+                panel.classList.toggle('panel-collapsed');
+                // Persist state
+                const key = 'panel-collapsed-' + (panel.id || '');
+                if (panel.id) {
+                    localStorage.setItem(key, panel.classList.contains('panel-collapsed') ? '1' : '0');
+                }
+            }
+        });
+    });
+    // Restore collapsed states
+    sidebar.querySelectorAll('.panel[id]').forEach(panel => {
+        const key = 'panel-collapsed-' + panel.id;
+        if (localStorage.getItem(key) === '1') {
+            panel.classList.add('panel-collapsed');
+        }
+    });
+}
+
+/** Spawn floating dust particles in ticker bar */
 function initTickerParticles() {
     const ticker = $el('ticker-bar');
     if (!ticker) return;
