@@ -34,6 +34,20 @@ _CACHE_TTL: int | None = None  # populated lazily from settings
 _external_apis_failed_at: float = 0.0  # monotonic timestamp; 0 = not failed
 _EXTERNAL_RETRY_INTERVAL = 5 * 60  # retry external APIs after 5 minutes
 
+# Persistent HTTP client pool for external API requests (connection reuse)
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Return a shared httpx client with connection pooling."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=4.0,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _http_client
+
 
 def _get_cache_ttl() -> int:
     global _CACHE_TTL
@@ -878,7 +892,8 @@ async def get_stock_data(sec_code: str) -> dict:
         or (time.monotonic() - _external_apis_failed_at) > _EXTERNAL_RETRY_INTERVAL
     )
     if apis_available:
-        async with httpx.AsyncClient(timeout=4.0) as client:
+        client = _get_http_client()
+        if True:
             history_task = asyncio.create_task(_fetch_stooq_history(client, ticker))
             quote_task = asyncio.create_task(_fetch_stooq_quote(client, ticker))
             yahoo_meta_task = asyncio.create_task(_fetch_yahoo_finance_meta(client, ticker))

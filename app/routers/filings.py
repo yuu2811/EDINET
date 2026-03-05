@@ -1,10 +1,13 @@
 """Filing list and detail endpoints, including EDINET document proxy."""
 
 import asyncio
+import hashlib
+import json
 import logging
+import time
 from datetime import date
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy import desc, func, or_, select
 
@@ -14,6 +17,10 @@ from app.models import Filing
 
 logger = logging.getLogger(__name__)
 
+# --- Lightweight response cache for /api/filings ---
+_filings_cache: dict[str, tuple[float, str, dict]] = {}  # key -> (ts, etag, data)
+_FILINGS_CACHE_TTL = 5.0  # seconds
+
 router = APIRouter(prefix="/api/filings", tags=["Filings"])
 
 # Separate router for document proxy (mounted at /api/documents)
@@ -22,6 +29,7 @@ documents_router = APIRouter(prefix="/api/documents", tags=["Documents"])
 
 @router.get("")
 async def list_filings(
+    request: Request,
     date_from: date | None = Query(None, description="Start date (YYYY-MM-DD)"),
     date_to: date | None = Query(None, description="End date (YYYY-MM-DD)"),
     filer: str | None = Query(None, description="Filer name search"),
@@ -30,8 +38,28 @@ async def list_filings(
     amendment_only: bool = Query(False, description="Show only amendments"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
-) -> dict:
+) -> Response:
     """List large shareholding filings with filters."""
+    # Build cache key from query params
+    cache_key = f"{date_from}|{date_to}|{filer}|{target}|{sec_code}|{amendment_only}|{limit}|{offset}"
+
+    # Check short-lived cache
+    now = time.monotonic()
+    cached = _filings_cache.get(cache_key)
+    if cached:
+        ts, etag, data = cached
+        if now - ts < _FILINGS_CACHE_TTL:
+            # ETag match → 304
+            if_none_match = request.headers.get("if-none-match")
+            if if_none_match and if_none_match == etag:
+                return Response(status_code=304)
+            body = json.dumps(data, ensure_ascii=False)
+            return Response(
+                content=body,
+                media_type="application/json",
+                headers={"ETag": etag, "Cache-Control": "private, max-age=5"},
+            )
+
     async with get_async_session()() as session:
         query = select(Filing).order_by(desc(Filing.submit_date_time), desc(Filing.id))
 
@@ -73,12 +101,28 @@ async def list_filings(
         result = await session.execute(query.offset(offset).limit(limit))
         filings = result.scalars().all()
 
-        return {
+        data = {
             "total": total,
             "offset": offset,
             "limit": limit,
             "filings": [f.to_dict() for f in filings],
         }
+
+    body = json.dumps(data, ensure_ascii=False)
+    etag = '"' + hashlib.md5(body.encode()).hexdigest()[:16] + '"'
+    _filings_cache[cache_key] = (now, etag, data)
+
+    # Evict stale entries if cache grows
+    if len(_filings_cache) > 100:
+        stale = [k for k, (ts, _, _) in _filings_cache.items() if now - ts > _FILINGS_CACHE_TTL]
+        for k in stale:
+            _filings_cache.pop(k, None)
+
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={"ETag": etag, "Cache-Control": "private, max-age=5"},
+    )
 
 
 @router.get("/{doc_id}")

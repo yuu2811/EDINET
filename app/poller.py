@@ -256,16 +256,15 @@ async def _poll_edinet_impl(target_date=None):
         all_doc_ids = [doc.get("docID") for doc in filings if doc.get("docID")]
         existing_ids = await _get_existing_ids(session, Filing.doc_id, all_doc_ids) if all_doc_ids else set()
 
+        # Separate filings into batch-insertable (no XBRL) and XBRL-enrichable
+        batch_filings: list[Filing] = []
+        xbrl_docs: list[Filing] = []
+
         for doc in filings:
             doc_id = doc.get("docID")
-            if not doc_id:
+            if not doc_id or doc_id in existing_ids:
                 continue
 
-            # Skip already-stored filings (checked via batch query above)
-            if doc_id in existing_ids:
-                continue
-
-            # New filing detected
             doc_description = doc.get("docDescription", "")
             is_amendment = doc.get("docTypeCode") == "360"
             is_special = "特例対象" in (doc_description or "")
@@ -286,13 +285,10 @@ async def _poll_edinet_impl(target_date=None):
                 submit_date_time=doc.get("submitDateTime"),
                 period_start=doc.get("periodStart"),
                 period_end=doc.get("periodEnd"),
-                # API v2: parentDocID (field #19)
                 parent_doc_id=doc.get("parentDocID"),
-                # API v2: status fields (string "0"/"1"/"2")
                 withdrawal_status=doc.get("withdrawalStatus"),
                 disclosure_status=doc.get("disclosureStatus"),
                 doc_info_edit_status=doc.get("docInfoEditStatus"),
-                # API v2: all flag fields are string "0"/"1"
                 xbrl_flag=doc.get("xbrlFlag") == "1",
                 pdf_flag=doc.get("pdfFlag") == "1",
                 attach_doc_flag=doc.get("attachDocFlag") == "1",
@@ -303,28 +299,44 @@ async def _poll_edinet_impl(target_date=None):
 
             _apply_pre_enrichment(filing)
 
+            if filing.xbrl_flag:
+                xbrl_docs.append(filing)
+            else:
+                batch_filings.append(filing)
+
+        # Phase 1: Batch insert non-XBRL filings in a single commit
+        if batch_filings:
+            try:
+                session.add_all(batch_filings)
+                await session.flush()
+                await session.commit()
+                for f in batch_filings:
+                    await session.refresh(f)
+                    new_count += 1
+                    await broadcaster.broadcast("new_filing", f.to_dict())
+                    logger.info("New filing: %s - %s -> %s", f.doc_id, f.filer_name, f.doc_description)
+            except Exception as e:
+                logger.error("Batch insert failed: %s", e)
+                await session.rollback()
+
+        # Phase 2: XBRL filings need individual processing (API rate limiting)
+        for i, filing in enumerate(xbrl_docs):
             try:
                 session.add(filing)
                 await session.flush()
 
-                # Try to enrich from XBRL for additional data
-                if filing.xbrl_flag:
-                    # Per EDINET API v2 spec: several seconds delay between
-                    # document downloads is recommended to avoid rate limiting.
-                    if new_count > 0:
-                        await asyncio.sleep(3.0)
-                    await _enrich_from_xbrl(filing)
+                if i > 0:
+                    await asyncio.sleep(3.0)
+                await _enrich_from_xbrl(filing)
 
                 await session.commit()
                 await session.refresh(filing)
             except Exception as e:
-                logger.error("Failed to store filing %s: %s", doc_id, e)
+                logger.error("Failed to store filing %s: %s", filing.doc_id, e)
                 await session.rollback()
                 continue
 
             new_count += 1
-
-            # Broadcast to SSE clients
             await broadcaster.broadcast("new_filing", filing.to_dict())
             logger.info(
                 "New filing: %s - %s -> %s",

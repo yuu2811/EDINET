@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -51,6 +52,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
@@ -63,17 +65,23 @@ for r in (stream.router, filings.router, filings.documents_router, stats.router,
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+_index_html_cache: str | None = None
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """Serve the main dashboard."""
-    try:
-        with open("static/index.html", "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    except FileNotFoundError:
-        return HTMLResponse(
-            content="<h1>Dashboard not found</h1><p>static/index.html is missing</p>",
-            status_code=500,
-        )
+    """Serve the main dashboard (cached in memory after first read)."""
+    global _index_html_cache
+    if _index_html_cache is None:
+        try:
+            with open("static/index.html", "r", encoding="utf-8") as f:
+                _index_html_cache = f.read()
+        except FileNotFoundError:
+            return HTMLResponse(
+                content="<h1>Dashboard not found</h1><p>static/index.html is missing</p>",
+                status_code=500,
+            )
+    return HTMLResponse(content=_index_html_cache)
 
 
 if __name__ == "__main__":
