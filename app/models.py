@@ -16,6 +16,11 @@ class Filing(Base):
         Index("ix_filings_xbrl_retry", "xbrl_flag", "xbrl_parsed", "id"),
         # Watchlist matching: target_sec_code lookups with submit_date_time ordering
         Index("ix_filings_target_sec_submit", "target_sec_code", "submit_date_time"),
+        # Search filters: holder_name and target_company_name used in LIKE queries
+        Index("ix_filings_holder_name", "holder_name"),
+        Index("ix_filings_target_company", "target_company_name"),
+        # Analytics: edinet_code + submit_date_time for filer profile timeline
+        Index("ix_filings_edinet_submit", "edinet_code", "submit_date_time"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -215,6 +220,8 @@ class TenderOffer(Base):
     __tablename__ = "tender_offers"
     __table_args__ = (
         Index("ix_tender_submit", "submit_date_time"),
+        # Profile cross-reference: filter by target + order by submit time
+        Index("ix_tender_target_submit", "target_sec_code", "submit_date_time"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

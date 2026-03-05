@@ -82,41 +82,89 @@ def _normalize_ratio(val: float) -> float:
     return val
 
 
-def _find_first_text(tree, patterns: list[str]) -> str | None:
+def _build_local_name_index(tree) -> dict[str, list]:
+    """Build a dict mapping local element names to element lists.
+
+    Single tree traversal replaces multiple contains(local-name(), ...) XPath
+    scans, reducing O(P*N) to O(N) where P=patterns and N=elements.
+    """
+    index: dict[str, list] = {}
+    for elem in tree.iter():
+        tag = elem.tag
+        if isinstance(tag, str) and "}" in tag:
+            local = tag.rsplit("}", 1)[1]
+        elif isinstance(tag, str):
+            local = tag
+        else:
+            continue
+        if local not in index:
+            index[local] = []
+        index[local].append(elem)
+    return index
+
+
+def _find_matching_elements(name_index: dict[str, list], pattern: str) -> list:
+    """Find all elements whose local name contains the pattern."""
+    results = []
+    for local_name, elems in name_index.items():
+        if pattern in local_name:
+            results.extend(elems)
+    return results
+
+
+def _find_first_text(tree_or_index, patterns: list[str]) -> str | None:
     """Search an XBRL tree for the first text value matching any pattern.
 
-    Iterates through patterns in priority order, using
-    contains(local-name(), ...) XPath to match regardless of namespace.
+    Accepts either an lxml tree (legacy) or a pre-built name index dict.
     Returns the first non-empty text found, or None.
     """
-    for pattern in patterns:
-        elements = tree.xpath(
-            f"//*[contains(local-name(), '{pattern}')]"
-        )
-        for elem in elements:
-            if elem.text and elem.text.strip():
-                return elem.text.strip()
+    if isinstance(tree_or_index, dict):
+        name_index = tree_or_index
+        for pattern in patterns:
+            for elem in _find_matching_elements(name_index, pattern):
+                if elem.text and elem.text.strip():
+                    return elem.text.strip()
+    else:
+        for pattern in patterns:
+            elements = tree_or_index.xpath(
+                f"//*[contains(local-name(), '{pattern}')]"
+            )
+            for elem in elements:
+                if elem.text and elem.text.strip():
+                    return elem.text.strip()
     return None
 
 
-def _find_first_int(tree, patterns: list[str]) -> int | None:
+def _find_first_int(tree_or_index, patterns: list[str]) -> int | None:
     """Search an XBRL tree for the first integer value matching any pattern.
 
+    Accepts either an lxml tree (legacy) or a pre-built name index dict.
     Skips elements with Prior/Previous contextRef (historical values).
-    Returns the first valid integer found, or None.
     """
-    for pattern in patterns:
-        elements = tree.xpath(
-            f"//*[contains(local-name(), '{pattern}')]"
-        )
-        for elem in elements:
-            try:
-                val = int(float(elem.text.strip()))
-                context_ref = elem.get("contextRef", "")
-                if "Prior" not in context_ref and "Previous" not in context_ref:
-                    return val
-            except (ValueError, AttributeError):
-                continue
+    if isinstance(tree_or_index, dict):
+        name_index = tree_or_index
+        for pattern in patterns:
+            for elem in _find_matching_elements(name_index, pattern):
+                try:
+                    val = int(float(elem.text.strip()))
+                    context_ref = elem.get("contextRef", "")
+                    if "Prior" not in context_ref and "Previous" not in context_ref:
+                        return val
+                except (ValueError, AttributeError):
+                    continue
+    else:
+        for pattern in patterns:
+            elements = tree_or_index.xpath(
+                f"//*[contains(local-name(), '{pattern}')]"
+            )
+            for elem in elements:
+                try:
+                    val = int(float(elem.text.strip()))
+                    context_ref = elem.get("contextRef", "")
+                    if "Prior" not in context_ref and "Previous" not in context_ref:
+                        return val
+                except (ValueError, AttributeError):
+                    continue
     return None
 
 
@@ -426,31 +474,22 @@ class EdinetClient:
             logger.warning("XBRL XML parse error: %s", e)
             return result
 
-        # Use local-name() to match elements regardless of namespace prefix.
-        # Large shareholding report XBRL uses jpcrp060_cor namespace.
+        # Build element name index once — O(N) traversal replaces many O(N) XPath scans
+        name_index = _build_local_name_index(tree)
 
         # --- Holding ratio (保有割合) ---
-        # Must match both jpcrp_cor and jplvh_cor taxonomy:
-        #   jpcrp_cor: TotalShareholdingRatioOfShareCertificatesEtc
-        #   jplvh_cor: HoldingRatioOfShareCertificatesEtc
-        #   jplvh_cor: RatioOfShareCertificatesEtcAtTimeOfPreviousReport (前回保有割合)
-        # Priority: specific > generic.  Exclude abstract elements
-        # and individual shareholder entries (EachLargeShareholder1, etc.)
         ratio_patterns = [
-            "HoldingRatioOfShareCertificatesEtc",  # jplvh_cor (大量保有)
-            "TotalShareholdingRatioOfShareCertificatesEtc",  # jpcrp_cor
+            "HoldingRatioOfShareCertificatesEtc",
+            "TotalShareholdingRatioOfShareCertificatesEtc",
             "TotalShareholdingRatio",
             "RatioOfShareholdingToTotalIssuedShares",
-            "RatioOfShareCertificatesEtcAtTimeOfPreviousReport",  # jplvh_cor 前回保有割合
+            "RatioOfShareCertificatesEtcAtTimeOfPreviousReport",
         ]
         for pattern in ratio_patterns:
-            elements = tree.xpath(
-                f"//*[contains(local-name(), '{pattern}')]"
-            )
+            elements = _find_matching_elements(name_index, pattern)
             if elements:
                 for elem in elements:
-                    local = elem.xpath("local-name()")
-                    # Skip abstract/header elements and individual holder entries
+                    local = elem.tag.rsplit("}", 1)[-1] if "}" in elem.tag else elem.tag
                     if "Abstract" in local or "EachLargeShareholder" in local:
                         continue
                     try:
@@ -469,11 +508,9 @@ class EdinetClient:
 
         # Fallback: broader search if specific patterns didn't match
         if result["holding_ratio"] is None:
-            elements = tree.xpath(
-                "//*[contains(local-name(), 'HoldingRatio')]"
-            )
+            elements = _find_matching_elements(name_index, "HoldingRatio")
             for elem in elements:
-                local = elem.xpath("local-name()")
+                local = elem.tag.rsplit("}", 1)[-1] if "}" in elem.tag else elem.tag
                 if any(skip in local for skip in (
                     "Abstract", "EachLargeShareholder", "JointHolder",
                 )):
@@ -491,7 +528,7 @@ class EdinetClient:
                     continue
 
         # --- Text fields: holder, target, sec_code, purpose, fund_source ---
-        result["holder_name"] = _find_first_text(tree, [
+        result["holder_name"] = _find_first_text(name_index, [
             "NameOfLargeShareholdingReporter",
             "NameOfFiler",
             "ReporterName",
@@ -500,15 +537,14 @@ class EdinetClient:
 
         # jplvh_cor fallback: exact local-name() = 'Name' within jplvh namespace
         if result["holder_name"] is None:
-            elements = tree.xpath("//*[local-name() = 'Name']")
-            for elem in elements:
+            for elem in name_index.get("Name", []):
                 ns_uri = elem.tag.split("}")[0].lstrip("{") if "}" in elem.tag else ""
                 if "jplvh" in ns_uri or "lvh" in ns_uri:
                     if elem.text and elem.text.strip():
                         result["holder_name"] = elem.text.strip()
                         break
 
-        result["target_company_name"] = _find_first_text(tree, [
+        result["target_company_name"] = _find_first_text(name_index, [
             "IssuerNameLargeShareholding",
             "IssuerName",
             "NameOfIssuer",
@@ -522,22 +558,22 @@ class EdinetClient:
         ])
 
         # --- Total shares held ---
-        result["shares_held"] = _find_first_int(tree, [
+        result["shares_held"] = _find_first_int(name_index, [
             "TotalNumberOfShareCertificatesEtcHeld",
             "TotalNumberOfSharesHeld",
             "NumberOfShareCertificatesEtc",
-            "NumberOfStocksEtcHeld",  # jplvh_cor: TotalNumberOfStocksEtcHeld
+            "NumberOfStocksEtcHeld",
         ])
 
-        result["purpose_of_holding"] = _find_first_text(tree, [
+        result["purpose_of_holding"] = _find_first_text(name_index, [
             "PurposeOfHolding",
             "PurposeOfHoldingOfShareCertificatesEtc",
         ])
 
         # --- Joint holders (共同保有者) ---
-        result["joint_holders"] = self._extract_joint_holders_xbrl(tree)
+        result["joint_holders"] = self._extract_joint_holders_xbrl(tree, name_index)
 
-        result["fund_source"] = _find_first_text(tree, [
+        result["fund_source"] = _find_first_text(name_index, [
             "DescriptionOfFundsForAcquisition",
             "FundsForAcquisition",
             "SourceOfFunds",
@@ -548,7 +584,7 @@ class EdinetClient:
         logger.debug("Extracted XBRL data: %s", result)
         return result
 
-    def _extract_joint_holders_xbrl(self, tree) -> str | None:
+    def _extract_joint_holders_xbrl(self, tree, name_index: dict | None = None) -> str | None:
         """Extract joint holder info from traditional XBRL tree.
 
         Joint holders (共同保有者) are listed in the large shareholding
@@ -558,27 +594,25 @@ class EdinetClient:
         Returns a JSON string of [{name, ratio}] or None.
         """
         holders = []
+        idx = name_index or _build_local_name_index(tree)
 
         # Strategy 1: look for numbered joint holder elements
-        # (JointHolder1Name, JointHolder2Name, etc.)
-        name_elements = tree.xpath(
-            "//*[contains(local-name(), 'JointHolder') and contains(local-name(), 'Name')]"
-        )
+        name_elements = _find_matching_elements(idx, "JointHolder")
         for elem in name_elements:
+            local = elem.tag.rsplit("}", 1)[-1] if "}" in elem.tag else elem.tag
+            if "Name" not in local:
+                continue
+            if "Abstract" in local:
+                continue
             if elem.text and elem.text.strip():
-                local = elem.xpath("local-name()")
-                if "Abstract" in local:
-                    continue
                 holders.append({"name": elem.text.strip(), "ratio": None})
 
         # Strategy 2: look for ratio elements corresponding to joint holders
-        ratio_elements = tree.xpath(
-            "//*[contains(local-name(), 'JointHolder') and "
-            "(contains(local-name(), 'Ratio') or contains(local-name(), 'HoldingRatio'))]"
-        )
         ratio_idx = 0
-        for elem in ratio_elements:
-            local = elem.xpath("local-name()")
+        for elem in name_elements:
+            local = elem.tag.rsplit("}", 1)[-1] if "}" in elem.tag else elem.tag
+            if "Ratio" not in local and "HoldingRatio" not in local:
+                continue
             if "Abstract" in local:
                 continue
             try:
@@ -592,8 +626,7 @@ class EdinetClient:
         # Strategy 3: broader search — NameOfJointHolder (non-numbered)
         if not holders:
             for pattern in ("NameOfJointHolder", "JointHolderName"):
-                elements = tree.xpath(f"//*[local-name() = '{pattern}']")
-                for elem in elements:
+                for elem in idx.get(pattern, []):
                     if elem.text and elem.text.strip():
                         holders.append({"name": elem.text.strip(), "ratio": None})
 

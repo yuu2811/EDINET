@@ -520,6 +520,25 @@ async def _poll_company_info(target_date: date, all_docs: list | None = None) ->
 
     updated = 0
     async with async_session() as session:
+        # Pre-fetch all existing CompanyInfo records for target tickers (1 query instead of N)
+        target_tickers = set()
+        for doc in target_docs:
+            sc = doc["secCode"]
+            target_tickers.add(sc[:4] if len(sc) == 5 else sc)
+        existing_companies: dict[str, CompanyInfo] = {}
+        if target_tickers:
+            for chunk_start in range(0, len(target_tickers), _CHUNK_SIZE):
+                chunk = list(target_tickers)[chunk_start:chunk_start + _CHUNK_SIZE]
+                result = await session.execute(
+                    select(CompanyInfo).where(CompanyInfo.sec_code.in_(chunk))
+                )
+                for ci in result.scalars():
+                    existing_companies[ci.sec_code] = ci
+
+        # Pre-load industry data from EDINET code list
+        from app.routers.stock import get_industry_for_ticker
+        await get_industry_for_ticker("")  # triggers code list load
+
         for i, doc in enumerate(target_docs):
             sec_code = doc["secCode"]
             doc_id = doc.get("docID")
@@ -542,10 +561,7 @@ async def _poll_company_info(target_date: date, all_docs: list | None = None) ->
                 if info.get("shares_outstanding") is None and info.get("net_assets") is None:
                     continue
 
-                # Sanity check: reject wildly out-of-range values that
-                # indicate a corrupted XBRL or parsing error.
-                # Max shares: 100 billion (largest companies ~10B shares)
-                # Max net_assets: 100 trillion JPY
+                # Sanity check: reject wildly out-of-range values
                 _shares = info.get("shares_outstanding")
                 _net = info.get("net_assets")
                 if _shares is not None and (_shares <= 0 or _shares > 100_000_000_000):
@@ -563,19 +579,17 @@ async def _poll_company_info(target_date: date, all_docs: list | None = None) ->
                 if info.get("shares_outstanding") is None and info.get("net_assets") is None:
                     continue
 
-                # Normalise sec_code to 4 digits
                 ticker = sec_code[:4] if len(sec_code) == 5 else sec_code
 
                 # Use SAVEPOINT so a failure in one document doesn't
                 # roll back previously flushed updates.
                 async with session.begin_nested():
-                    existing = await session.execute(
-                        select(CompanyInfo).where(CompanyInfo.sec_code == ticker)
-                    )
-                    company = existing.scalar_one_or_none()
+                    # Use pre-fetched cache instead of per-doc SELECT
+                    company = existing_companies.get(ticker)
                     if company is None:
                         company = CompanyInfo(sec_code=ticker)
                         session.add(company)
+                        existing_companies[ticker] = company
 
                     company.edinet_code = doc.get("edinetCode")
                     if info.get("company_name"):
@@ -586,9 +600,7 @@ async def _poll_company_info(target_date: date, all_docs: list | None = None) ->
                         company.shares_outstanding = info["shares_outstanding"]
                     if info.get("net_assets") is not None:
                         company.net_assets = info["net_assets"]
-                    # Populate industry from EDINET code list (金融庁公式業種)
                     if not company.industry:
-                        from app.routers.stock import get_industry_for_ticker
                         industry = await get_industry_for_ticker(ticker)
                         if industry:
                             company.industry = industry
