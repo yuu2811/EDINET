@@ -2298,7 +2298,7 @@ function hideStockView() {
 
 // === TOB Dedicated View ===
 
-async function showTobView() {
+function showTobView() {
     const tobView = $el('tob-view');
     const mainLayout = $el('main-layout');
     const stockView = $el('stock-view');
@@ -2306,13 +2306,17 @@ async function showTobView() {
     if (stockView) stockView.classList.add('hidden');
     mainLayout.classList.add('hidden');
     tobView.classList.remove('hidden');
+    // Force re-trigger animation
+    tobView.style.animation = 'none';
+    tobView.offsetHeight; // reflow
+    tobView.style.animation = '';
     const btn = $el('btn-tob-view');
     if (btn) btn.classList.add('active');
     const stockBtn = $el('btn-stock-view');
     if (stockBtn) stockBtn.classList.remove('active');
-    // Always refresh TOB data when opening the view
-    await loadTobs();
+    // Render with current data, then refresh in background
     renderTobView();
+    loadTobs();
 }
 
 function hideTobView() {
