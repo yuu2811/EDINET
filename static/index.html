@@ -36,6 +36,7 @@
             <button id="btn-notify" class="btn-icon" title="通知を有効にする" aria-label="デスクトップ通知" aria-pressed="false">&#128276;</button>
             <button id="btn-sound" class="btn-icon active" title="サウンド ON/OFF" aria-label="サウンドアラート: 有効" aria-pressed="true">&#128266;</button>
             <button id="btn-poll" class="btn-icon" title="手動ポーリング" aria-label="手動でEDINETをポーリング">&#8635;</button>
+            <button id="btn-tob-view" class="btn-icon" title="TOB一覧" aria-label="公開買付一覧を表示">&#128176;</button>
             <button id="btn-stock-view" class="btn-icon" title="株価チャート" aria-label="株価チャートを表示">&#128200;</button>
         </div>
     </header>
@@ -234,6 +235,32 @@
         </div>
     </div>
 
+    <!-- TOB Dedicated View -->
+    <div id="tob-view" class="tob-view hidden">
+        <div class="tob-view-header">
+            <div class="tob-view-toolbar">
+                <button id="tob-view-back" class="btn-small" title="フィードに戻る" aria-label="フィードに戻る">&#9664; 戻る</button>
+                <span class="tob-view-title">TOB <span id="tob-view-count" class="tob-count-badge"></span></span>
+                <label for="tob-view-search" class="visually-hidden">TOB検索</label>
+                <input type="text" id="tob-view-search" placeholder="企業名・コードで検索..." class="tob-view-search-input" aria-label="TOB検索">
+                <label for="tob-view-type-filter" class="visually-hidden">タイプフィルター</label>
+                <select id="tob-view-type-filter" class="filter-select filter-select-sm" aria-label="TOBタイプでフィルター">
+                    <option value="all">すべて</option>
+                    <option value="filing">届出 (240/250)</option>
+                    <option value="withdraw">撤回 (260)</option>
+                    <option value="report">報告 (270/280)</option>
+                    <option value="opinion">意見表明 (290/300)</option>
+                </select>
+            </div>
+        </div>
+        <div id="tob-view-body" class="tob-view-body">
+            <div class="tob-view-empty">
+                <div class="empty-icon">&#128176;</div>
+                <div class="empty-text">公開買付関連の届出はありません</div>
+            </div>
+        </div>
+    </div>
+
     <!-- Detail Modal -->
     <div id="detail-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title-text">
         <div class="modal-overlay"></div>
@@ -374,6 +401,10 @@
         <button class="nav-item" data-panel="analytics" aria-label="分析">
             <span class="nav-icon">&#128201;</span>
             <span class="nav-label">分析</span>
+        </button>
+        <button class="nav-item" data-panel="tob" aria-label="TOB">
+            <span class="nav-icon">&#128176;</span>
+            <span class="nav-label">TOB</span>
         </button>
         <button class="nav-item" data-panel="watchlist" aria-label="ウォッチ">
             <span class="nav-icon">&#9733;</span>

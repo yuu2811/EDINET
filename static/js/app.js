@@ -399,6 +399,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initSidebarResize();
     initFooterStatus();
     initStockView();
+    initTobView();
 
     // C4: Initialize AudioContext on first user gesture to avoid browser autoplay restrictions
     document.addEventListener('click', () => {
@@ -861,6 +862,9 @@ function handleNewTob(tob) {
     if (state.tobs.some(t => t.doc_id === tob.doc_id)) return;
     state.tobs.unshift(tob);
     renderTobPanel();
+    // Also refresh the dedicated TOB view if visible
+    const tobView = $el('tob-view');
+    if (tobView && !tobView.classList.contains('hidden')) renderTobView();
     // Play alert sound and show notification
     if (state.soundEnabled) playAlertSound();
     showToast(`TOB: ${tob.tob_type} — ${tob.filer_name || '(不明)'}`);
@@ -2254,6 +2258,7 @@ function showStockView() {
     const stockView = $el('stock-view');
     const mainLayout = $el('main-layout');
     if (stockView && mainLayout) {
+        hideTobView();
         mainLayout.classList.add('hidden');
         stockView.classList.remove('hidden');
         updateStockQuickList();
@@ -2270,6 +2275,171 @@ function hideStockView() {
         mainLayout.classList.remove('hidden');
         const btn = $el('btn-stock-view');
         if (btn) btn.classList.remove('active');
+    }
+}
+
+// === TOB Dedicated View ===
+
+function showTobView() {
+    const tobView = $el('tob-view');
+    const mainLayout = $el('main-layout');
+    const stockView = $el('stock-view');
+    if (tobView && mainLayout) {
+        if (stockView) stockView.classList.add('hidden');
+        mainLayout.classList.add('hidden');
+        tobView.classList.remove('hidden');
+        renderTobView();
+        const btn = $el('btn-tob-view');
+        if (btn) btn.classList.add('active');
+        const stockBtn = $el('btn-stock-view');
+        if (stockBtn) stockBtn.classList.remove('active');
+    }
+}
+
+function hideTobView() {
+    const tobView = $el('tob-view');
+    const mainLayout = $el('main-layout');
+    if (tobView && mainLayout) {
+        tobView.classList.add('hidden');
+        mainLayout.classList.remove('hidden');
+        const btn = $el('btn-tob-view');
+        if (btn) btn.classList.remove('active');
+    }
+}
+
+function renderTobView() {
+    const body = $el('tob-view-body');
+    if (!body) return;
+    const countBadge = $el('tob-view-count');
+
+    const searchInput = $el('tob-view-search');
+    const typeFilter = $el('tob-view-type-filter');
+    const query = (searchInput ? searchInput.value : '').toLowerCase();
+    const typeVal = typeFilter ? typeFilter.value : 'all';
+
+    let filtered = state.tobs;
+
+    // Search filter
+    if (query) {
+        filtered = filtered.filter(t =>
+            (t.filer_name || '').toLowerCase().includes(query) ||
+            (t.target_company_name || '').toLowerCase().includes(query) ||
+            (t.tob_type || '').toLowerCase().includes(query) ||
+            (t.target_sec_code || '').includes(query) ||
+            (t.sec_code || '').includes(query) ||
+            (t.doc_description || '').toLowerCase().includes(query)
+        );
+    }
+
+    // Type filter
+    if (typeVal !== 'all') {
+        const typeMap = {
+            filing: ['240', '250'],
+            withdraw: ['260'],
+            report: ['270', '280'],
+            opinion: ['290', '300'],
+        };
+        const codes = typeMap[typeVal] || [];
+        filtered = filtered.filter(t => codes.includes(t.doc_type_code));
+    }
+
+    if (countBadge) countBadge.textContent = filtered.length || '';
+
+    if (filtered.length === 0) {
+        body.innerHTML = `<div class="tob-view-empty">
+            <div class="empty-icon">&#128176;</div>
+            <div class="empty-text">${query || typeVal !== 'all' ? '一致するTOBがありません' : '公開買付関連の届出はありません'}</div>
+        </div>`;
+        return;
+    }
+
+    let html = '<div class="tob-view-list">';
+    for (const t of filtered) {
+        const time = t.submit_date_time ? t.submit_date_time.slice(0, 16).replace('T', ' ') : '';
+        const typeClass = t.doc_type_code === '260' ? 'tob-withdraw' :
+                          t.doc_type_code === '290' || t.doc_type_code === '300' ? 'tob-opinion' : 'tob-filing';
+        let links = '';
+        if (t.pdf_url) links += `<a href="${escapeHtml(t.pdf_url)}" target="_blank" rel="noopener" class="tob-link" onclick="event.stopPropagation()">PDF</a>`;
+        if (t.edinet_url) links += `<a href="${escapeHtml(t.edinet_url)}" target="_blank" rel="noopener" class="tob-link" onclick="event.stopPropagation()">EDINET</a>`;
+        const filerHtml = filerLinkHtml(t.filer_name || '(不明)', t.edinet_code);
+        const targetHtml = companyLinkHtml(t.target_company_name || t.doc_description || '', t.target_sec_code, false);
+
+        // Period display
+        let periodHtml = '';
+        if (t.period_start || t.period_end) {
+            const start = t.period_start ? t.period_start.slice(0, 10) : '?';
+            const end = t.period_end ? t.period_end.slice(0, 10) : '?';
+            periodHtml = `<div class="tob-view-period"><span class="tob-view-period-label">買付期間</span> ${escapeHtml(start)} ～ ${escapeHtml(end)}</div>`;
+        }
+
+        // Target sec code display
+        const secCodeHtml = t.target_sec_code ? `<span class="tob-view-sec-code">${escapeHtml(t.target_sec_code)}</span>` : '';
+
+        html += `<div class="tob-view-card ${typeClass}">
+            <div class="tob-view-card-header">
+                <span class="tob-type-badge">${escapeHtml(t.tob_type)}</span>
+                ${secCodeHtml}
+                <span class="tob-view-time">${escapeHtml(time)}</span>
+            </div>
+            <div class="tob-view-card-body">
+                <div class="tob-view-row">
+                    <span class="tob-view-label">提出者</span>
+                    <span class="tob-view-value">${filerHtml}</span>
+                </div>
+                <div class="tob-view-row">
+                    <span class="tob-view-label">対象企業</span>
+                    <span class="tob-view-value">${targetHtml}</span>
+                </div>
+                ${periodHtml}
+            </div>
+            <div class="tob-view-card-footer">
+                <div class="tob-links">${links}</div>
+            </div>
+        </div>`;
+    }
+    html += '</div>';
+    body.innerHTML = html;
+}
+
+function initTobView() {
+    // Header TOB view toggle button
+    const tobViewBtn = $el('btn-tob-view');
+    if (tobViewBtn) {
+        tobViewBtn.addEventListener('click', () => {
+            const tobView = $el('tob-view');
+            if (tobView && !tobView.classList.contains('hidden')) {
+                hideTobView();
+            } else {
+                showTobView();
+            }
+        });
+    }
+
+    // Back button in TOB view
+    const backBtn = $el('tob-view-back');
+    if (backBtn) {
+        backBtn.addEventListener('click', () => {
+            hideTobView();
+            document.querySelectorAll('.mobile-bottom-nav .nav-item').forEach(n => {
+                n.classList.toggle('active', n.dataset.panel === 'feed');
+            });
+        });
+    }
+
+    // Search input
+    const searchInput = $el('tob-view-search');
+    if (searchInput) {
+        let debounce;
+        searchInput.addEventListener('input', () => {
+            clearTimeout(debounce);
+            debounce = setTimeout(() => renderTobView(), 200);
+        });
+    }
+
+    // Type filter
+    const typeFilter = $el('tob-view-type-filter');
+    if (typeFilter) {
+        typeFilter.addEventListener('change', () => renderTobView());
     }
 }
 
@@ -3355,25 +3525,35 @@ function initMobileNav() {
                 // Hide overlays, show feed (default view)
                 closeAllMobileOverlays();
                 hideStockView();
+                hideTobView();
             } else if (panel === 'stats') {
                 closeAllMobileOverlays();
                 hideStockView();
+                hideTobView();
                 openMobileOverlay('mobile-stats-panel');
             } else if (panel === 'watchlist') {
                 closeAllMobileOverlays();
                 hideStockView();
+                hideTobView();
                 openMobileOverlay('mobile-watchlist-panel');
             } else if (panel === 'analytics') {
                 closeAllMobileOverlays();
                 hideStockView();
+                hideTobView();
                 loadAnalytics();
                 openMobileOverlay('mobile-analytics-panel');
+            } else if (panel === 'tob') {
+                closeAllMobileOverlays();
+                hideStockView();
+                showTobView();
             } else if (panel === 'stock') {
                 closeAllMobileOverlays();
+                hideTobView();
                 showStockView();
             } else if (panel === 'settings') {
                 closeAllMobileOverlays();
                 hideStockView();
+                hideTobView();
                 openMobileOverlay('mobile-settings-panel');
             }
         });
