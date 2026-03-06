@@ -5597,8 +5597,18 @@ body {
     border-left-color: var(--text-red);
 }
 
+.tob-view-card.tob-withdraw .tob-type-badge {
+    background: rgba(255, 82, 82, 0.15);
+    color: var(--text-red);
+}
+
 .tob-view-card.tob-opinion {
     border-left-color: var(--accent-cyan);
+}
+
+.tob-view-card.tob-opinion .tob-type-badge {
+    background: rgba(0, 230, 230, 0.12);
+    color: var(--accent-cyan);
 }
 
 .tob-view-card-header {
@@ -5692,7 +5702,7 @@ body {
 
     .tob-view-body {
         padding: 8px 10px;
-        padding-bottom: 80px;
+        padding-bottom: calc(10px + 62px + env(safe-area-inset-bottom));
     }
 
     .tob-view-list {

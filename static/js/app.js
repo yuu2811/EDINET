@@ -593,6 +593,21 @@ function initEventListeners() {
         if (e.key === 'Escape') {
             closeModal();
             closeConfirmDialog();
+            // Close dedicated views (TOB / Stock) on Escape
+            const tobView = $el('tob-view');
+            if (tobView && !tobView.classList.contains('hidden')) {
+                hideTobView();
+                document.querySelectorAll('.mobile-bottom-nav .nav-item').forEach(n => {
+                    n.classList.toggle('active', n.dataset.panel === 'feed');
+                });
+            }
+            const stockView = $el('stock-view');
+            if (stockView && !stockView.classList.contains('hidden')) {
+                hideStockView();
+                document.querySelectorAll('.mobile-bottom-nav .nav-item').forEach(n => {
+                    n.classList.toggle('active', n.dataset.panel === 'feed');
+                });
+            }
             return;
         }
         // Arrow key / Tab navigation in modal (uses filtered list, not full list)
@@ -3340,9 +3355,14 @@ function closeMobileOverlay(panelId) {
     const panel = $el(panelId);
     if (!panel) return;
     panel.classList.add('hidden');
-    // Reset nav active state to feed
+    // Reset nav active state — keep tob/stock active if their view is still showing
+    const tobView = $el('tob-view');
+    const stockView = $el('stock-view');
+    let activePanel = 'feed';
+    if (tobView && !tobView.classList.contains('hidden')) activePanel = 'tob';
+    else if (stockView && !stockView.classList.contains('hidden')) activePanel = 'stock';
     document.querySelectorAll('.mobile-bottom-nav .nav-item').forEach(item => {
-        item.classList.toggle('active', item.dataset.panel === 'feed');
+        item.classList.toggle('active', item.dataset.panel === activePanel);
     });
 }
 
