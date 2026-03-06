@@ -514,6 +514,12 @@ body > * {
     background: rgba(24, 208, 232, 0.08);
 }
 
+#btn-tob-view.active {
+    color: var(--accent-orange);
+    border-color: rgba(255, 152, 0, 0.4);
+    background: rgba(255, 152, 0, 0.08);
+}
+
 /* === Ticker Bar === */
 
 /* R4: Ticker bar with floating dust particles */
@@ -4822,6 +4828,14 @@ body {
 }
 
 /* === Tender Offer (TOB / 公開買付) Panel === */
+
+#tob-panel .panel-title {
+    cursor: pointer;
+}
+
+#tob-panel .panel-title:hover {
+    color: var(--accent-orange);
+}
 
 .tob-search-input {
     flex: 1;

@@ -3691,13 +3691,17 @@ function initCollapsiblePanels() {
         title.addEventListener('click', (e) => {
             e.stopPropagation();
             const panel = title.closest('.panel');
-            if (panel) {
-                panel.classList.toggle('panel-collapsed');
-                // Persist state
-                const key = 'panel-collapsed-' + (panel.id || '');
-                if (panel.id) {
-                    localStorage.setItem(key, panel.classList.contains('panel-collapsed') ? '1' : '0');
-                }
+            if (!panel) return;
+            // TOB panel title opens the dedicated TOB view instead of collapsing
+            if (panel.id === 'tob-panel') {
+                showTobView();
+                return;
+            }
+            panel.classList.toggle('panel-collapsed');
+            // Persist state
+            const key = 'panel-collapsed-' + (panel.id || '');
+            if (panel.id) {
+                localStorage.setItem(key, panel.classList.contains('panel-collapsed') ? '1' : '0');
             }
         });
     });
