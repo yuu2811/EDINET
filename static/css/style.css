@@ -5424,7 +5424,8 @@ body {
    R20: Cinematic page transition — stock view & mobile overlay reveals
    ======================================================================== */
 
-.stock-view {
+.stock-view,
+.tob-view {
     animation: page-reveal 0.5s var(--ease-out) both;
 }
 

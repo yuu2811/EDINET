@@ -847,11 +847,14 @@ async function loadStats() {
 
 async function loadTobs() {
     try {
-        const resp = await fetch('/api/tob?limit=50');
+        const resp = await fetch('/api/tob?limit=200');
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         state.tobs = data.items || [];
         renderTobPanel();
+        // Also refresh the dedicated TOB view if visible
+        const tobView = $el('tob-view');
+        if (tobView && !tobView.classList.contains('hidden')) renderTobView();
     } catch (e) {
         console.error('Failed to load TOBs:', e);
     }
@@ -2280,20 +2283,21 @@ function hideStockView() {
 
 // === TOB Dedicated View ===
 
-function showTobView() {
+async function showTobView() {
     const tobView = $el('tob-view');
     const mainLayout = $el('main-layout');
     const stockView = $el('stock-view');
-    if (tobView && mainLayout) {
-        if (stockView) stockView.classList.add('hidden');
-        mainLayout.classList.add('hidden');
-        tobView.classList.remove('hidden');
-        renderTobView();
-        const btn = $el('btn-tob-view');
-        if (btn) btn.classList.add('active');
-        const stockBtn = $el('btn-stock-view');
-        if (stockBtn) stockBtn.classList.remove('active');
-    }
+    if (!tobView || !mainLayout) return;
+    if (stockView) stockView.classList.add('hidden');
+    mainLayout.classList.add('hidden');
+    tobView.classList.remove('hidden');
+    const btn = $el('btn-tob-view');
+    if (btn) btn.classList.add('active');
+    const stockBtn = $el('btn-stock-view');
+    if (stockBtn) stockBtn.classList.remove('active');
+    // Always refresh TOB data when opening the view
+    await loadTobs();
+    renderTobView();
 }
 
 function hideTobView() {
