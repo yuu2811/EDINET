@@ -704,6 +704,7 @@ function initSSE() {
             console.log('SSE reconnected — refreshing data');
             loadFilings();
             loadStats();
+            loadTobs();
         }
     };
 

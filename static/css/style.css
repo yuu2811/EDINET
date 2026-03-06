@@ -3070,16 +3070,19 @@ body {
     }
 
     .mobile-bottom-nav .nav-item .nav-icon {
-        font-size: 22px;
+        font-size: 20px;
         line-height: 1;
         transition: transform var(--duration-fast) var(--ease-spring);
     }
 
     .mobile-bottom-nav .nav-item .nav-label {
-        font-size: 9px;
+        font-size: 8px;
         font-weight: 600;
-        letter-spacing: 0.5px;
+        letter-spacing: 0;
         white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
     }
 
     .mobile-bottom-nav .nav-item.active {
