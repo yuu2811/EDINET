@@ -28,6 +28,14 @@ if "sqlite" in settings.DATABASE_URL:
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA busy_timeout=5000")
+        # Performance: reduce fsync overhead (safe with WAL mode)
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        # Performance: 64MB page cache (default is ~2MB)
+        cursor.execute("PRAGMA cache_size=-65536")
+        # Performance: memory-mapped I/O for reads (256MB)
+        cursor.execute("PRAGMA mmap_size=268435456")
+        # Performance: store temp tables in memory
+        cursor.execute("PRAGMA temp_store=MEMORY")
         cursor.close()
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

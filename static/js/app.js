@@ -44,6 +44,19 @@ let currentModalDocId = null; // tracks which filing is shown in the modal
 let filingsAbortController = null; // AbortController for date navigation race condition
 let _filteredFilings = []; // filtered list for modal arrow navigation
 const POLL_INTERVAL_MS = 60000; // matches server default
+let _sseReconnectDelay = 5000; // SSE reconnect delay with exponential backoff
+const _SSE_MAX_RECONNECT_DELAY = 60000;
+
+// --- Performance: debounced rendering ---
+let _renderFeedPending = false;
+function scheduleRenderFeed() {
+    if (_renderFeedPending) return;
+    _renderFeedPending = true;
+    requestAnimationFrame(() => {
+        _renderFeedPending = false;
+        renderFeed();
+    });
+}
 
 // === Stock Data Cache & Fetcher ===
 
@@ -668,6 +681,7 @@ function initSSE() {
     eventSource.onopen = () => {
         const reconnected = _wasDisconnected;
         _wasDisconnected = false;
+        _sseReconnectDelay = 5000; // reset backoff on successful connection
         setConnectionStatus('connected');
         // After a reconnection, refresh data to catch filings missed while offline
         if (reconnected) {
@@ -682,11 +696,14 @@ function initSSE() {
         if (eventSource.readyState === EventSource.CONNECTING) {
             _wasDisconnected = true;
             setConnectionStatus('reconnecting');
-        } else {
+        } else if (eventSource.readyState === EventSource.CLOSED) {
             _wasDisconnected = true;
             setConnectionStatus('disconnected');
+            // Manual reconnect with exponential backoff
+            console.log(`SSE closed — reconnecting in ${_sseReconnectDelay / 1000}s`);
+            setTimeout(() => initSSE(), _sseReconnectDelay);
+            _sseReconnectDelay = Math.min(_sseReconnectDelay * 2, _SSE_MAX_RECONNECT_DELAY);
         }
-        // EventSource auto-reconnects
     };
 }
 
@@ -748,6 +765,8 @@ async function loadInitialData() {
     await Promise.all([loadFilings(), loadStats(), loadWatchlist(), loadAnalytics(), loadTobs()]);
 }
 
+let _filingsEtag = null; // ETag for conditional requests
+
 async function loadFilings() {
     // H2: Cancel any in-flight request to prevent race conditions
     if (filingsAbortController) filingsAbortController.abort();
@@ -767,8 +786,12 @@ async function loadFilings() {
             params.set('date_from', state.selectedDate);
             params.set('date_to', state.selectedDate);
         }
-        const resp = await fetch(`/api/filings?${params}`, { signal });
+        const headers = {};
+        if (_filingsEtag) headers['If-None-Match'] = _filingsEtag;
+        const resp = await fetch(`/api/filings?${params}`, { signal, headers });
+        if (resp.status === 304) return; // data unchanged
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        _filingsEtag = resp.headers.get('ETag');
         const data = await resp.json();
         state.filings = data.filings || [];
         renderFeed();
@@ -791,22 +814,18 @@ function preloadStockData() {
     }
     if (codes.size === 0) return;
 
-    // Fetch in concurrent batches of 5 for faster loading
+    // Fetch in concurrent batches of 8 for faster loading
     const uncached = [...codes].filter(c => !stockCache[c]);
     if (uncached.length === 0) return;
-    const BATCH_SIZE = 5;
-    let rendered = false;
+    const BATCH_SIZE = 8;
     (async () => {
         for (let i = 0; i < uncached.length; i += BATCH_SIZE) {
             const batch = uncached.slice(i, i + BATCH_SIZE);
             await Promise.all(batch.map(c => fetchStockData(c).catch(() => null)));
-            // Re-render after each batch so cards update progressively
-            if (!rendered || i + BATCH_SIZE < uncached.length) {
-                renderFeed();
-                rendered = true;
-            }
+            // Use debounced render to avoid excessive reflows
+            scheduleRenderFeed();
         }
-        renderFeed();
+        scheduleRenderFeed();
     })().catch(err => console.error('Stock preload failed:', err));
 }
 
