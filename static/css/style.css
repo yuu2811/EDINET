@@ -514,6 +514,12 @@ body > * {
     background: rgba(24, 208, 232, 0.08);
 }
 
+#btn-tob-view.active {
+    color: var(--accent-orange);
+    border-color: rgba(255, 152, 0, 0.4);
+    background: rgba(255, 152, 0, 0.08);
+}
+
 /* === Ticker Bar === */
 
 /* R4: Ticker bar with floating dust particles */
@@ -3064,16 +3070,19 @@ body {
     }
 
     .mobile-bottom-nav .nav-item .nav-icon {
-        font-size: 22px;
+        font-size: 20px;
         line-height: 1;
         transition: transform var(--duration-fast) var(--ease-spring);
     }
 
     .mobile-bottom-nav .nav-item .nav-label {
-        font-size: 9px;
+        font-size: 8px;
         font-weight: 600;
-        letter-spacing: 0.5px;
+        letter-spacing: 0;
         white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
     }
 
     .mobile-bottom-nav .nav-item.active {
@@ -4823,6 +4832,14 @@ body {
 
 /* === Tender Offer (TOB / 公開買付) Panel === */
 
+#tob-panel .panel-title {
+    cursor: pointer;
+}
+
+#tob-panel .panel-title:hover {
+    color: var(--accent-orange);
+}
+
 .tob-search-input {
     flex: 1;
     max-width: 120px;
@@ -5424,8 +5441,7 @@ body {
    R20: Cinematic page transition — stock view & mobile overlay reveals
    ======================================================================== */
 
-.stock-view,
-.tob-view {
+.stock-view {
     animation: page-reveal 0.5s var(--ease-out) both;
 }
 
@@ -5500,10 +5516,6 @@ body {
     flex-direction: column;
     overflow: hidden;
     background: var(--bg-primary);
-}
-
-.tob-view.hidden {
-    display: none;
 }
 
 .tob-view-header {
@@ -5687,9 +5699,15 @@ body {
 }
 
 /* Mobile adjustments */
-@media (max-width: 768px) {
+@media (max-width: 480px) {
+    .tob-view {
+        position: relative;
+        z-index: 2;
+    }
+
     .tob-view-header {
         padding: 8px 10px;
+        padding-top: calc(8px + env(safe-area-inset-top));
     }
 
     .tob-view-toolbar {
@@ -5698,6 +5716,8 @@ body {
 
     .tob-view-search-input {
         max-width: none;
+        height: 32px;
+        font-size: var(--font-size-sm);
     }
 
     .tob-view-body {

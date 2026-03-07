@@ -704,6 +704,7 @@ function initSSE() {
             console.log('SSE reconnected — refreshing data');
             loadFilings();
             loadStats();
+            loadTobs();
         }
     };
 
@@ -2298,7 +2299,7 @@ function hideStockView() {
 
 // === TOB Dedicated View ===
 
-async function showTobView() {
+function showTobView() {
     const tobView = $el('tob-view');
     const mainLayout = $el('main-layout');
     const stockView = $el('stock-view');
@@ -2306,13 +2307,17 @@ async function showTobView() {
     if (stockView) stockView.classList.add('hidden');
     mainLayout.classList.add('hidden');
     tobView.classList.remove('hidden');
+    // Force re-trigger animation
+    tobView.style.animation = 'none';
+    tobView.offsetHeight; // reflow
+    tobView.style.animation = '';
     const btn = $el('btn-tob-view');
     if (btn) btn.classList.add('active');
     const stockBtn = $el('btn-stock-view');
     if (stockBtn) stockBtn.classList.remove('active');
-    // Always refresh TOB data when opening the view
-    await loadTobs();
+    // Render with current data, then refresh in background
     renderTobView();
+    loadTobs();
 }
 
 function hideTobView() {
@@ -3691,13 +3696,17 @@ function initCollapsiblePanels() {
         title.addEventListener('click', (e) => {
             e.stopPropagation();
             const panel = title.closest('.panel');
-            if (panel) {
-                panel.classList.toggle('panel-collapsed');
-                // Persist state
-                const key = 'panel-collapsed-' + (panel.id || '');
-                if (panel.id) {
-                    localStorage.setItem(key, panel.classList.contains('panel-collapsed') ? '1' : '0');
-                }
+            if (!panel) return;
+            // TOB panel title opens the dedicated TOB view instead of collapsing
+            if (panel.id === 'tob-panel') {
+                showTobView();
+                return;
+            }
+            panel.classList.toggle('panel-collapsed');
+            // Persist state
+            const key = 'panel-collapsed-' + (panel.id || '');
+            if (panel.id) {
+                localStorage.setItem(key, panel.classList.contains('panel-collapsed') ? '1' : '0');
             }
         });
     });
