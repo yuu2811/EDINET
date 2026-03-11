@@ -29,6 +29,9 @@ const state = {
     notificationsEnabled: false,
     searchQuery: '',
     tobSearchQuery: '', // TOB panel search filter
+    tobSortMode: 'time-desc', // time-desc | time-asc | type | target | filer
+    tobScrollTop: 0,   // scroll position for TOB dedicated view
+    tobLoading: false,  // loading state for TOB view
     filterMode: 'all', // all | new | change | amendment
     sortMode: 'time-desc',
     viewMode: 'cards', // cards | table
@@ -861,19 +864,36 @@ async function loadStats() {
 
 // === Tender Offer (TOB / 公開買付) Functions ===
 
-async function loadTobs() {
-    try {
-        const resp = await fetch('/api/tob?limit=200');
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
-        state.tobs = data.items || [];
-        renderTobPanel();
-        // Also refresh the dedicated TOB view if visible
-        const tobView = $el('tob-view');
-        if (tobView && !tobView.classList.contains('hidden')) renderTobView();
-    } catch (e) {
-        console.error('Failed to load TOBs:', e);
+async function loadTobs(retries = 2) {
+    const tobView = $el('tob-view');
+    const isVisible = tobView && !tobView.classList.contains('hidden');
+
+    // Show loading state only on initial load (empty list)
+    if (state.tobs.length === 0 && isVisible) {
+        state.tobLoading = true;
+        renderTobView();
     }
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const resp = await fetch('/api/tob?limit=200');
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            state.tobs = data.items || [];
+            state.tobLoading = false;
+            renderTobPanel();
+            if (isVisible) renderTobView();
+            return;
+        } catch (e) {
+            console.error(`Failed to load TOBs (attempt ${attempt + 1}):`, e);
+            if (attempt < retries) {
+                await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+            }
+        }
+    }
+    // All retries failed
+    state.tobLoading = false;
+    if (isVisible) renderTobView();
 }
 
 function handleNewTob(tob) {
@@ -2317,6 +2337,9 @@ function showTobView() {
     if (stockBtn) stockBtn.classList.remove('active');
     // Render with current data, then refresh in background
     renderTobView();
+    // Restore saved scroll position
+    const body = $el('tob-view-body');
+    if (body) body.scrollTop = state.tobScrollTop;
     loadTobs();
 }
 
@@ -2324,6 +2347,9 @@ function hideTobView() {
     const tobView = $el('tob-view');
     const mainLayout = $el('main-layout');
     if (tobView && mainLayout) {
+        // Save scroll position before hiding
+        const body = $el('tob-view-body');
+        if (body) state.tobScrollTop = body.scrollTop;
         tobView.classList.add('hidden');
         mainLayout.classList.remove('hidden');
         const btn = $el('btn-tob-view');
@@ -2331,10 +2357,64 @@ function hideTobView() {
     }
 }
 
+function _tobTypeCategory(code) {
+    if (code === '260') return 'withdraw';
+    if (code === '290' || code === '300') return 'opinion';
+    if (code === '270' || code === '280') return 'report';
+    return 'filing';
+}
+
+function _tobTypeClass(code) {
+    const cat = _tobTypeCategory(code);
+    return cat === 'filing' ? 'tob-filing' : `tob-${cat}`;
+}
+
+function _sortTobs(tobs, mode) {
+    const sorted = [...tobs];
+    switch (mode) {
+        case 'time-asc':
+            sorted.sort((a, b) => (a.submit_date_time || '').localeCompare(b.submit_date_time || ''));
+            break;
+        case 'type':
+            sorted.sort((a, b) => (a.doc_type_code || '').localeCompare(b.doc_type_code || '') || (b.submit_date_time || '').localeCompare(a.submit_date_time || ''));
+            break;
+        case 'target':
+            sorted.sort((a, b) => (a.target_company_name || '').localeCompare(b.target_company_name || '') || (b.submit_date_time || '').localeCompare(a.submit_date_time || ''));
+            break;
+        case 'filer':
+            sorted.sort((a, b) => (a.filer_name || '').localeCompare(b.filer_name || '') || (b.submit_date_time || '').localeCompare(a.submit_date_time || ''));
+            break;
+        default: // time-desc
+            sorted.sort((a, b) => (b.submit_date_time || '').localeCompare(a.submit_date_time || ''));
+            break;
+    }
+    return sorted;
+}
+
+function _buildTobStatsHtml(filtered) {
+    const counts = { filing: 0, withdraw: 0, report: 0, opinion: 0 };
+    for (const t of filtered) {
+        const cat = _tobTypeCategory(t.doc_type_code);
+        counts[cat]++;
+    }
+    return `<div class="tob-stats-bar">
+        <span class="tob-stat tob-stat-filing">届出 <strong>${counts.filing}</strong></span>
+        <span class="tob-stat tob-stat-withdraw">撤回 <strong>${counts.withdraw}</strong></span>
+        <span class="tob-stat tob-stat-report">報告 <strong>${counts.report}</strong></span>
+        <span class="tob-stat tob-stat-opinion">意見 <strong>${counts.opinion}</strong></span>
+    </div>`;
+}
+
 function renderTobView() {
     const body = $el('tob-view-body');
     if (!body) return;
     const countBadge = $el('tob-view-count');
+
+    // Show loading state
+    if (state.tobLoading) {
+        body.innerHTML = '<div class="tob-view-empty"><div class="tob-loading-spinner"></div><div class="empty-text">読み込み中...</div></div>';
+        return;
+    }
 
     const searchInput = $el('tob-view-search');
     const typeFilter = $el('tob-view-type-filter');
@@ -2367,6 +2447,9 @@ function renderTobView() {
         filtered = filtered.filter(t => codes.includes(t.doc_type_code));
     }
 
+    // Sort
+    filtered = _sortTobs(filtered, state.tobSortMode);
+
     if (countBadge) countBadge.textContent = filtered.length || '';
 
     if (filtered.length === 0) {
@@ -2377,11 +2460,16 @@ function renderTobView() {
         return;
     }
 
-    let html = '<div class="tob-view-list">';
+    // Save scroll position before re-render
+    const prevScroll = body.scrollTop;
+
+    // Stats summary
+    let html = _buildTobStatsHtml(filtered);
+
+    html += '<div class="tob-view-list">';
     for (const t of filtered) {
         const time = t.submit_date_time ? t.submit_date_time.slice(0, 16).replace('T', ' ') : '';
-        const typeClass = t.doc_type_code === '260' ? 'tob-withdraw' :
-                          t.doc_type_code === '290' || t.doc_type_code === '300' ? 'tob-opinion' : 'tob-filing';
+        const typeClass = _tobTypeClass(t.doc_type_code);
         let links = '';
         if (t.pdf_url) links += `<a href="${escapeHtml(t.pdf_url)}" target="_blank" rel="noopener" class="tob-link" onclick="event.stopPropagation()">PDF</a>`;
         if (t.edinet_url) links += `<a href="${escapeHtml(t.edinet_url)}" target="_blank" rel="noopener" class="tob-link" onclick="event.stopPropagation()">EDINET</a>`;
@@ -2423,6 +2511,9 @@ function renderTobView() {
     }
     html += '</div>';
     body.innerHTML = html;
+
+    // Restore scroll position after re-render
+    body.scrollTop = prevScroll;
 }
 
 function initTobView() {
@@ -2464,6 +2555,15 @@ function initTobView() {
     const typeFilter = $el('tob-view-type-filter');
     if (typeFilter) {
         typeFilter.addEventListener('change', () => renderTobView());
+    }
+
+    // Sort selector
+    const sortSelect = $el('tob-view-sort');
+    if (sortSelect) {
+        sortSelect.addEventListener('change', () => {
+            state.tobSortMode = sortSelect.value;
+            renderTobView();
+        });
     }
 }
 
